@@ -12,7 +12,7 @@ stats so you can measure the difference, not just feel it.
 | Pattern | Flow |
 |---|---|
 | 🧭 **Orchestrator** | Planner → parallel Workers → Synthesizer |
-| 💬 **Debate** | 3 debaters (pragmatic / skeptical / creative) → Judge |
+| 💬 **Debate** | 3 debaters (pragmatic / skeptical / creative) → rebuttal round (each attacks the others' weak points) → Judge rules on the full transcript |
 | 🚦 **Router** | Router classifies the task → routes to a Specialist |
 | 🤖 **Single** | One model, one call — the baseline |
 

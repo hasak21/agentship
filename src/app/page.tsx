@@ -37,7 +37,7 @@ type Pattern = "orchestrator" | "debate" | "router" | "single";
 
 const PATTERNS: { id: Pattern; label: string; blurb: string }[] = [
   { id: "orchestrator", label: "Orchestrator", blurb: "Plan → parallel workers → synthesize" },
-  { id: "debate", label: "Debate", blurb: "A panel argues → a judge decides" },
+  { id: "debate", label: "Debate", blurb: "Openings → rebuttals → a judge rules" },
   { id: "router", label: "Router", blurb: "Classify → route to a specialist" },
   { id: "single", label: "Single", blurb: "One model, one call (baseline)" },
 ];

@@ -301,16 +301,18 @@ async function runDebate(
     "critical and skeptical",
     "creative and big-picture",
   ];
-  const debaters = await Promise.all(
+
+  // Round 1 — opening statements, in parallel, blind to each other.
+  const openings = await Promise.all(
     angles.map((angle, i) =>
       nodeRun(
         emit,
         track,
         {
-          id: `debater-${i}`,
+          id: `debater-${i}-open`,
           role: "debater",
           title: `Debater ${i + 1}`,
-          subtitle: `${angle} view`,
+          subtitle: `${angle} · opening statement`,
         },
         () =>
           callText(
@@ -321,8 +323,42 @@ async function runDebate(
       )
     )
   );
-  const combined = debaters
-    .map((d, i) => `### Debater ${i + 1} (${angles[i]}):\n${d.text}`)
+
+  // Round 2 — rebuttals: each debater reads the opponents and responds.
+  const rebuttals = await Promise.all(
+    angles.map((angle, i) => {
+      const opponents = openings
+        .map((o, j) =>
+          j === i ? null : `--- Debater ${j + 1} (${angles[j]}) argued ---\n${o.text}`
+        )
+        .filter(Boolean)
+        .join("\n\n");
+      return nodeRun(
+        emit,
+        track,
+        {
+          id: `debater-${i}-rebut`,
+          role: "debater",
+          title: `Debater ${i + 1}`,
+          subtitle: `${angle} · rebuttal`,
+        },
+        () =>
+          callText(
+            `You are DEBATER ${i + 1} (${angle} perspective) in the rebuttal round of a debate.
+Attack the weakest points in your opponents' arguments, concede their strongest points if honesty demands it, and state your improved FINAL position on the task.`,
+            `Task: ${q}\n\nYour opening statement:\n${openings[i].text}\n\nYour opponents' arguments:\n${opponents}`,
+            false
+          ) as Promise<Leaf & Record<string, unknown>>
+      );
+    })
+  );
+
+  // Judge rules on the full transcript.
+  const transcript = angles
+    .map(
+      (angle, i) =>
+        `=== Debater ${i + 1} (${angle}) ===\nOpening:\n${openings[i].text}\n\nRebuttal & final position:\n${rebuttals[i].text}`
+    )
     .join("\n\n");
   const judge = await nodeRun(
     emit,
@@ -331,18 +367,18 @@ async function runDebate(
       id: "judge",
       role: "judge",
       title: "Judge",
-      subtitle: "Weighing the arguments",
+      subtitle: "Ruling on the full debate transcript",
     },
     () =>
       callText(
-        "You are the JUDGE. Weigh the panel's arguments and produce the single best final answer, combining the strongest points and discarding weak ones.",
-        `Task: ${q}\n\nPanel answers:\n${combined}`,
+        "You are the JUDGE of a completed debate. You have the full transcript: opening statements and rebuttals. Weigh which arguments survived scrutiny, and produce the single best final answer to the task — combining the points that held up and discarding those that were successfully rebutted. Write the answer directly, as if answering the user's task; never narrate your role, the debate, or your deliberation process.",
+        `Task: ${q}\n\nDebate transcript:\n${transcript}`,
         false
       ) as Promise<Leaf & Record<string, unknown>>
   );
   return {
     text: judge.text,
-    sources: dedupeSources(debaters.flatMap((d) => d.sources)),
+    sources: dedupeSources(openings.flatMap((d) => d.sources)),
   };
 }
 
