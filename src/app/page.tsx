@@ -12,13 +12,16 @@ type NodeState = {
   state: "running" | "done";
   result?: string;
   sources?: Source[];
+  ms?: number;
+  tokens?: number;
 };
+type TrackStats = { calls: number; tokens: number; ms: number };
 type Track = {
   id: string;
   pattern: string;
   label: string;
   nodes: NodeState[];
-  final?: { answer: string; sources: Source[] };
+  final?: { answer: string; sources: Source[]; stats?: TrackStats };
 };
 
 type Pattern = "orchestrator" | "debate" | "router" | "single";
@@ -126,6 +129,9 @@ export default function Home() {
     sources?: Source[];
     answer?: string;
     message?: string;
+    ms?: number;
+    tokens?: number;
+    stats?: TrackStats;
   }) {
     if (evt.type === "error") {
       setError(evt.message ?? "Something went wrong.");
@@ -162,6 +168,8 @@ export default function Home() {
             n.state = "done";
             n.result = evt.result;
             n.sources = evt.sources;
+            n.ms = evt.ms;
+            n.tokens = evt.tokens;
           }
           break;
         }
@@ -169,6 +177,7 @@ export default function Home() {
           track.final = {
             answer: evt.answer ?? "",
             sources: evt.sources ?? [],
+            stats: evt.stats,
           };
           break;
       }
@@ -353,6 +362,18 @@ function Toggle({
   );
 }
 
+function fmtMs(ms: number) {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function StatChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-normal tabular-nums text-white/60">
+      {label} {value}
+    </span>
+  );
+}
+
 function StatusDot({ state }: { state: "running" | "done" }) {
   if (state === "running")
     return (
@@ -389,8 +410,21 @@ function TrackView({ track }: { track: Track }) {
       {/* Final answer */}
       {track.final && (
         <div className="animate-fade-up mt-4 rounded-xl border border-violet-400/25 bg-gradient-to-b from-violet-500/10 to-white/[0.02] p-4">
-          <div className="mb-2 flex items-center gap-2 text-sm font-medium text-white/90">
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-medium text-white/90">
             <span>✅</span> Final answer
+            {track.final.stats && (
+              <span className="ml-auto flex flex-wrap gap-1.5">
+                <StatChip label="⏱" value={fmtMs(track.final.stats.ms)} />
+                <StatChip
+                  label="🤖"
+                  value={`${track.final.stats.calls} call${track.final.stats.calls === 1 ? "" : "s"}`}
+                />
+                <StatChip
+                  label="🔢"
+                  value={`${track.final.stats.tokens.toLocaleString()} tok`}
+                />
+              </span>
+            )}
           </div>
           <FormattedText text={track.final.answer} />
           <SourceList sources={track.final.sources} />
@@ -414,6 +448,12 @@ function NodeCard({ node }: { node: NodeState }) {
           <div className="text-sm font-medium text-white/85">{node.title}</div>
           <div className="truncate text-xs text-white/40">{node.subtitle}</div>
         </div>
+        {node.state === "done" && node.ms !== undefined && (
+          <span className="whitespace-nowrap text-[11px] tabular-nums text-white/30">
+            {fmtMs(node.ms)}
+            {node.tokens ? ` · ${node.tokens.toLocaleString()} tok` : ""}
+          </span>
+        )}
         <StatusDot state={node.state} />
       </div>
 

@@ -24,9 +24,41 @@ const urlFor = (model: string) => `${API_BASE}/${model}:generateContent`;
 type Part = { thought?: boolean; text?: string };
 type Chunk = { web?: { uri?: string; title?: string } };
 type Source = { title: string; uri: string };
-type Leaf = { text: string; sources: Source[] };
+type Leaf = { text: string; sources: Source[]; usage?: number };
 type Emit = (evt: Record<string, unknown>) => void;
 type Opts = { web: boolean; critic: boolean };
+type GeminiData = {
+  candidates?: {
+    content?: { parts?: Part[] };
+    groundingMetadata?: { groundingChunks?: Chunk[] };
+  }[];
+  usageMetadata?: { totalTokenCount?: number };
+};
+
+// POST to Gemini, retrying on 429 (free-tier burst limits) with backoff.
+async function postGemini(
+  model: string,
+  body: Record<string, unknown>
+): Promise<GeminiData> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(urlFor(model), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-goog-api-key": process.env.GEMINI_API_KEY ?? "",
+      },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return res.json();
+    const details = await res.text();
+    if (res.status === 429 && attempt < 2) {
+      // Parallel agents can burst past the per-minute quota; wait and retry.
+      await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
+      continue;
+    }
+    throw new Error(`Gemini ${res.status}: ${details.slice(0, 160)}`);
+  }
+}
 
 function dedupeSources(sources: Source[]): Source[] {
   const seen = new Set<string>();
@@ -52,20 +84,8 @@ async function callText(
   };
   if (web) body.tools = [{ google_search: {} }];
 
-  const res = await fetch(urlFor(web ? MODEL_WEB : MODEL_DEFAULT), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-goog-api-key": process.env.GEMINI_API_KEY ?? "",
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const details = await res.text();
-    throw new Error(`Gemini ${res.status}: ${details.slice(0, 160)}`);
-  }
-  const data = await res.json();
-  const cand = data?.candidates?.[0];
+  const data = await postGemini(web ? MODEL_WEB : MODEL_DEFAULT, body);
+  const cand = data.candidates?.[0];
   const parts: Part[] = cand?.content?.parts ?? [];
   const text = parts
     .filter((p) => !p.thought && p.text)
@@ -77,42 +97,32 @@ async function callText(
     .map((c) => c.web)
     .filter((w): w is { uri?: string; title?: string } => !!w?.uri)
     .map((w) => ({ title: w.title || w.uri || "source", uri: w.uri as string }));
-  return { text, sources: dedupeSources(sources) };
+  const usage: number = data?.usageMetadata?.totalTokenCount ?? 0;
+  return { text, sources: dedupeSources(sources), usage };
 }
 
-// Structured JSON call (no web search).
+// Structured JSON call (no web search). Returns the parsed value plus token usage.
 async function callJSON<T>(
   system: string,
   user: string,
   schema: Record<string, unknown>
-): Promise<T> {
-  const res = await fetch(urlFor(MODEL_DEFAULT), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-goog-api-key": process.env.GEMINI_API_KEY ?? "",
+): Promise<{ value: T; usage: number }> {
+  const data = await postGemini(MODEL_DEFAULT, {
+    systemInstruction: { parts: [{ text: system }] },
+    contents: [{ parts: [{ text: user }] }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: schema,
     },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: system }] },
-      contents: [{ parts: [{ text: user }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: schema,
-      },
-    }),
   });
-  if (!res.ok) {
-    const details = await res.text();
-    throw new Error(`Gemini ${res.status}: ${details.slice(0, 160)}`);
-  }
-  const data = await res.json();
-  const parts: Part[] = data?.candidates?.[0]?.content?.parts ?? [];
+  const parts: Part[] = data.candidates?.[0]?.content?.parts ?? [];
   const text = parts
     .filter((p) => !p.thought && p.text)
     .map((p) => p.text)
     .join("")
     .trim();
-  return JSON.parse(text) as T;
+  const usage: number = data?.usageMetadata?.totalTokenCount ?? 0;
+  return { value: JSON.parse(text) as T, usage };
 }
 
 // Emit a node's lifecycle around an async unit of work.
@@ -123,6 +133,7 @@ async function nodeRun(
   fn: () => Promise<Leaf & Record<string, unknown>>
 ): Promise<Leaf & Record<string, unknown>> {
   emit({ track, type: "node", ...node });
+  const t0 = Date.now();
   let res: Leaf & Record<string, unknown>;
   try {
     res = await fn();
@@ -139,6 +150,8 @@ async function nodeRun(
     id: node.id,
     result: res.text,
     sources: res.sources ?? [],
+    ms: Date.now() - t0,
+    tokens: res.usage ?? 0,
   });
   return res;
 }
@@ -186,12 +199,15 @@ async function runOrchestrator(
     },
     async () => {
       let subtasks: string[];
+      let usage = 0;
       try {
-        subtasks = await callJSON<string[]>(
+        const r = await callJSON<string[]>(
           `You are the PLANNER. Break the task into 2 to 4 focused, independent sub-tasks that can run in parallel. Each one short. Return ONLY a JSON array of strings.`,
           q,
           { type: "ARRAY", items: { type: "STRING" } }
         );
+        subtasks = r.value;
+        usage = r.usage;
         if (!Array.isArray(subtasks) || subtasks.length === 0)
           subtasks = [q];
       } catch {
@@ -201,6 +217,7 @@ async function runOrchestrator(
       return {
         text: subtasks.map((s, i) => `${i + 1}. ${s}`).join("\n"),
         sources: [],
+        usage,
         subtasks,
       };
     }
@@ -351,8 +368,9 @@ async function runRouter(
     async () => {
       let route = "general";
       let reason = "";
+      let usage = 0;
       try {
-        const parsed = await callJSON<{ route: string; reason?: string }>(
+        const r = await callJSON<{ route: string; reason?: string }>(
           "You are the ROUTER. Classify the task and choose the best specialist: code, write, analyze, or general. Return JSON {route, reason}.",
           q,
           {
@@ -364,14 +382,16 @@ async function runRouter(
             required: ["route"],
           }
         );
-        if (SPECIALISTS[parsed.route]) route = parsed.route;
-        reason = parsed.reason ?? "";
+        usage = r.usage;
+        if (SPECIALISTS[r.value.route]) route = r.value.route;
+        reason = r.value.reason ?? "";
       } catch {
         route = "general";
       }
       return {
         text: `Routed to: **${SPECIALISTS[route].title}**${reason ? `\n${reason}` : ""}`,
         sources: [],
+        usage,
         route,
       };
     }
@@ -450,24 +470,41 @@ async function runTrack(
   emit: Emit,
   track: string
 ): Promise<void> {
+  // Wrap emit to tally calls + tokens as node_done events pass through.
+  const stats = { calls: 0, tokens: 0 };
+  const t0 = Date.now();
+  const em: Emit = (evt) => {
+    if (evt.type === "node_done") {
+      stats.calls += 1;
+      stats.tokens += (evt.tokens as number) || 0;
+    }
+    emit(evt);
+  };
+
   let base: Leaf;
   switch (pattern) {
     case "single":
-      base = await runSingle(q, opts, emit, track);
+      base = await runSingle(q, opts, em, track);
       break;
     case "debate":
-      base = await runDebate(q, opts, emit, track);
+      base = await runDebate(q, opts, em, track);
       break;
     case "router":
-      base = await runRouter(q, opts, emit, track);
+      base = await runRouter(q, opts, em, track);
       break;
     case "orchestrator":
     default:
-      base = await runOrchestrator(q, opts, emit, track);
+      base = await runOrchestrator(q, opts, em, track);
       break;
   }
-  if (opts.critic) base = await withCritic(base, q, emit, track);
-  emit({ track, type: "final", answer: base.text, sources: base.sources });
+  if (opts.critic) base = await withCritic(base, q, em, track);
+  emit({
+    track,
+    type: "final",
+    answer: base.text,
+    sources: base.sources,
+    stats: { ...stats, ms: Date.now() - t0 },
+  });
 }
 
 export async function POST(request: Request) {
