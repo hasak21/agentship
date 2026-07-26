@@ -18,7 +18,9 @@ stats so you can measure the difference, not just feel it.
 
 Stackable add-ons:
 
-- 🕵️ **Critic pass** — a Critic reviews the draft, a Reviser applies the feedback
+- 🕵️ **Critic pass** — iterative reflection: a Critic reviews the draft
+  (accept / revise with concrete issues), a Reviser fixes it, and the Critic
+  re-reviews — looping until accepted or the round budget (2) runs out
 - 🌐 **Web search** — live Google Search grounding with cited sources
 - ⚖️ **Compare vs single** — run your pattern *and* the single-agent baseline
   side-by-side, with time / calls / tokens for each

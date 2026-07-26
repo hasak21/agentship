@@ -473,45 +473,79 @@ async function runRouter(
   return ans;
 }
 
+// Iterative reflection: Critic reviews -> if rejected, Reviser fixes -> Critic
+// re-reviews the new draft. Loops until the critic explicitly accepts or the
+// round budget is exhausted.
+const CRITIC_MAX_ROUNDS = 2;
+
 async function withCritic(
   base: Leaf,
   q: string,
   emit: Emit,
   track: string
 ): Promise<Leaf> {
-  const critique = await nodeRun(
-    emit,
-    track,
-    {
-      id: "critic",
-      role: "critic",
-      title: "Critic",
-      subtitle: "Reviewing the draft for gaps and errors",
-    },
-    () =>
-      callText(
-        "You are the CRITIC. Review the draft answer against the task. List concrete problems, gaps, or errors as short bullet points. If it is already excellent, say so briefly.",
-        `Task: ${q}\n\nDraft answer:\n${base.text}`,
-        false
-      ) as Promise<Leaf & Record<string, unknown>>
-  );
-  const revised = await nodeRun(
-    emit,
-    track,
-    {
-      id: "reviser",
-      role: "reviser",
-      title: "Reviser",
-      subtitle: "Applying the feedback",
-    },
-    () =>
-      callText(
-        "You are the REVISER. Produce an improved final answer to the task that fixes every valid point in the critique. Output only the improved answer.",
-        `Task: ${q}\n\nDraft:\n${base.text}\n\nCritique:\n${critique.text}`,
-        false
-      ) as Promise<Leaf & Record<string, unknown>>
-  );
-  return { text: revised.text, sources: base.sources };
+  let draft = base;
+  for (let round = 1; round <= CRITIC_MAX_ROUNDS; round++) {
+    const critique = await nodeRun(
+      emit,
+      track,
+      {
+        id: `critic-${round}`,
+        role: "critic",
+        title: "Critic",
+        subtitle: `Review round ${round} of ${CRITIC_MAX_ROUNDS}`,
+      },
+      async () => {
+        const r = await callJSON<{ accept: boolean; issues: string[] }>(
+          `You are the CRITIC. Review the draft answer against the task.
+Decide: is this draft good enough to ship as the final answer?
+Accept unless there are SUBSTANTIVE problems (wrong facts, missing requirements, confusing structure) — do not reject for style nits.
+Return JSON: {"accept": boolean, "issues": [concrete, actionable problems — empty if accepted]}.`,
+          `Task: ${q}\n\nDraft answer:\n${draft.text}`,
+          {
+            type: "OBJECT",
+            properties: {
+              accept: { type: "BOOLEAN" },
+              issues: { type: "ARRAY", items: { type: "STRING" } },
+            },
+            required: ["accept", "issues"],
+          }
+        );
+        return {
+          text: r.value.accept
+            ? "✅ Accepted — the draft is good enough to ship."
+            : "Needs revision:\n" +
+              r.value.issues.map((i) => `- ${i}`).join("\n"),
+          sources: [],
+          usage: r.usage,
+          model: r.model,
+          accept: r.value.accept,
+        };
+      }
+    );
+
+    // Fail-open: only an explicit rejection triggers a revision round.
+    if (critique.accept !== false) break;
+
+    const revised = await nodeRun(
+      emit,
+      track,
+      {
+        id: `reviser-${round}`,
+        role: "reviser",
+        title: "Reviser",
+        subtitle: `Applying round-${round} feedback`,
+      },
+      () =>
+        callText(
+          "You are the REVISER. Produce an improved final answer to the task that fixes every valid point in the critique. Output only the improved answer.",
+          `Task: ${q}\n\nDraft:\n${draft.text}\n\nCritique:\n${critique.text}`,
+          false
+        ) as Promise<Leaf & Record<string, unknown>>
+    );
+    draft = { text: revised.text, sources: draft.sources };
+  }
+  return draft;
 }
 
 const PATTERN_LABELS: Record<string, string> = {
