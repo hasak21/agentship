@@ -15,6 +15,9 @@ type NodeState = {
   ms?: number;
   tokens?: number;
   model?: string;
+  failed?: boolean;
+  confidence?: "high" | "medium" | "low";
+  retried?: boolean;
 };
 type TrackStats = { calls: number; tokens: number; ms: number };
 type Track = {
@@ -33,9 +36,16 @@ type Verdict = {
   tokens: number;
 };
 
-type Pattern = "orchestrator" | "debate" | "router" | "consistency" | "single";
+type Pattern =
+  | "auto"
+  | "orchestrator"
+  | "debate"
+  | "router"
+  | "consistency"
+  | "single";
 
 const PATTERNS: { id: Pattern; label: string; blurb: string }[] = [
+  { id: "auto", label: "Auto", blurb: "A meta-agent picks the pattern" },
   { id: "orchestrator", label: "Orchestrator", blurb: "Plan → parallel workers → synthesize" },
   { id: "debate", label: "Debate", blurb: "Openings → rebuttals → a judge rules" },
   { id: "router", label: "Router", blurb: "Classify → route to a specialist" },
@@ -148,6 +158,9 @@ export default function Home() {
     ms?: number;
     tokens?: number;
     model?: string;
+    failed?: boolean;
+    confidence?: "high" | "medium" | "low";
+    reason?: string;
     stats?: TrackStats;
     scores?: { A: Rubric; B: Rubric };
     totals?: { A: number; B: number };
@@ -212,9 +225,19 @@ export default function Home() {
             n.ms = evt.ms;
             n.tokens = evt.tokens;
             n.model = evt.model;
+            n.failed = evt.failed;
+            n.confidence = evt.confidence;
           }
           break;
         }
+        case "node_retry": {
+          const n = track.nodes.find((x) => x.id === evt.id);
+          if (n) n.retried = true;
+          break;
+        }
+        case "track_label":
+          track.label = evt.label ?? track.label;
+          break;
         case "final":
           track.final = {
             answer: evt.answer ?? "",
@@ -255,7 +278,7 @@ export default function Home() {
         {/* Controls */}
         <div className="mx-auto mt-8 max-w-3xl">
           {/* Pattern selector */}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {PATTERNS.map((p) => {
               const active = pattern === p.id;
               return (
@@ -538,14 +561,43 @@ function StatChip({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StatusDot({ state }: { state: "running" | "done" }) {
+function StatusDot({
+  state,
+  failed,
+}: {
+  state: "running" | "done";
+  failed?: boolean;
+}) {
   if (state === "running")
     return (
       <span className="spinner inline-block h-4 w-4 rounded-full border-2 border-white/20 border-t-violet-400" />
     );
+  if (failed)
+    return (
+      <span className="grid h-4 w-4 place-items-center rounded-full bg-red-500/20 text-[10px] text-red-400">
+        ✕
+      </span>
+    );
   return (
     <span className="grid h-4 w-4 place-items-center rounded-full bg-emerald-500/20 text-[10px] text-emerald-400">
       ✓
+    </span>
+  );
+}
+
+const CONF_STYLE: Record<string, string> = {
+  high: "border-emerald-400/30 bg-emerald-500/10 text-emerald-300",
+  medium: "border-amber-400/30 bg-amber-500/10 text-amber-300",
+  low: "border-red-400/30 bg-red-500/10 text-red-300",
+};
+
+function ConfidenceBadge({ level }: { level: "high" | "medium" | "low" }) {
+  return (
+    <span
+      className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${CONF_STYLE[level]}`}
+      title="Worker's self-reported confidence — the synthesizer weighs sub-answers by this"
+    >
+      {level}
     </span>
   );
 }
@@ -603,13 +655,32 @@ function NodeCard({ node }: { node: NodeState }) {
   const icon = ROLE_ICON[node.role] ?? "•";
   const hasResult = !!node.result;
   return (
-    <div className="animate-fade-up rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
+    <div
+      className={`animate-fade-up rounded-xl border p-3.5 ${
+        node.failed
+          ? "border-red-400/25 bg-red-500/[0.06]"
+          : "border-white/10 bg-white/[0.03]"
+      }`}
+    >
       <div className="flex items-center gap-2.5">
         <span className="grid h-8 w-8 place-items-center rounded-lg bg-white/5 text-base">
           {icon}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-white/85">{node.title}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm font-medium text-white/85">
+              {node.title}
+            </span>
+            {node.confidence && <ConfidenceBadge level={node.confidence} />}
+            {node.retried && (
+              <span
+                className="text-[10px] text-amber-400/70"
+                title="This agent failed once and was automatically re-dispatched"
+              >
+                ↻ retried
+              </span>
+            )}
+          </div>
           <div className="truncate text-xs text-white/40">{node.subtitle}</div>
         </div>
         {node.state === "done" && node.ms !== undefined && (
@@ -622,7 +693,7 @@ function NodeCard({ node }: { node: NodeState }) {
             {node.model ? ` · ${node.model.replace("gemini-", "")}` : ""}
           </span>
         )}
-        <StatusDot state={node.state} />
+        <StatusDot state={node.state} failed={node.failed} />
       </div>
 
       {node.state === "running" && !hasResult && (

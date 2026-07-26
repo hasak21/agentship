@@ -29,7 +29,13 @@ const urlFor = (model: string) => `${API_BASE}/${model}:generateContent`;
 type Part = { thought?: boolean; text?: string };
 type Chunk = { web?: { uri?: string; title?: string } };
 type Source = { title: string; uri: string };
-type Leaf = { text: string; sources: Source[]; usage?: number; model?: string };
+type Leaf = {
+  text: string;
+  sources: Source[];
+  usage?: number;
+  model?: string;
+  failed?: boolean;
+};
 type Emit = (evt: Record<string, unknown>) => void;
 type Opts = { web: boolean; critic: boolean };
 type GeminiData = {
@@ -40,6 +46,16 @@ type GeminiData = {
   usageMetadata?: { totalTokenCount?: number };
 };
 
+// Circuit breaker: once a model reports 429 we stop dialling it for a cooldown
+// window instead of re-discovering the same limit on every subsequent agent.
+// Without this, a whole fan-out pays the retry latency of a known-dead model.
+const MODEL_COOLDOWN_MS = 60_000;
+const modelCooldown = new Map<string, number>();
+
+const isCircuitOpen = (m: string) => (modelCooldown.get(m) ?? 0) > Date.now();
+const tripCircuit = (m: string) =>
+  modelCooldown.set(m, Date.now() + MODEL_COOLDOWN_MS);
+
 // POST to Gemini with 429 retry + model failover.
 // Per model: up to 2 attempts with backoff (per-minute burst limits).
 // If a model stays rate-limited (e.g. daily quota exhausted), fall back to the
@@ -48,9 +64,16 @@ async function postGemini(
   model: string | null,
   body: Record<string, unknown>
 ): Promise<GeminiData & { _model?: string }> {
-  const chain = model
+  const full = model
     ? [model, ...MODEL_CHAIN.filter((m) => m !== model)]
     : MODEL_CHAIN;
+  // Prefer models whose circuit is closed, but keep the rest as a last resort
+  // so an over-eager breaker can never make the whole chain unreachable.
+  const chain = [
+    ...full.filter((m) => !isCircuitOpen(m)),
+    ...full.filter(isCircuitOpen),
+  ];
+
   let lastErr = "";
   for (const m of chain) {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -64,10 +87,12 @@ async function postGemini(
       });
       if (res.ok) {
         const data = await res.json();
+        modelCooldown.delete(m);
         return { ...data, _model: m };
       }
       lastErr = `Gemini ${res.status}: ${(await res.text()).slice(0, 160)}`;
       if (res.status !== 429) throw new Error(lastErr);
+      tripCircuit(m);
       // Rate-limited: brief backoff, then retry; second 429 moves down the chain.
       if (attempt === 0) await new Promise((r) => setTimeout(r, 2500));
     }
@@ -145,7 +170,24 @@ async function callJSON<T>(
   return { value: JSON.parse(text) as T, usage, model: data._model };
 }
 
+// Supervisor policy: no single agent may stall its whole track, and a
+// transient failure gets one second chance before the track degrades.
+const NODE_TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS ?? 75_000);
+const NODE_RETRIES = 1;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timeout after ${ms}ms`)),
+      ms
+    );
+    p.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
 // Emit a node's lifecycle around an async unit of work.
+// Failures are surfaced explicitly (`failed: true`) rather than being passed
+// downstream as if they were an answer — see collapseFailures().
 async function nodeRun(
   emit: Emit,
   track: string,
@@ -154,16 +196,34 @@ async function nodeRun(
 ): Promise<Leaf & Record<string, unknown>> {
   emit({ track, type: "node", ...node });
   const t0 = Date.now();
-  let res: Leaf & Record<string, unknown>;
-  try {
-    res = await fn();
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    const text = msg.includes("429")
-      ? "(rate-limited: every model in the fallback chain hit its free quota — wait a minute and retry)"
-      : "(this agent failed)";
-    res = { text, sources: [] };
+  let res: Leaf & Record<string, unknown> | null = null;
+  let lastMsg = "";
+
+  for (let attempt = 0; attempt <= NODE_RETRIES; attempt++) {
+    try {
+      res = await withTimeout(fn(), NODE_TIMEOUT_MS);
+      break;
+    } catch (e) {
+      lastMsg = e instanceof Error ? e.message : String(e);
+      // A retry only helps for transient faults; an exhausted quota is not one.
+      const transient = !lastMsg.includes("429");
+      if (attempt < NODE_RETRIES && transient) {
+        emit({ track, type: "node_retry", id: node.id, reason: lastMsg });
+        continue;
+      }
+      break;
+    }
   }
+
+  if (!res) {
+    const text = lastMsg.includes("429")
+      ? "(rate-limited: every model in the fallback chain hit its free quota — wait a minute and retry)"
+      : lastMsg.includes("timeout")
+        ? `(timed out after ${NODE_TIMEOUT_MS / 1000}s)`
+        : "(this agent failed)";
+    res = { text, sources: [], failed: true };
+  }
+
   emit({
     track,
     type: "node_done",
@@ -173,8 +233,48 @@ async function nodeRun(
     ms: Date.now() - t0,
     tokens: res.usage ?? 0,
     model: res.model,
+    failed: res.failed === true,
+    confidence: res.confidence,
   });
   return res;
+}
+
+// Drop failed agents from a fan-out before their placeholder text reaches a
+// downstream synthesizer. Returns the survivors plus how many were lost, so
+// the aggregating agent can be told honestly what it is missing.
+function collapseFailures<T extends Record<string, unknown>>(
+  results: T[]
+): { ok: T[]; lost: number } {
+  const ok = results.filter((r) => r.failed !== true);
+  return { ok, lost: results.length - ok.length };
+}
+
+// Typed handoff: workers append a confidence line so the synthesizer can weigh
+// their input instead of treating every sub-answer as equally reliable. Parsed
+// out of free text (rather than forced JSON) so web-search grounding still works.
+type Confidence = "high" | "medium" | "low";
+
+function parseHandoff(text: string): {
+  answer: string;
+  confidence: Confidence;
+  caveat: string;
+} {
+  const re = /^[>\s*_-]*CONFIDENCE:\s*(high|medium|low)\b[\s—:–-]*(.*)$/gim;
+  const matches = [...text.matchAll(re)];
+  if (matches.length === 0)
+    return { answer: text.trim(), confidence: "medium", caveat: "" };
+  const last = matches[matches.length - 1];
+  return {
+    answer: text.slice(0, last.index).trim(),
+    confidence: last[1].toLowerCase() as Confidence,
+    caveat: (last[2] ?? "").trim(),
+  };
+}
+
+function degradedNote(lost: number, total: number): string {
+  return lost > 0
+    ? `\n\nNOTE: ${lost} of ${total} agents failed and their input is missing. Answer as completely as you can from what remains, and do not mention the failures.`
+    : "";
 }
 
 // ---------------- Patterns ----------------
@@ -259,19 +359,39 @@ async function runOrchestrator(
           title: `Worker ${i + 1}`,
           subtitle: st,
         },
-        () =>
-          callText(
-            "You are a WORKER. Complete ONLY your assigned sub-task thoroughly and accurately. Be concise but complete.",
+        async () => {
+          const raw = await callText(
+            `You are a WORKER. Complete ONLY your assigned sub-task thoroughly and accurately. Be concise but complete.
+End your reply with one final line, exactly:
+CONFIDENCE: high|medium|low — <short reason, or any caveat a reader should know>
+Use "low" honestly when you are guessing or lack the information to be sure.`,
             `Overall task: ${q}\n\nYour sub-task: ${st}`,
             opts.web
-          ) as Promise<Leaf & Record<string, unknown>>
+          );
+          const h = parseHandoff(raw.text);
+          return {
+            ...raw,
+            text: h.answer,
+            confidence: h.confidence,
+            caveat: h.caveat,
+            subtask: st,
+          } as Leaf & Record<string, unknown>;
+        }
       )
     )
   );
 
-  const combined = subtasks
-    .map((s, i) => `## Sub-task ${i + 1}: ${s}\n${results[i].text}`)
+  // Failed workers must not reach the synthesizer as if their placeholder text
+  // were an answer — drop them and tell the synthesizer what is missing.
+  const { ok: live, lost } = collapseFailures(results);
+  const combined = live
+    .map((r, i) => {
+      const conf = (r.confidence as string) ?? "medium";
+      const caveat = (r.caveat as string) ?? "";
+      return `## Sub-task ${i + 1}: ${r.subtask as string}\n[worker confidence: ${conf}${caveat ? ` — ${caveat}` : ""}]\n${r.text as string}`;
+    })
     .join("\n\n");
+
   const synth = await nodeRun(
     emit,
     track,
@@ -283,8 +403,10 @@ async function runOrchestrator(
     },
     () =>
       callText(
-        "You are the SYNTHESIZER. Combine the worker sub-answers into ONE clear, well-structured final answer to the original task. Remove redundancy, resolve conflicts, use headings and bullets where helpful.",
-        `Original task: ${q}\n\nWorker results:\n${combined}`,
+        `You are the SYNTHESIZER. Combine the worker sub-answers into ONE clear, well-structured final answer to the original task.
+Each sub-answer is tagged with the worker's self-reported confidence. Weigh them accordingly: lean on high-confidence findings, and treat low-confidence claims with caution — hedge them or leave them out rather than stating them as fact.
+Remove redundancy, resolve conflicts, use headings and bullets where helpful. Do not mention confidence levels or the workers themselves.`,
+        `Original task: ${q}\n\nWorker results:\n${combined}${degradedNote(lost, results.length)}`,
         false
       ) as Promise<Leaf & Record<string, unknown>>
   );
@@ -329,12 +451,14 @@ async function runDebate(
     )
   );
 
-  // Round 2 — rebuttals: each debater reads the opponents and responds.
+  // Round 2 — rebuttals: each debater reads the surviving opponents and responds.
   const rebuttals = await Promise.all(
     angles.map((angle, i) => {
       const opponents = openings
         .map((o, j) =>
-          j === i ? null : `--- Debater ${j + 1} (${angles[j]}) argued ---\n${o.text}`
+          j === i || o.failed
+            ? null
+            : `--- Debater ${j + 1} (${angles[j]}) argued ---\n${o.text}`
         )
         .filter(Boolean)
         .join("\n\n");
@@ -358,12 +482,17 @@ Attack the weakest points in your opponents' arguments, concede their strongest 
     })
   );
 
-  // Judge rules on the full transcript.
-  const transcript = angles
-    .map(
-      (angle, i) =>
-        `=== Debater ${i + 1} (${angle}) ===\nOpening:\n${openings[i].text}\n\nRebuttal & final position:\n${rebuttals[i].text}`
-    )
+  // Judge rules on the transcript of debaters who actually spoke.
+  const speakers = angles
+    .map((angle, i) => ({ angle, i }))
+    .filter(({ i }) => !openings[i].failed);
+  const transcript = speakers
+    .map(({ angle, i }) => {
+      const rebuttal = rebuttals[i].failed
+        ? "(no rebuttal delivered)"
+        : rebuttals[i].text;
+      return `=== Debater ${i + 1} (${angle}) ===\nOpening:\n${openings[i].text}\n\nRebuttal & final position:\n${rebuttal}`;
+    })
     .join("\n\n");
   const judge = await nodeRun(
     emit,
@@ -377,7 +506,10 @@ Attack the weakest points in your opponents' arguments, concede their strongest 
     () =>
       callText(
         "You are the JUDGE of a completed debate. You have the full transcript: opening statements and rebuttals. Weigh which arguments survived scrutiny, and produce the single best final answer to the task — combining the points that held up and discarding those that were successfully rebutted. Write the answer directly, as if answering the user's task; never narrate your role, the debate, or your deliberation process.",
-        `Task: ${q}\n\nDebate transcript:\n${transcript}`,
+        `Task: ${q}\n\nDebate transcript:\n${transcript}${degradedNote(
+          angles.length - speakers.length,
+          angles.length
+        )}`,
         false
       ) as Promise<Leaf & Record<string, unknown>>
   );
@@ -514,8 +646,10 @@ async function runConsistency(
     )
   );
 
-  const transcript = samples
-    .map((s, i) => `=== Sample ${i + 1} ===\n${s.text}`)
+  // Only samples that actually completed get a vote.
+  const { ok: votes, lost } = collapseFailures(samples);
+  const transcript = votes
+    .map((s, i) => `=== Sample ${i + 1} ===\n${s.text as string}`)
     .join("\n\n");
   const aggregate = await nodeRun(
     emit,
@@ -524,16 +658,16 @@ async function runConsistency(
       id: "aggregator",
       role: "synthesizer",
       title: "Aggregator",
-      subtitle: `Voting across ${CONSISTENCY_SAMPLES} independent samples`,
+      subtitle: `Voting across ${votes.length} independent samples`,
     },
     () =>
       callText(
-        `You are the AGGREGATOR in a self-consistency ensemble. You are given ${CONSISTENCY_SAMPLES} independent attempts at the same task.
+        `You are the AGGREGATOR in a self-consistency ensemble. You are given ${votes.length} independent attempts at the same task.
 Identify the answer/conclusion that the MAJORITY of samples agree on — that
 consensus is the most trustworthy result, even if one or two samples differ.
 Where samples disagree, briefly note the disagreement and explain which side
 has more support. Produce ONE final answer to the task; do not just list the samples.`,
-        `Task: ${q}\n\nIndependent samples:\n${transcript}`,
+        `Task: ${q}\n\nIndependent samples:\n${transcript}${degradedNote(lost, samples.length)}`,
         false
       ) as Promise<Leaf & Record<string, unknown>>
   );
@@ -624,7 +758,60 @@ const PATTERN_LABELS: Record<string, string> = {
   debate: "Debate",
   router: "Router",
   consistency: "Self-consistency",
+  auto: "Auto",
 };
+
+// Meta-routing (pattern-of-patterns): rather than the user guessing which
+// topology suits a task, an agent reasons about the task's shape and selects
+// the pattern — then the system runs it. The selector is one cheap JSON call.
+const PATTERN_GUIDE = `- orchestrator: broad tasks with separable parts that can be researched in parallel then merged (plans, reports, comparisons across several dimensions).
+- debate: contested or opinion-shaped questions where the best answer emerges from arguing sides (should X or Y, trade-offs, judgement calls).
+- consistency: questions with one correct-ish answer that a model can get wrong by accident (arithmetic, logic, factual recall, step-by-step reasoning).
+- router: narrow, single-domain requests best handled by one specialist in one shot (write this snippet, draft this paragraph).
+- single: trivial or conversational requests where multi-agent machinery would only add latency.`;
+
+async function selectPattern(
+  q: string,
+  emit: Emit,
+  track: string
+): Promise<string> {
+  const choice = await nodeRun(
+    emit,
+    track,
+    {
+      id: "meta",
+      role: "router",
+      title: "Meta-router",
+      subtitle: "Choosing which multi-agent pattern fits this task",
+    },
+    async () => {
+      const r = await callJSON<{ pattern: string; reason?: string }>(
+        `You are the META-ROUTER of a multi-agent system. Analyse the task and choose which agent topology will produce the best answer:\n${PATTERN_GUIDE}\nReturn JSON {pattern, reason}. Keep the reason to one sentence.`,
+        q,
+        {
+          type: "OBJECT",
+          properties: {
+            pattern: {
+              type: "STRING",
+              enum: ["orchestrator", "debate", "consistency", "router", "single"],
+            },
+            reason: { type: "STRING" },
+          },
+          required: ["pattern"],
+        }
+      );
+      const picked = PATTERN_LABELS[r.value.pattern] ? r.value.pattern : "orchestrator";
+      return {
+        text: `Selected **${PATTERN_LABELS[picked]}**${r.value.reason ? `\n${r.value.reason}` : ""}`,
+        sources: [],
+        usage: r.usage,
+        model: r.model,
+        picked,
+      };
+    }
+  );
+  return (choice.picked as string) ?? "orchestrator";
+}
 
 async function runTrack(
   pattern: string,
@@ -644,8 +831,19 @@ async function runTrack(
     emit(evt);
   };
 
+  // Auto: let a meta-agent choose the topology, then run it.
+  let effective = pattern;
+  if (pattern === "auto") {
+    effective = await selectPattern(q, em, track);
+    emit({
+      track,
+      type: "track_label",
+      label: `Auto → ${PATTERN_LABELS[effective] ?? effective}`,
+    });
+  }
+
   let base: Leaf;
-  switch (pattern) {
+  switch (effective) {
     case "single":
       base = await runSingle(q, opts, em, track);
       break;
