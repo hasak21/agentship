@@ -88,16 +88,21 @@ function dedupeSources(sources: Source[]): Source[] {
 }
 
 // Free-text call, optionally grounded with Google Search.
+// `temperature`, when set, overrides the model default — used to make
+// independent samples of the same prompt genuinely diverge (self-consistency).
 async function callText(
   system: string,
   user: string,
-  web: boolean
+  web: boolean,
+  temperature?: number
 ): Promise<Leaf> {
   const body: Record<string, unknown> = {
     systemInstruction: { parts: [{ text: system }] },
     contents: [{ parts: [{ text: user }] }],
   };
   if (web) body.tools = [{ google_search: {} }];
+  if (temperature !== undefined)
+    body.generationConfig = { temperature };
 
   const data = await postGemini(web ? MODEL_WEB : null, body);
   const cand = data.candidates?.[0];
@@ -473,6 +478,71 @@ async function runRouter(
   return ans;
 }
 
+// Self-consistency: sample the SAME prompt several times independently, at
+// higher temperature so the attempts can genuinely diverge, then have an
+// Aggregator find the answer the samples actually agree on. The idea (Wang et
+// al., 2022): errors in independent reasoning attempts tend to be random, but
+// the correct answer tends to show up repeatedly — so majority-consistency is
+// itself a signal of correctness, no critic or debate required.
+const CONSISTENCY_SAMPLES = 4;
+
+async function runConsistency(
+  q: string,
+  opts: Opts,
+  emit: Emit,
+  track: string
+): Promise<Leaf> {
+  const samples = await Promise.all(
+    Array.from({ length: CONSISTENCY_SAMPLES }, (_, i) =>
+      nodeRun(
+        emit,
+        track,
+        {
+          id: `sample-${i}`,
+          role: "worker",
+          title: `Sample ${i + 1}`,
+          subtitle: "Independent reasoning attempt",
+        },
+        () =>
+          callText(
+            "Answer the task carefully and completely, reasoning step by step where helpful.",
+            q,
+            opts.web,
+            0.9
+          ) as Promise<Leaf & Record<string, unknown>>
+      )
+    )
+  );
+
+  const transcript = samples
+    .map((s, i) => `=== Sample ${i + 1} ===\n${s.text}`)
+    .join("\n\n");
+  const aggregate = await nodeRun(
+    emit,
+    track,
+    {
+      id: "aggregator",
+      role: "synthesizer",
+      title: "Aggregator",
+      subtitle: `Voting across ${CONSISTENCY_SAMPLES} independent samples`,
+    },
+    () =>
+      callText(
+        `You are the AGGREGATOR in a self-consistency ensemble. You are given ${CONSISTENCY_SAMPLES} independent attempts at the same task.
+Identify the answer/conclusion that the MAJORITY of samples agree on — that
+consensus is the most trustworthy result, even if one or two samples differ.
+Where samples disagree, briefly note the disagreement and explain which side
+has more support. Produce ONE final answer to the task; do not just list the samples.`,
+        `Task: ${q}\n\nIndependent samples:\n${transcript}`,
+        false
+      ) as Promise<Leaf & Record<string, unknown>>
+  );
+  return {
+    text: aggregate.text,
+    sources: dedupeSources(samples.flatMap((s) => s.sources)),
+  };
+}
+
 // Iterative reflection: Critic reviews -> if rejected, Reviser fixes -> Critic
 // re-reviews the new draft. Loops until the critic explicitly accepts or the
 // round budget is exhausted.
@@ -553,6 +623,7 @@ const PATTERN_LABELS: Record<string, string> = {
   orchestrator: "Orchestrator",
   debate: "Debate",
   router: "Router",
+  consistency: "Self-consistency",
 };
 
 async function runTrack(
@@ -583,6 +654,9 @@ async function runTrack(
       break;
     case "router":
       base = await runRouter(q, opts, em, track);
+      break;
+    case "consistency":
+      base = await runConsistency(q, opts, em, track);
       break;
     case "orchestrator":
     default:

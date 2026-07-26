@@ -14,6 +14,7 @@ stats so you can measure the difference, not just feel it.
 | 🧭 **Orchestrator** | Planner → parallel Workers → Synthesizer |
 | 💬 **Debate** | 3 debaters (pragmatic / skeptical / creative) → rebuttal round (each attacks the others' weak points) → Judge rules on the full transcript |
 | 🚦 **Router** | Router classifies the task → routes to a Specialist |
+| 🗳️ **Self-consistency** | Sample the same prompt 4× independently at high temperature → Aggregator votes on the answer the samples agree on |
 | 🤖 **Single** | One model, one call — the baseline |
 
 Stackable add-ons:

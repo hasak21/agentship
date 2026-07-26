@@ -33,12 +33,13 @@ type Verdict = {
   tokens: number;
 };
 
-type Pattern = "orchestrator" | "debate" | "router" | "single";
+type Pattern = "orchestrator" | "debate" | "router" | "consistency" | "single";
 
 const PATTERNS: { id: Pattern; label: string; blurb: string }[] = [
   { id: "orchestrator", label: "Orchestrator", blurb: "Plan → parallel workers → synthesize" },
   { id: "debate", label: "Debate", blurb: "Openings → rebuttals → a judge rules" },
   { id: "router", label: "Router", blurb: "Classify → route to a specialist" },
+  { id: "consistency", label: "Consistency", blurb: "Sample 4× independently → vote" },
   { id: "single", label: "Single", blurb: "One model, one call (baseline)" },
 ];
 
@@ -254,7 +255,7 @@ export default function Home() {
         {/* Controls */}
         <div className="mx-auto mt-8 max-w-3xl">
           {/* Pattern selector */}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
             {PATTERNS.map((p) => {
               const active = pattern === p.id;
               return (
