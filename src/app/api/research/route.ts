@@ -15,8 +15,13 @@
 //   critic        Critic reviews the draft -> Reviser produces the final
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-// Default model for reasoning/synthesis.
-const MODEL_DEFAULT = "gemini-flash-latest";
+// Model failover chain: if a model's free-tier quota is exhausted (429 after
+// retries), the call automatically falls back to the next model in the chain.
+const MODEL_CHAIN = [
+  process.env.GEMINI_MODEL ?? "gemini-flash-latest",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+];
 // Google Search grounding works reliably on this model, so web calls use it.
 const MODEL_WEB = "gemini-2.5-flash";
 const urlFor = (model: string) => `${API_BASE}/${model}:generateContent`;
@@ -24,7 +29,7 @@ const urlFor = (model: string) => `${API_BASE}/${model}:generateContent`;
 type Part = { thought?: boolean; text?: string };
 type Chunk = { web?: { uri?: string; title?: string } };
 type Source = { title: string; uri: string };
-type Leaf = { text: string; sources: Source[]; usage?: number };
+type Leaf = { text: string; sources: Source[]; usage?: number; model?: string };
 type Emit = (evt: Record<string, unknown>) => void;
 type Opts = { web: boolean; critic: boolean };
 type GeminiData = {
@@ -35,29 +40,39 @@ type GeminiData = {
   usageMetadata?: { totalTokenCount?: number };
 };
 
-// POST to Gemini, retrying on 429 (free-tier burst limits) with backoff.
+// POST to Gemini with 429 retry + model failover.
+// Per model: up to 2 attempts with backoff (per-minute burst limits).
+// If a model stays rate-limited (e.g. daily quota exhausted), fall back to the
+// next model in the chain. `model` fixes the first model tried (web calls).
 async function postGemini(
-  model: string,
+  model: string | null,
   body: Record<string, unknown>
-): Promise<GeminiData> {
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(urlFor(model), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-goog-api-key": process.env.GEMINI_API_KEY ?? "",
-      },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) return res.json();
-    const details = await res.text();
-    if (res.status === 429 && attempt < 2) {
-      // Parallel agents can burst past the per-minute quota; wait and retry.
-      await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
-      continue;
+): Promise<GeminiData & { _model?: string }> {
+  const chain = model
+    ? [model, ...MODEL_CHAIN.filter((m) => m !== model)]
+    : MODEL_CHAIN;
+  let lastErr = "";
+  for (const m of chain) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await fetch(urlFor(m), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-goog-api-key": process.env.GEMINI_API_KEY ?? "",
+        },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return { ...data, _model: m };
+      }
+      lastErr = `Gemini ${res.status}: ${(await res.text()).slice(0, 160)}`;
+      if (res.status !== 429) throw new Error(lastErr);
+      // Rate-limited: brief backoff, then retry; second 429 moves down the chain.
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 2500));
     }
-    throw new Error(`Gemini ${res.status}: ${details.slice(0, 160)}`);
   }
+  throw new Error(lastErr || "Gemini: all models rate-limited");
 }
 
 function dedupeSources(sources: Source[]): Source[] {
@@ -84,7 +99,7 @@ async function callText(
   };
   if (web) body.tools = [{ google_search: {} }];
 
-  const data = await postGemini(web ? MODEL_WEB : MODEL_DEFAULT, body);
+  const data = await postGemini(web ? MODEL_WEB : null, body);
   const cand = data.candidates?.[0];
   const parts: Part[] = cand?.content?.parts ?? [];
   const text = parts
@@ -98,7 +113,7 @@ async function callText(
     .filter((w): w is { uri?: string; title?: string } => !!w?.uri)
     .map((w) => ({ title: w.title || w.uri || "source", uri: w.uri as string }));
   const usage: number = data?.usageMetadata?.totalTokenCount ?? 0;
-  return { text, sources: dedupeSources(sources), usage };
+  return { text, sources: dedupeSources(sources), usage, model: data._model };
 }
 
 // Structured JSON call (no web search). Returns the parsed value plus token usage.
@@ -106,8 +121,8 @@ async function callJSON<T>(
   system: string,
   user: string,
   schema: Record<string, unknown>
-): Promise<{ value: T; usage: number }> {
-  const data = await postGemini(MODEL_DEFAULT, {
+): Promise<{ value: T; usage: number; model?: string }> {
+  const data = await postGemini(null, {
     systemInstruction: { parts: [{ text: system }] },
     contents: [{ parts: [{ text: user }] }],
     generationConfig: {
@@ -122,7 +137,7 @@ async function callJSON<T>(
     .join("")
     .trim();
   const usage: number = data?.usageMetadata?.totalTokenCount ?? 0;
-  return { value: JSON.parse(text) as T, usage };
+  return { value: JSON.parse(text) as T, usage, model: data._model };
 }
 
 // Emit a node's lifecycle around an async unit of work.
@@ -140,7 +155,7 @@ async function nodeRun(
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
     const text = msg.includes("429")
-      ? "(rate-limited: the free Gemini quota was hit — wait ~30s and retry)"
+      ? "(rate-limited: every model in the fallback chain hit its free quota — wait a minute and retry)"
       : "(this agent failed)";
     res = { text, sources: [] };
   }
@@ -152,6 +167,7 @@ async function nodeRun(
     sources: res.sources ?? [],
     ms: Date.now() - t0,
     tokens: res.usage ?? 0,
+    model: res.model,
   });
   return res;
 }
@@ -200,6 +216,7 @@ async function runOrchestrator(
     async () => {
       let subtasks: string[];
       let usage = 0;
+      let model: string | undefined;
       try {
         const r = await callJSON<string[]>(
           `You are the PLANNER. Break the task into 2 to 4 focused, independent sub-tasks that can run in parallel. Each one short. Return ONLY a JSON array of strings.`,
@@ -208,6 +225,7 @@ async function runOrchestrator(
         );
         subtasks = r.value;
         usage = r.usage;
+        model = r.model;
         if (!Array.isArray(subtasks) || subtasks.length === 0)
           subtasks = [q];
       } catch {
@@ -218,6 +236,7 @@ async function runOrchestrator(
         text: subtasks.map((s, i) => `${i + 1}. ${s}`).join("\n"),
         sources: [],
         usage,
+        model,
         subtasks,
       };
     }
@@ -369,6 +388,7 @@ async function runRouter(
       let route = "general";
       let reason = "";
       let usage = 0;
+      let model: string | undefined;
       try {
         const r = await callJSON<{ route: string; reason?: string }>(
           "You are the ROUTER. Classify the task and choose the best specialist: code, write, analyze, or general. Return JSON {route, reason}.",
@@ -383,6 +403,7 @@ async function runRouter(
           }
         );
         usage = r.usage;
+        model = r.model;
         if (SPECIALISTS[r.value.route]) route = r.value.route;
         reason = r.value.reason ?? "";
       } catch {
@@ -392,6 +413,7 @@ async function runRouter(
         text: `Routed to: **${SPECIALISTS[route].title}**${reason ? `\n${reason}` : ""}`,
         sources: [],
         usage,
+        model,
         route,
       };
     }
@@ -469,7 +491,7 @@ async function runTrack(
   opts: Opts,
   emit: Emit,
   track: string
-): Promise<void> {
+): Promise<Leaf> {
   // Wrap emit to tally calls + tokens as node_done events pass through.
   const stats = { calls: 0, tokens: 0 };
   const t0 = Date.now();
@@ -505,6 +527,97 @@ async function runTrack(
     sources: base.sources,
     stats: { ...stats, ms: Date.now() - t0 },
   });
+  return base;
+}
+
+// ---------------- Judge (compare mode) ----------------
+//
+// Blind pairwise evaluation: the judge sees "Answer X" and "Answer Y" with no
+// hint of which pattern produced them. To cancel position bias we judge twice
+// with the order swapped and average the scores.
+
+type Rubric = { correctness: number; completeness: number; clarity: number };
+type PairVerdict = { X: Rubric; Y: Rubric; rationale: string };
+
+const RUBRIC_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    correctness: { type: "NUMBER" },
+    completeness: { type: "NUMBER" },
+    clarity: { type: "NUMBER" },
+  },
+  required: ["correctness", "completeness", "clarity"],
+};
+
+async function judgeOnce(
+  q: string,
+  ansX: string,
+  ansY: string
+): Promise<{ v: PairVerdict; usage: number }> {
+  const r = await callJSON<PairVerdict>(
+    `You are an impartial JUDGE. Two anonymous assistants answered the same task.
+Score each answer 1-10 on: correctness (factually right, no errors),
+completeness (covers what the task needs), clarity (well structured, easy to use).
+Judge only quality — never length; a concise answer that covers the task fully
+deserves full marks. Refer to them only as "Answer X" and "Answer Y".
+Give a one-sentence rationale for the comparison.`,
+    `Task: ${q}\n\n=== Answer X ===\n${ansX}\n\n=== Answer Y ===\n${ansY}`,
+    {
+      type: "OBJECT",
+      properties: {
+        X: RUBRIC_SCHEMA,
+        Y: RUBRIC_SCHEMA,
+        rationale: { type: "STRING" },
+      },
+      required: ["X", "Y", "rationale"],
+    }
+  );
+  return { v: r.value, usage: r.usage };
+}
+
+const total = (r: Rubric) => r.correctness + r.completeness + r.clarity;
+const avg = (a: Rubric, b: Rubric): Rubric => ({
+  correctness: (a.correctness + b.correctness) / 2,
+  completeness: (a.completeness + b.completeness) / 2,
+  clarity: (a.clarity + b.clarity) / 2,
+});
+
+async function runJudge(
+  q: string,
+  answerA: string,
+  answerB: string,
+  labelA: string,
+  labelB: string,
+  emit: Emit
+): Promise<void> {
+  emit({ type: "judging" });
+  try {
+    // Orientation 1: X=A, Y=B. Orientation 2: X=B, Y=A.
+    const [o1, o2] = await Promise.all([
+      judgeOnce(q, answerA, answerB),
+      judgeOnce(q, answerB, answerA),
+    ]);
+    const scoreA = avg(o1.v.X, o2.v.Y);
+    const scoreB = avg(o1.v.Y, o2.v.X);
+    const diff = total(scoreA) - total(scoreB);
+    const winner = Math.abs(diff) < 0.5 ? "tie" : diff > 0 ? "A" : "B";
+    const rationale = o1.v.rationale
+      .replaceAll("Answer X", labelA)
+      .replaceAll("Answer Y", labelB);
+    emit({
+      type: "verdict",
+      scores: { A: scoreA, B: scoreB },
+      totals: { A: total(scoreA), B: total(scoreB) },
+      winner,
+      rationale,
+      tokens: o1.usage + o2.usage,
+    });
+  } catch {
+    emit({
+      type: "verdict_error",
+      message: "The judge could not score this run (likely rate-limited).",
+    });
+  }
 }
 
 export async function POST(request: Request) {
@@ -543,12 +656,23 @@ export async function POST(request: Request) {
 
         const doCompare = compare && pattern !== "single";
         if (doCompare) {
-          send({ type: "track", track: "A", pattern, label: PATTERN_LABELS[pattern] ?? pattern });
-          send({ type: "track", track: "B", pattern: "single", label: "Single agent (baseline)" });
-          await Promise.all([
+          const labelA = PATTERN_LABELS[pattern] ?? pattern;
+          const labelB = "Single agent (baseline)";
+          send({ type: "track", track: "A", pattern, label: labelA });
+          send({ type: "track", track: "B", pattern: "single", label: labelB });
+          const [finalA, finalB] = await Promise.all([
             runTrack(pattern, question, { web, critic }, send, "A"),
             runTrack("single", question, { web, critic: false }, send, "B"),
           ]);
+          // Blind-judge the two final answers.
+          await runJudge(
+            question,
+            finalA.text,
+            finalB.text,
+            labelA,
+            labelB,
+            send
+          );
         } else {
           send({ type: "track", track: "A", pattern, label: PATTERN_LABELS[pattern] ?? pattern });
           await runTrack(pattern, question, { web, critic }, send, "A");

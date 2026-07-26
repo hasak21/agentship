@@ -14,6 +14,7 @@ type NodeState = {
   sources?: Source[];
   ms?: number;
   tokens?: number;
+  model?: string;
 };
 type TrackStats = { calls: number; tokens: number; ms: number };
 type Track = {
@@ -22,6 +23,14 @@ type Track = {
   label: string;
   nodes: NodeState[];
   final?: { answer: string; sources: Source[]; stats?: TrackStats };
+};
+type Rubric = { correctness: number; completeness: number; clarity: number };
+type Verdict = {
+  scores: { A: Rubric; B: Rubric };
+  totals: { A: number; B: number };
+  winner: "A" | "B" | "tie";
+  rationale: string;
+  tokens: number;
 };
 
 type Pattern = "orchestrator" | "debate" | "router" | "single";
@@ -63,6 +72,9 @@ export default function Home() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [tracks, setTracks] = useState<Track[]>([]);
+  const [judging, setJudging] = useState(false);
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const [verdictError, setVerdictError] = useState("");
 
   const started = tracks.length > 0 || running;
   const compareEnabled = pattern !== "single";
@@ -75,6 +87,9 @@ export default function Home() {
     setRunning(true);
     setError("");
     setTracks([]);
+    setJudging(false);
+    setVerdict(null);
+    setVerdictError("");
 
     try {
       const res = await fetch("/api/research", {
@@ -131,10 +146,35 @@ export default function Home() {
     message?: string;
     ms?: number;
     tokens?: number;
+    model?: string;
     stats?: TrackStats;
+    scores?: { A: Rubric; B: Rubric };
+    totals?: { A: number; B: number };
+    winner?: "A" | "B" | "tie";
+    rationale?: string;
   }) {
     if (evt.type === "error") {
       setError(evt.message ?? "Something went wrong.");
+      return;
+    }
+    if (evt.type === "judging") {
+      setJudging(true);
+      return;
+    }
+    if (evt.type === "verdict") {
+      setJudging(false);
+      setVerdict({
+        scores: evt.scores!,
+        totals: evt.totals!,
+        winner: evt.winner!,
+        rationale: evt.rationale ?? "",
+        tokens: evt.tokens ?? 0,
+      });
+      return;
+    }
+    if (evt.type === "verdict_error") {
+      setJudging(false);
+      setVerdictError(evt.message ?? "The judge could not score this run.");
       return;
     }
     const trackId = evt.track ?? "A";
@@ -170,6 +210,7 @@ export default function Home() {
             n.sources = evt.sources;
             n.ms = evt.ms;
             n.tokens = evt.tokens;
+            n.model = evt.model;
           }
           break;
         }
@@ -327,6 +368,33 @@ export default function Home() {
             ))}
           </div>
         )}
+
+        {/* Judge */}
+        {judging && (
+          <div className="animate-fade-up mx-auto mt-6 flex max-w-3xl items-center gap-3 rounded-2xl border border-amber-400/25 bg-amber-500/5 px-5 py-4">
+            <span className="spinner h-5 w-5 rounded-full border-2 border-white/20 border-t-amber-400" />
+            <div>
+              <div className="text-sm font-medium text-white/90">
+                ⚖️ Judge is scoring both answers…
+              </div>
+              <div className="text-xs text-white/40">
+                Blind pairwise evaluation, judged twice with positions swapped
+              </div>
+            </div>
+          </div>
+        )}
+        {verdictError && (
+          <div className="mx-auto mt-6 max-w-3xl rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+            ⚖️ {verdictError}
+          </div>
+        )}
+        {verdict && (
+          <VerdictCard
+            verdict={verdict}
+            labelA={tracks.find((t) => t.id === "A")?.label ?? "A"}
+            labelB={tracks.find((t) => t.id === "B")?.label ?? "B"}
+          />
+        )}
       </div>
     </main>
   );
@@ -364,6 +432,101 @@ function Toggle({
 
 function fmtMs(ms: number) {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function ScoreBar({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-24 text-white/45">{label}</span>
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-violet-400 to-fuchsia-400"
+          style={{ width: `${(value / 10) * 100}%` }}
+        />
+      </div>
+      <span className="w-8 text-right tabular-nums text-white/70">
+        {value.toFixed(1)}
+      </span>
+    </div>
+  );
+}
+
+function VerdictCard({
+  verdict,
+  labelA,
+  labelB,
+}: {
+  verdict: Verdict;
+  labelA: string;
+  labelB: string;
+}) {
+  const winnerLabel =
+    verdict.winner === "tie"
+      ? "It's a tie"
+      : `Winner: ${verdict.winner === "A" ? labelA : labelB}`;
+  const sides: { id: "A" | "B"; label: string }[] = [
+    { id: "A", label: labelA },
+    { id: "B", label: labelB },
+  ];
+  return (
+    <div className="animate-fade-up mx-auto mt-6 max-w-3xl rounded-2xl border border-amber-400/25 bg-gradient-to-b from-amber-500/10 to-white/[0.02] p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-lg">⚖️</span>
+        <span className="font-medium text-white/90">Judge&apos;s verdict</span>
+        <span
+          className={`ml-auto rounded-full px-3 py-1 text-sm font-medium ${
+            verdict.winner === "tie"
+              ? "bg-white/10 text-white/70"
+              : "bg-emerald-500/15 text-emerald-300"
+          }`}
+        >
+          {verdict.winner === "tie" ? "🤝" : "🏆"} {winnerLabel}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        {sides.map((s) => {
+          const r = verdict.scores[s.id];
+          const won = verdict.winner === s.id;
+          return (
+            <div
+              key={s.id}
+              className={`rounded-xl border p-4 ${
+                won
+                  ? "border-emerald-400/30 bg-emerald-500/5"
+                  : "border-white/10 bg-white/[0.03]"
+              }`}
+            >
+              <div className="mb-3 flex items-baseline justify-between gap-2">
+                <span className="truncate text-sm font-medium text-white/85">
+                  {s.label}
+                </span>
+                <span className="text-xl font-semibold tabular-nums text-white">
+                  {verdict.totals[s.id].toFixed(1)}
+                  <span className="text-xs font-normal text-white/40">/30</span>
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                <ScoreBar label="Correctness" value={r.correctness} />
+                <ScoreBar label="Completeness" value={r.completeness} />
+                <ScoreBar label="Clarity" value={r.clarity} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {verdict.rationale && (
+        <p className="mt-4 text-sm leading-relaxed text-white/60">
+          {verdict.rationale}
+        </p>
+      )}
+      <p className="mt-2 text-xs text-white/30">
+        Blind pairwise evaluation · judged twice with positions swapped ·{" "}
+        {verdict.tokens.toLocaleString()} judge tokens
+      </p>
+    </div>
+  );
 }
 
 function StatChip({ label, value }: { label: string; value: string }) {
@@ -449,9 +612,13 @@ function NodeCard({ node }: { node: NodeState }) {
           <div className="truncate text-xs text-white/40">{node.subtitle}</div>
         </div>
         {node.state === "done" && node.ms !== undefined && (
-          <span className="whitespace-nowrap text-[11px] tabular-nums text-white/30">
+          <span
+            className="whitespace-nowrap text-[11px] tabular-nums text-white/30"
+            title={node.model ? `model: ${node.model}` : undefined}
+          >
             {fmtMs(node.ms)}
             {node.tokens ? ` · ${node.tokens.toLocaleString()} tok` : ""}
+            {node.model ? ` · ${node.model.replace("gemini-", "")}` : ""}
           </span>
         )}
         <StatusDot state={node.state} />
