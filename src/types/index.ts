@@ -1,4 +1,4 @@
-// Centralized types export for AgentShip 2.0
+// Centralized types export for AgentShip
 
 export * from "./diff";
 export * from "./audit";

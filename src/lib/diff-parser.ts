@@ -1,4 +1,4 @@
-// Git Unified Diff Parser for AgentShip 2.0
+// Git Unified Diff Parser for AgentShip
 import { DiffFile, DiffHunk, DiffLine, FileChangeType, ParsedDiff } from "@/types/diff";
 
 const EXTENSION_LANGUAGE_MAP: Record<string, string> = {

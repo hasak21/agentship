@@ -428,10 +428,10 @@ export default function Home() {
         <div className="text-center">
           <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-3.5 py-1 text-xs text-violet-200">
             <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            AgentShip 2.0 · Mission Control & Multi-Model Audit Gate
+            AgentShip · Mission Control & Multi-Model Audit Gate
           </div>
           <h1 className="bg-gradient-to-b from-white via-white/90 to-white/40 bg-clip-text text-4xl font-bold tracking-tight text-transparent sm:text-5xl font-mono">
-            ✦ AgentShip 2.0
+            ✦ AgentShip
           </h1>
           <p className="mx-auto mt-2 max-w-2xl text-sm text-white/50">
             Visual workspace and multi-model quality & security audit gate for CLI Coding Agents (Claude Code, DeepSeek Harness, OpenCode, Pi).

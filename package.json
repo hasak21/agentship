@@ -1,7 +1,7 @@
 {
   "name": "agentship",
-  "version": "0.2.0",
-  "description": "AgentShip 2.0 — Coding Agent Mission Control & Multi-Model Cross-Audit Gate (面向 AI Coding Agent 的可视化任务指挥舱与多模型代码质检台)",
+  "version": "0.1.0",
+  "description": "AgentShip — Visual Mission Control & Multi-Model Code Quality/Security Audit Gate for AI Coding Agents.",
   "private": true,
   "scripts": {
     "dev": "next dev",

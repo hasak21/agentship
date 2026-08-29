@@ -1,4 +1,4 @@
-// Centralized components export for AgentShip 2.0
+// Centralized components export for AgentShip
 
 export * from "./diff/DiffFileCard";
 export * from "./diff/DiffViewer";

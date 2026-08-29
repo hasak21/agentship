@@ -1,4 +1,4 @@
-// Quality and Security Audit types for AgentShip 2.0
+// Quality and Security Audit types for AgentShip
 
 export type AuditSeverity = "blocker" | "warning" | "nitpick";
 

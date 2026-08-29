@@ -1,4 +1,4 @@
-// Diff data types for Visual Diff Review in AgentShip 2.0
+// Diff data types for Visual Diff Review in AgentShip
 
 export type LineType = "add" | "del" | "context" | "header";
 

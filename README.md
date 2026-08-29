@@ -1,17 +1,17 @@
-# ✦ AgentShip 2.0 — Coding Agent Mission Control & Cross-Audit Gate
+# ✦ AgentShip — Coding Agent Mission Control & Cross-Audit Gate
 
 [![Next.js](https://img.shields.io/badge/Next.js-16.2_(App_Router)-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38bdf8?style=flat-square&logo=tailwindcss)](https://tailwindcss.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg?style=flat-square)](LICENSE)
 
-**AgentShip 2.0** is an open-source **Visual Mission Control and Multi-Model Quality & Security Audit Gate** designed for CLI-first AI coding agents (such as **Claude Code**, **DeepSeek Harness (dsh)**, **OpenCode**, and **Pi**).
+**AgentShip** is an open-source **Visual Mission Control and Multi-Model Quality & Security Audit Gate** designed for CLI-first AI coding agents (such as **Claude Code**, **DeepSeek Harness (dsh)**, **OpenCode**, and **Pi**).
 
 Rather than reinventing another monolithic code generation CLI, AgentShip acts as an **ecosystem companion (Layer-2)** that bridges the gap between terminal agents and developer experience.
 
 ---
 
-## 🌟 Why AgentShip 2.0?
+## 🌟 Why AgentShip?
 
 Terminal coding agents excel at speed and autonomous execution, but present three critical bottlenecks in real-world workflows:
 
@@ -26,7 +26,7 @@ Terminal coding agents excel at speed and autonomous execution, but present thre
 └──────────────────────────────┬──────────────────────────────┘
                                │ (SSE / REST / MCP)
 ┌──────────────────────────────┴──────────────────────────────┐
-│                      AgentShip 2.0                          │
+│                        AgentShip                            │
 │                                                             │
 │  🧭 Multi-Agent Lab     🔍 Visual Diff Review               │
 │  🛡️ Cross-Audit Gate    📊 Telemetry & ROI Dashboard        │
@@ -82,7 +82,7 @@ agentship/
 │   │   │   └── research/route.ts # Multi-Agent Topologies Orchestration API
 │   │   ├── globals.css           # Tailwind CSS v4 & custom keyframe styling
 │   │   ├── layout.tsx            # Global metadata and RootLayout
-│   │   └── page.tsx              # AgentShip 2.0 Multi-Tab Mission Control UI
+│   │   └── page.tsx              # AgentShip Multi-Tab Mission Control UI
 │   ├── components/
 │   │   ├── audit/
 │   │   │   ├── AuditReportCard.tsx # Detailed audit report card & fix patches
@@ -194,7 +194,7 @@ Executes tasks through multi-agent topologies and streams SSE execution events.
   - [x] Multi-file Git Unified Diff Parser & Visual Diff Viewer (Unified & Split modes).
   - [x] Cross-Model Quality & Security Audit Gate with 4-dimension scoring & auto-patch.
   - [x] Telemetry ROI dashboard and session execution log.
-  - [x] AgentShip 2.0 multi-tab mission control UI.
+  - [x] AgentShip multi-tab mission control UI.
 - [ ] **Sprint 2 (Upcoming)**:
   - [ ] Standard Model Context Protocol (MCP) Server endpoint (`/api/mcp`) for native Claude Code & Cursor integration.
   - [ ] Pi coding agent plugin extension (`extensions/pi-agentship.ts`).

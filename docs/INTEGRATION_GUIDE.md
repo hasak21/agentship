@@ -1,18 +1,18 @@
-# AgentShip 2.0 — Coding Agent Integration Guide
+# AgentShip — Coding Agent Integration Guide
 
-This guide explains how to connect and use **AgentShip 2.0** alongside mainstream CLI coding agents (**Claude Code**, **Pi**, **DeepSeek Harness**, and **OpenCode**).
+This guide explains how to connect and use **AgentShip** alongside mainstream CLI coding agents (**Claude Code**, **Pi**, **DeepSeek Harness**, and **OpenCode**).
 
 ---
 
 ## 1. Integration Architecture
 
-AgentShip 2.0 acts as the **Layer-2 Mission Control & Cross-Audit Gate** for your CLI agents:
+AgentShip acts as the **Layer-2 Mission Control & Cross-Audit Gate** for your CLI agents:
 
 ```
 [ Developer Terminal ] ───► Runs: Claude Code / Pi / OpenCode / DSH
                                     │
                                     ▼ (Generates Git Diff / Commits)
-[ AgentShip 2.0 ] ◄────────────── (Ingest via REST API / Web UI / MCP)
+[ AgentShip ] ◄────────────────── (Ingest via REST API / Web UI / MCP)
        │
        ├─► 🔍 Visual Diff Review (Interactive multi-file inspection)
        ├─► 🛡️ Cross-Audit Gate (Independent Security & Correctness verification)
@@ -30,7 +30,7 @@ AgentShip 2.0 acts as the **Layer-2 Mission Control & Cross-Audit Gate** for you
    # or for unstaged changes:
    git diff > patch.diff
    ```
-2. Open AgentShip 2.0 at `http://localhost:3000`.
+2. Open AgentShip at `http://localhost:3000`.
 3. Switch to the **🔍 Visual Diff Review** tab and paste the diff.
 4. Click **🛡️ Cross-Audit Diff** to trigger an independent multi-model audit.
 

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AgentShip 2.0 — Coding Agent Mission Control & Cross-Audit Gate",
+  title: "AgentShip — Coding Agent Mission Control & Cross-Audit Gate",
   description:
     "Visual Mission Control and Multi-Model Code Quality Audit Gate for CLI Coding Agents (Claude Code, DeepSeek Harness, OpenCode, Pi).",
 };

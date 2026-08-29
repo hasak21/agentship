@@ -1,4 +1,4 @@
-// Agent execution, telemetry and event types for AgentShip 2.0
+// Agent execution, telemetry and event types for AgentShip
 
 export type AgentRole =
   | "planner"
