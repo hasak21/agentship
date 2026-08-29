@@ -2,12 +2,8 @@
 
 import { useState } from "react";
 import { parseGitDiff } from "@/lib/diff-parser";
-import { ParsedDiff } from "@/types/diff";
-import { AuditReport } from "@/types/audit";
-import { TaskTelemetry } from "@/types/agent";
-import { DiffViewer } from "@/components/diff/DiffViewer";
-import { AuditReportCard } from "@/components/audit/AuditReportCard";
-import { RoiDashboard } from "@/components/telemetry/RoiDashboard";
+import { ParsedDiff, AuditReport, TaskTelemetry } from "@/types";
+import { DiffViewer, AuditReportCard, RoiDashboard } from "@/components";
 
 // ---------- Types ----------
 type Source = { title: string; uri: string };
