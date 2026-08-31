@@ -4,9 +4,9 @@
   "description": "AgentShip — Visual Mission Control & Multi-Model Code Quality/Security Audit Gate for AI Coding Agents.",
   "private": true,
   "scripts": {
-    "dev": "node server.mjs",
+    "dev": "next dev -H 0.0.0.0",
     "build": "next build",
-    "start": "NODE_ENV=production node server.mjs",
+    "start": "next start -H 0.0.0.0",
     "lint": "eslint",
     "test": "tsx --test tests/**/*.test.ts"
   },
