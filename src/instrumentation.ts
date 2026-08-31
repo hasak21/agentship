@@ -1,23 +1,4 @@
 // Runs once when the Next.js server starts.
-// If a proxy is configured in the environment (common on local dev machines
-// behind a VPN/Clash proxy), route Node's global fetch through it.
-// On a normal server or in production (no proxy env var), this does nothing.
-
 export async function register() {
-  // Prevent Node 22 libuv event loop from exiting on idle
-  if (process.env.NEXT_RUNTIME === "nodejs") {
-    setInterval(() => {}, 60000);
-  }
-
-  const proxyUrl =
-    process.env.HTTPS_PROXY ||
-    process.env.https_proxy ||
-    process.env.HTTP_PROXY ||
-    process.env.http_proxy;
-
-  if (!proxyUrl) return;
-
-  const { setGlobalDispatcher, ProxyAgent } = await import("undici");
-  setGlobalDispatcher(new ProxyAgent(proxyUrl));
-  console.log(`[AgentShip] Routing outbound fetch through proxy: ${proxyUrl}`);
+  // Empty register to keep Next.js lifecycle clean
 }
