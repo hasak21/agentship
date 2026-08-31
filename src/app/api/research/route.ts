@@ -1,177 +1,98 @@
-// AgentShip — multi-agent lab.
+// AgentShip — Universal Multi-Agent Orchestration Engine.
 //
-// One request runs the user's task through a chosen PATTERN, optionally with a
-// CRITIC reflection pass and/or live WEB SEARCH, and optionally COMPARED against
-// a single-agent baseline. Every agent is emitted as a generic "node" event so
-// the UI can render any pattern with one component. All agents use the same
-// ordinary model (Gemini flash) — the pattern is what does the work.
-//
-// Patterns:
-//   single        one call (baseline)
-//   orchestrator  Planner -> parallel Workers -> Synthesizer
-//   debate        parallel Debaters (different angles) -> Judge
-//   router        Router classifies the task -> one Specialist
-// Add-on:
-//   critic        Critic reviews the draft -> Reviser produces the final
+// Runs a task through chosen multi-agent topologies (Orchestrator, Debate,
+// Router, Self-Consistency, Single Baseline, Auto) with optional Critic reflection,
+// Web Search grounding, and Blind Pairwise Judge evaluation.
+// Fully decoupled from any specific model provider (Universal LLM Engine).
 
-const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-// Model failover chain: if a model's free-tier quota is exhausted (429 after
-// retries), the call automatically falls back to the next model in the chain.
-const MODEL_CHAIN = [
-  process.env.GEMINI_MODEL ?? "gemini-flash-latest",
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
-];
-// Google Search grounding works reliably on this model, so web calls use it.
-const MODEL_WEB = "gemini-2.5-flash";
-const urlFor = (model: string) => `${API_BASE}/${model}:generateContent`;
+import {
+  callUniversalLLM,
+  extractJsonFromResponse,
+  LLMRequestOptions,
+  LLMResponse,
+  LLMSource,
+  resolveProviderConfig,
+} from "@/lib/llm";
 
-type Part = { thought?: boolean; text?: string };
-type Chunk = { web?: { uri?: string; title?: string } };
-type Source = { title: string; uri: string };
+type Source = LLMSource;
+
 type Leaf = {
   text: string;
   sources: Source[];
   usage?: number;
   model?: string;
   failed?: boolean;
+  confidence?: "high" | "medium" | "low";
+  caveat?: string;
+  subtask?: string;
+  [key: string]: unknown;
 };
+
 type Emit = (evt: Record<string, unknown>) => void;
-type Opts = { web: boolean; critic: boolean };
-type GeminiData = {
-  candidates?: {
-    content?: { parts?: Part[] };
-    groundingMetadata?: { groundingChunks?: Chunk[] };
-  }[];
-  usageMetadata?: { totalTokenCount?: number };
+type Opts = {
+  web: boolean;
+  critic: boolean;
+  llmOptions?: LLMRequestOptions;
 };
 
-// Circuit breaker: once a model reports 429 we stop dialling it for a cooldown
-// window instead of re-discovering the same limit on every subsequent agent.
-// Without this, a whole fan-out pays the retry latency of a known-dead model.
-const MODEL_COOLDOWN_MS = 60_000;
-const modelCooldown = new Map<string, number>();
-
-const isCircuitOpen = (m: string) => (modelCooldown.get(m) ?? 0) > Date.now();
-const tripCircuit = (m: string) =>
-  modelCooldown.set(m, Date.now() + MODEL_COOLDOWN_MS);
-
-// POST to Gemini with 429 retry + model failover.
-// Per model: up to 2 attempts with backoff (per-minute burst limits).
-// If a model stays rate-limited (e.g. daily quota exhausted), fall back to the
-// next model in the chain. `model` fixes the first model tried (web calls).
-async function postGemini(
-  model: string | null,
-  body: Record<string, unknown>
-): Promise<GeminiData & { _model?: string }> {
-  const full = model
-    ? [model, ...MODEL_CHAIN.filter((m) => m !== model)]
-    : MODEL_CHAIN;
-  // Prefer models whose circuit is closed, but keep the rest as a last resort
-  // so an over-eager breaker can never make the whole chain unreachable.
-  const chain = [
-    ...full.filter((m) => !isCircuitOpen(m)),
-    ...full.filter(isCircuitOpen),
-  ];
-
-  let lastErr = "";
-  for (const m of chain) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await fetch(urlFor(m), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-goog-api-key": process.env.GEMINI_API_KEY ?? "",
-        },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        modelCooldown.delete(m);
-        return { ...data, _model: m };
-      }
-      lastErr = `Gemini ${res.status}: ${(await res.text()).slice(0, 160)}`;
-      if (res.status !== 429) throw new Error(lastErr);
-      tripCircuit(m);
-      // Rate-limited: brief backoff, then retry; second 429 moves down the chain.
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 2500));
-    }
-  }
-  throw new Error(lastErr || "Gemini: all models rate-limited");
-}
-
-function dedupeSources(sources: Source[]): Source[] {
-  const seen = new Set<string>();
-  const out: Source[] = [];
-  for (const s of sources) {
-    if (s.uri && !seen.has(s.uri)) {
-      seen.add(s.uri);
-      out.push(s);
-    }
-  }
-  return out.slice(0, 8);
-}
-
-// Free-text call, optionally grounded with Google Search.
-// `temperature`, when set, overrides the model default — used to make
-// independent samples of the same prompt genuinely diverge (self-consistency).
+// Universal free-text call
 async function callText(
   system: string,
   user: string,
   web: boolean,
-  temperature?: number
+  temperature?: number,
+  llmOptions?: LLMRequestOptions
 ): Promise<Leaf> {
-  const body: Record<string, unknown> = {
-    systemInstruction: { parts: [{ text: system }] },
-    contents: [{ parts: [{ text: user }] }],
-  };
-  if (web) body.tools = [{ google_search: {} }];
-  if (temperature !== undefined)
-    body.generationConfig = { temperature };
+  const res: LLMResponse = await callUniversalLLM(
+    [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    {
+      ...llmOptions,
+      temperature: temperature ?? 0.7,
+      webSearch: web,
+    }
+  );
 
-  const data = await postGemini(web ? MODEL_WEB : null, body);
-  const cand = data.candidates?.[0];
-  const parts: Part[] = cand?.content?.parts ?? [];
-  const text = parts
-    .filter((p) => !p.thought && p.text)
-    .map((p) => p.text)
-    .join("\n")
-    .trim();
-  const chunks: Chunk[] = cand?.groundingMetadata?.groundingChunks ?? [];
-  const sources: Source[] = chunks
-    .map((c) => c.web)
-    .filter((w): w is { uri?: string; title?: string } => !!w?.uri)
-    .map((w) => ({ title: w.title || w.uri || "source", uri: w.uri as string }));
-  const usage: number = data?.usageMetadata?.totalTokenCount ?? 0;
-  return { text, sources: dedupeSources(sources), usage, model: data._model };
+  return {
+    text: res.text,
+    sources: res.sources ?? [],
+    usage: res.usage.totalTokens,
+    model: res.model,
+  };
 }
 
-// Structured JSON call (no web search). Returns the parsed value plus token usage.
+// Universal structured JSON call
 async function callJSON<T>(
   system: string,
   user: string,
-  schema: Record<string, unknown>
+  schemaDescription: string,
+  llmOptions?: LLMRequestOptions
 ): Promise<{ value: T; usage: number; model?: string }> {
-  const data = await postGemini(null, {
-    systemInstruction: { parts: [{ text: system }] },
-    contents: [{ parts: [{ text: user }] }],
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: schema,
-    },
-  });
-  const parts: Part[] = data.candidates?.[0]?.content?.parts ?? [];
-  const text = parts
-    .filter((p) => !p.thought && p.text)
-    .map((p) => p.text)
-    .join("")
-    .trim();
-  const usage: number = data?.usageMetadata?.totalTokenCount ?? 0;
-  return { value: JSON.parse(text) as T, usage, model: data._model };
+  const fullSystem = `${system}\n\nIMPORTANT: Return ONLY a valid JSON object or array according to this requirement:\n${schemaDescription}`;
+
+  const res: LLMResponse = await callUniversalLLM(
+    [
+      { role: "system", content: fullSystem },
+      { role: "user", content: user },
+    ],
+    {
+      ...llmOptions,
+      temperature: 0.2,
+      responseFormat: "json_object",
+    }
+  );
+
+  const value = extractJsonFromResponse<T>(res.text);
+  return {
+    value,
+    usage: res.usage.totalTokens,
+    model: res.model,
+  };
 }
 
-// Supervisor policy: no single agent may stall its whole track, and a
-// transient failure gets one second chance before the track degrades.
+// Supervisor policy: timeout and retry
 const NODE_TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS ?? 75_000);
 const NODE_RETRIES = 1;
 
@@ -185,18 +106,16 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-// Emit a node's lifecycle around an async unit of work.
-// Failures are surfaced explicitly (`failed: true`) rather than being passed
-// downstream as if they were an answer — see collapseFailures().
+// Supervisor node lifecycle wrapper
 async function nodeRun(
   emit: Emit,
   track: string,
   node: { id: string; role: string; title: string; subtitle: string },
-  fn: () => Promise<Leaf & Record<string, unknown>>
-): Promise<Leaf & Record<string, unknown>> {
+  fn: () => Promise<Leaf>
+): Promise<Leaf> {
   emit({ track, type: "node", ...node });
   const t0 = Date.now();
-  let res: Leaf & Record<string, unknown> | null = null;
+  let res: Leaf | null = null;
   let lastMsg = "";
 
   for (let attempt = 0; attempt <= NODE_RETRIES; attempt++) {
@@ -205,7 +124,6 @@ async function nodeRun(
       break;
     } catch (e) {
       lastMsg = e instanceof Error ? e.message : String(e);
-      // A retry only helps for transient faults; an exhausted quota is not one.
       const transient = !lastMsg.includes("429");
       if (attempt < NODE_RETRIES && transient) {
         emit({ track, type: "node_retry", id: node.id, reason: lastMsg });
@@ -217,10 +135,10 @@ async function nodeRun(
 
   if (!res) {
     const text = lastMsg.includes("429")
-      ? "(rate-limited: every model in the fallback chain hit its free quota — wait a minute and retry)"
+      ? "(rate-limited: model hit quota limits — please wait a moment or configure alternative provider)"
       : lastMsg.includes("timeout")
         ? `(timed out after ${NODE_TIMEOUT_MS / 1000}s)`
-        : "(this agent failed)";
+        : `(agent execution failed: ${lastMsg})`;
     res = { text, sources: [], failed: true };
   }
 
@@ -239,9 +157,6 @@ async function nodeRun(
   return res;
 }
 
-// Drop failed agents from a fan-out before their placeholder text reaches a
-// downstream synthesizer. Returns the survivors plus how many were lost, so
-// the aggregating agent can be told honestly what it is missing.
 function collapseFailures<T extends Record<string, unknown>>(
   results: T[]
 ): { ok: T[]; lost: number } {
@@ -249,9 +164,6 @@ function collapseFailures<T extends Record<string, unknown>>(
   return { ok, lost: results.length - ok.length };
 }
 
-// Typed handoff: workers append a confidence line so the synthesizer can weigh
-// their input instead of treating every sub-answer as equally reliable. Parsed
-// out of free text (rather than forced JSON) so web-search grounding still works.
 type Confidence = "high" | "medium" | "low";
 
 function parseHandoff(text: string): {
@@ -277,7 +189,7 @@ function degradedNote(lost: number, total: number): string {
     : "";
 }
 
-// ---------------- Patterns ----------------
+// ---------------- Topologies ----------------
 
 async function runSingle(
   q: string,
@@ -296,10 +208,12 @@ async function runSingle(
     },
     () =>
       callText(
-        "You are a capable assistant. Answer the user's task clearly and completely.",
+        "You are a capable assistant. Answer the user's task clearly, rigorously, and completely.",
         q,
-        opts.web
-      ) as Promise<Leaf & Record<string, unknown>>
+        opts.web,
+        undefined,
+        opts.llmOptions
+      )
   );
 }
 
@@ -316,7 +230,7 @@ async function runOrchestrator(
       id: "planner",
       role: "planner",
       title: "Planner",
-      subtitle: "Splitting the task into sub-tasks",
+      subtitle: "Decomposing task into parallel sub-tasks",
     },
     async () => {
       let subtasks: string[];
@@ -324,9 +238,10 @@ async function runOrchestrator(
       let model: string | undefined;
       try {
         const r = await callJSON<string[]>(
-          `You are the PLANNER. Break the task into 2 to 4 focused, independent sub-tasks that can run in parallel. Each one short. Return ONLY a JSON array of strings.`,
+          `You are the PLANNER. Break the task into 2 to 4 focused, independent sub-tasks that can run in parallel. Return ONLY a JSON array of strings.`,
           q,
-          { type: "ARRAY", items: { type: "STRING" } }
+          `["Subtask 1 description", "Subtask 2 description", ...]`,
+          opts.llmOptions
         );
         subtasks = r.value;
         usage = r.usage;
@@ -366,7 +281,9 @@ End your reply with one final line, exactly:
 CONFIDENCE: high|medium|low — <short reason, or any caveat a reader should know>
 Use "low" honestly when you are guessing or lack the information to be sure.`,
             `Overall task: ${q}\n\nYour sub-task: ${st}`,
-            opts.web
+            opts.web,
+            undefined,
+            opts.llmOptions
           );
           const h = parseHandoff(raw.text);
           return {
@@ -375,14 +292,12 @@ Use "low" honestly when you are guessing or lack the information to be sure.`,
             confidence: h.confidence,
             caveat: h.caveat,
             subtask: st,
-          } as Leaf & Record<string, unknown>;
+          };
         }
       )
     )
   );
 
-  // Failed workers must not reach the synthesizer as if their placeholder text
-  // were an answer — drop them and tell the synthesizer what is missing.
   const { ok: live, lost } = collapseFailures(results);
   const combined = live
     .map((r, i) => {
@@ -399,22 +314,26 @@ Use "low" honestly when you are guessing or lack the information to be sure.`,
       id: "synth",
       role: "synthesizer",
       title: "Synthesizer",
-      subtitle: "Merging results into a final answer",
+      subtitle: "Merging worker outputs into final coherent result",
     },
-    () =>
-      callText(
-        `You are the SYNTHESIZER. Combine the worker sub-answers into ONE clear, well-structured final answer to the original task.
-Each sub-answer is tagged with the worker's self-reported confidence. Weigh them accordingly: lean on high-confidence findings, and treat low-confidence claims with caution — hedge them or leave them out rather than stating them as fact.
-Remove redundancy, resolve conflicts, use headings and bullets where helpful. Do not mention confidence levels or the workers themselves.`,
-        `Original task: ${q}\n\nWorker results:\n${combined}${degradedNote(lost, results.length)}`,
-        false
-      ) as Promise<Leaf & Record<string, unknown>>
+    async () => {
+      const r = await callText(
+        `You are the SYNTHESIZER. Multiple parallel workers researched parts of a user's task.
+Combine their findings into one unified, cohesive, high-quality response to the overall task.
+Each worker provided a CONFIDENCE tag (high/medium/low). Rely firmly on high-confidence findings;
+hedge or omit claims tagged low-confidence.
+Do NOT just paste the sections together — resolve contradictions and write a seamless answer.`,
+        `Overall task: ${q}\n\n=== Worker Findings ===\n${combined}${degradedNote(lost, results.length)}`,
+        false,
+        undefined,
+        opts.llmOptions
+      );
+      const allSources = results.flatMap((res) => res.sources ?? []);
+      return { ...r, sources: allSources };
+    }
   );
 
-  return {
-    text: synth.text,
-    sources: dedupeSources(results.flatMap((r) => r.sources)),
-  };
+  return synth;
 }
 
 async function runDebate(
@@ -423,124 +342,111 @@ async function runDebate(
   emit: Emit,
   track: string
 ): Promise<Leaf> {
-  const angles = [
-    "practical and pragmatic",
-    "critical and skeptical",
-    "creative and big-picture",
+  const debaterConfigs = [
+    {
+      id: "debater-1",
+      title: "Debater 1 (Pragmatist)",
+      angle: "practical, real-world constraints, implementation feasibility, and operational simplicity",
+    },
+    {
+      id: "debater-2",
+      title: "Debater 2 (Skeptic)",
+      angle: "edge cases, security failure modes, hidden assumptions, and theoretical limits",
+    },
+    {
+      id: "debater-3",
+      title: "Debater 3 (Innovator)",
+      angle: "creative alternatives, first-principles redesign, and high-leverage solutions",
+    },
   ];
 
-  // Round 1 — opening statements, in parallel, blind to each other.
+  // Round 1: Opening statements
   const openings = await Promise.all(
-    angles.map((angle, i) =>
+    debaterConfigs.map((d) =>
       nodeRun(
         emit,
         track,
         {
-          id: `debater-${i}-open`,
+          id: d.id,
           role: "debater",
-          title: `Debater ${i + 1}`,
-          subtitle: `${angle} · opening statement`,
+          title: d.title,
+          subtitle: `Opening position emphasizing ${d.angle}`,
         },
         () =>
           callText(
-            `You are DEBATER ${i + 1} on a panel. Answer the task from a ${angle} perspective. Make your strongest, most substantive case.`,
-            q,
-            opts.web
-          ) as Promise<Leaf & Record<string, unknown>>
+            `You are a debater in a multi-perspective panel addressing the user's task.
+Focus especially on: ${d.angle}.
+State your strongest, most persuasive opening argument.`,
+            `Task: ${q}`,
+            opts.web,
+            undefined,
+            opts.llmOptions
+          )
       )
     )
   );
 
-  // Round 2 — rebuttals: each debater reads the surviving opponents and responds.
+  const { ok: liveOpenings } = collapseFailures(openings);
+  const openingDigest = liveOpenings
+    .map((o, idx) => `=== ${debaterConfigs[idx]?.title ?? `Debater ${idx + 1}`} ===\n${o.text}`)
+    .join("\n\n");
+
+  // Round 2: Rebuttal round
   const rebuttals = await Promise.all(
-    angles.map((angle, i) => {
-      const opponents = openings
-        .map((o, j) =>
-          j === i || o.failed
-            ? null
-            : `--- Debater ${j + 1} (${angles[j]}) argued ---\n${o.text}`
-        )
-        .filter(Boolean)
-        .join("\n\n");
-      return nodeRun(
+    debaterConfigs.map((d, i) =>
+      nodeRun(
         emit,
         track,
         {
-          id: `debater-${i}-rebut`,
+          id: `rebuttal-${i + 1}`,
           role: "debater",
-          title: `Debater ${i + 1}`,
-          subtitle: `${angle} · rebuttal`,
+          title: `${d.title} (Rebuttal)`,
+          subtitle: "Critiquing counter-arguments and refining position",
         },
         () =>
           callText(
-            `You are DEBATER ${i + 1} (${angle} perspective) in the rebuttal round of a debate.
-Attack the weakest points in your opponents' arguments, concede their strongest points if honesty demands it, and state your improved FINAL position on the task.`,
-            `Task: ${q}\n\nYour opening statement:\n${openings[i].text}\n\nYour opponents' arguments:\n${opponents}`,
-            false
-          ) as Promise<Leaf & Record<string, unknown>>
-      );
-    })
+            `You are ${d.title}. You have heard your peers' opening statements.
+Challenge weak assumptions, concede valid points, and present your refined concluding recommendation.`,
+            `Task: ${q}\n\n=== All Opening Statements ===\n${openingDigest}`,
+            opts.web,
+            undefined,
+            opts.llmOptions
+          )
+      )
+    )
   );
 
-  // Judge rules on the transcript of debaters who actually spoke.
-  const speakers = angles
-    .map((angle, i) => ({ angle, i }))
-    .filter(({ i }) => !openings[i].failed);
-  const transcript = speakers
-    .map(({ angle, i }) => {
-      const rebuttal = rebuttals[i].failed
-        ? "(no rebuttal delivered)"
-        : rebuttals[i].text;
-      return `=== Debater ${i + 1} (${angle}) ===\nOpening:\n${openings[i].text}\n\nRebuttal & final position:\n${rebuttal}`;
-    })
+  const { ok: liveRebuttals } = collapseFailures(rebuttals);
+  const debateTranscript = liveRebuttals
+    .map((r, idx) => `=== ${debaterConfigs[idx]?.title ?? `Debater ${idx + 1}`} Final Argument ===\n${r.text}`)
     .join("\n\n");
-  const judge = await nodeRun(
+
+  // Round 3: Judge ruling
+  const ruling = await nodeRun(
     emit,
     track,
     {
       id: "judge",
       role: "judge",
       title: "Judge",
-      subtitle: "Ruling on the full debate transcript",
+      subtitle: "Synthesizing full debate into authoritative consensus",
     },
-    () =>
-      callText(
-        "You are the JUDGE of a completed debate. You have the full transcript: opening statements and rebuttals. Weigh which arguments survived scrutiny, and produce the single best final answer to the task — combining the points that held up and discarding those that were successfully rebutted. Write the answer directly, as if answering the user's task; never narrate your role, the debate, or your deliberation process.",
-        `Task: ${q}\n\nDebate transcript:\n${transcript}${degradedNote(
-          angles.length - speakers.length,
-          angles.length
-        )}`,
-        false
-      ) as Promise<Leaf & Record<string, unknown>>
+    async () => {
+      const r = await callText(
+        `You are the Chief Arbitrator / Senior Judge.
+Review the complete debate transcript. Weigh the evidence and deliver the definitive answer to the user's task.`,
+        `Task: ${q}\n\n=== Debate Transcript ===\n${debateTranscript}`,
+        false,
+        undefined,
+        opts.llmOptions
+      );
+      const allSources = [...openings, ...rebuttals].flatMap((res) => res.sources ?? []);
+      return { ...r, sources: allSources };
+    }
   );
-  return {
-    text: judge.text,
-    sources: dedupeSources(openings.flatMap((d) => d.sources)),
-  };
-}
 
-const SPECIALISTS: Record<string, { title: string; system: string }> = {
-  code: {
-    title: "Code specialist",
-    system:
-      "You are an expert software engineer. Solve the task with correct, idiomatic code and clear explanation.",
-  },
-  write: {
-    title: "Writing specialist",
-    system:
-      "You are an expert writer and editor. Produce polished, well-structured prose for the task.",
-  },
-  analyze: {
-    title: "Analysis specialist",
-    system:
-      "You are an expert analyst. Break the problem down with rigorous, structured reasoning and evidence.",
-  },
-  general: {
-    title: "Generalist",
-    system:
-      "You are a knowledgeable generalist. Answer the task clearly and completely.",
-  },
-};
+  return ruling;
+}
 
 async function runRouter(
   q: string,
@@ -548,75 +454,74 @@ async function runRouter(
   emit: Emit,
   track: string
 ): Promise<Leaf> {
-  const choice = await nodeRun(
+  const routerNode = await nodeRun(
     emit,
     track,
     {
       id: "router",
       role: "router",
-      title: "Router",
-      subtitle: "Choosing the right specialist",
+      title: "Intent Router",
+      subtitle: "Classifying domain specialization",
     },
     async () => {
-      let route = "general";
-      let reason = "";
+      let classification = "general";
+      let reasoning = "";
       let usage = 0;
       let model: string | undefined;
+
       try {
-        const r = await callJSON<{ route: string; reason?: string }>(
-          "You are the ROUTER. Classify the task and choose the best specialist: code, write, analyze, or general. Return JSON {route, reason}.",
+        const r = await callJSON<{ domain: string; reasoning: string }>(
+          `Classify the given task into exactly ONE of: ["code", "architecture", "security", "writing", "analysis", "general"].
+Explain your classification in one sentence.`,
           q,
-          {
-            type: "OBJECT",
-            properties: {
-              route: { type: "STRING", enum: ["code", "write", "analyze", "general"] },
-              reason: { type: "STRING" },
-            },
-            required: ["route"],
-          }
+          `{ "domain": "code|architecture|security|writing|analysis|general", "reasoning": "string" }`,
+          opts.llmOptions
         );
+        classification = r.value.domain || "general";
+        reasoning = r.value.reasoning || "";
         usage = r.usage;
         model = r.model;
-        if (SPECIALISTS[r.value.route]) route = r.value.route;
-        reason = r.value.reason ?? "";
       } catch {
-        route = "general";
+        classification = "general";
       }
+
       return {
-        text: `Routed to: **${SPECIALISTS[route].title}**${reason ? `\n${reason}` : ""}`,
+        text: `Routed to domain: [${classification.toUpperCase()}] — ${reasoning}`,
         sources: [],
         usage,
         model,
-        route,
+        domain: classification,
       };
     }
   );
-  const route = (choice.route as string) ?? "general";
-  const spec = SPECIALISTS[route];
-  const ans = await nodeRun(
+
+  const domain = (routerNode.domain as string) || "general";
+
+  const specialistPromptMap: Record<string, string> = {
+    code: "You are a Principal Software Engineer. Provide idiomatic, performant, production-ready code with tests.",
+    architecture: "You are a Chief Enterprise Architect. Detail system topologies, scalability, and trade-offs.",
+    security: "You are a Principal Security Auditor. Analyze threat vectors, mitigation strategies, and vulnerabilities.",
+    writing: "You are a Principal Technical Writer. Provide clear, structured, engaging documentation.",
+    analysis: "You are a Senior Quantitative Analyst. Provide rigorous reasoning and step-by-step logic.",
+    general: "You are an expert polymath assistant. Answer thoroughly and clearly.",
+  };
+
+  const specialistPrompt = specialistPromptMap[domain] || specialistPromptMap.general;
+
+  const result = await nodeRun(
     emit,
     track,
     {
       id: "specialist",
       role: "specialist",
-      title: spec.title,
-      subtitle: "Handling the task",
+      title: `${domain.charAt(0).toUpperCase() + domain.slice(1)} Specialist`,
+      subtitle: `Domain expert answering request`,
     },
-    () =>
-      callText(spec.system, q, opts.web) as Promise<
-        Leaf & Record<string, unknown>
-      >
+    () => callText(specialistPrompt, q, opts.web, undefined, opts.llmOptions)
   );
-  return ans;
-}
 
-// Self-consistency: sample the SAME prompt several times independently, at
-// higher temperature so the attempts can genuinely diverge, then have an
-// Aggregator find the answer the samples actually agree on. The idea (Wang et
-// al., 2022): errors in independent reasoning attempts tend to be random, but
-// the correct answer tends to show up repeatedly — so majority-consistency is
-// itself a signal of correctness, no critic or debate required.
-const CONSISTENCY_SAMPLES = 4;
+  return result;
+}
 
 async function runConsistency(
   q: string,
@@ -624,193 +529,220 @@ async function runConsistency(
   emit: Emit,
   track: string
 ): Promise<Leaf> {
+  const SAMPLES_COUNT = 4;
+  const sampleIndices = Array.from({ length: SAMPLES_COUNT }, (_, i) => i + 1);
+
   const samples = await Promise.all(
-    Array.from({ length: CONSISTENCY_SAMPLES }, (_, i) =>
+    sampleIndices.map((idx) =>
       nodeRun(
         emit,
         track,
         {
-          id: `sample-${i}`,
+          id: `sample-${idx}`,
           role: "worker",
-          title: `Sample ${i + 1}`,
-          subtitle: "Independent reasoning attempt",
+          title: `Reasoning Path #${idx}`,
+          subtitle: "Independent stochastic sampling (temp=0.9)",
         },
         () =>
           callText(
-            "Answer the task carefully and completely, reasoning step by step where helpful.",
+            "Solve the user's task step-by-step. Be rigorous, self-verify your reasoning, and state your final conclusion clearly.",
             q,
             opts.web,
-            0.9
-          ) as Promise<Leaf & Record<string, unknown>>
+            0.9,
+            opts.llmOptions
+          )
       )
     )
   );
 
-  // Only samples that actually completed get a vote.
-  const { ok: votes, lost } = collapseFailures(samples);
-  const transcript = votes
-    .map((s, i) => `=== Sample ${i + 1} ===\n${s.text as string}`)
+  const { ok: liveSamples } = collapseFailures(samples);
+  const sampleDigest = liveSamples
+    .map((s, i) => `=== Sample ${i + 1} ===\n${s.text}`)
     .join("\n\n");
-  const aggregate = await nodeRun(
+
+  const aggregator = await nodeRun(
     emit,
     track,
     {
       id: "aggregator",
       role: "synthesizer",
-      title: "Aggregator",
-      subtitle: `Voting across ${votes.length} independent samples`,
+      title: "Consensus Aggregator",
+      subtitle: "Self-Consistency majority voting and convergence",
     },
-    () =>
-      callText(
-        `You are the AGGREGATOR in a self-consistency ensemble. You are given ${votes.length} independent attempts at the same task.
-Identify the answer/conclusion that the MAJORITY of samples agree on — that
-consensus is the most trustworthy result, even if one or two samples differ.
-Where samples disagree, briefly note the disagreement and explain which side
-has more support. Produce ONE final answer to the task; do not just list the samples.`,
-        `Task: ${q}\n\nIndependent samples:\n${transcript}${degradedNote(lost, samples.length)}`,
-        false
-      ) as Promise<Leaf & Record<string, unknown>>
+    async () => {
+      const r = await callText(
+        `You are the Self-Consistency Aggregator. You are given 4 independent reasoning samples for the same task.
+Identify the majority consensus answer, resolve any discrepancies, and provide the definitive solution.`,
+        `Task: ${q}\n\n=== Independent Samples ===\n${sampleDigest}`,
+        false,
+        undefined,
+        opts.llmOptions
+      );
+      const allSources = samples.flatMap((s) => s.sources ?? []);
+      return { ...r, sources: allSources };
+    }
   );
-  return {
-    text: aggregate.text,
-    sources: dedupeSources(samples.flatMap((s) => s.sources)),
-  };
+
+  return aggregator;
 }
 
-// Iterative reflection: Critic reviews -> if rejected, Reviser fixes -> Critic
-// re-reviews the new draft. Loops until the critic explicitly accepts or the
-// round budget is exhausted.
-const CRITIC_MAX_ROUNDS = 2;
-
-async function withCritic(
-  base: Leaf,
+async function runAuto(
   q: string,
+  opts: Opts,
   emit: Emit,
   track: string
 ): Promise<Leaf> {
-  let draft = base;
-  for (let round = 1; round <= CRITIC_MAX_ROUNDS; round++) {
-    const critique = await nodeRun(
+  const metaNode = await nodeRun(
+    emit,
+    track,
+    {
+      id: "meta-router",
+      role: "router",
+      title: "Meta-Orchestrator",
+      subtitle: "Selecting optimal topology for task shape",
+    },
+    async () => {
+      let chosenPattern = "orchestrator";
+      let rationale = "";
+      let usage = 0;
+      let model: string | undefined;
+
+      try {
+        const r = await callJSON<{ pattern: string; rationale: string }>(
+          `Analyze the task shape and select the optimal multi-agent topology from:
+- "orchestrator": for broad, decomposable tasks with distinct sub-parts
+- "debate": for open-ended questions with trade-offs, architecture choices, or contested opinions
+- "router": for specific single-domain questions needing a specialist
+- "consistency": for algorithmic, mathematical, or logic puzzles with exact answers
+- "single": for simple, direct queries`,
+          q,
+          `{ "pattern": "orchestrator|debate|router|consistency|single", "rationale": "string" }`,
+          opts.llmOptions
+        );
+        chosenPattern = r.value.pattern || "orchestrator";
+        rationale = r.value.rationale || "";
+        usage = r.usage;
+        model = r.model;
+      } catch {
+        chosenPattern = "orchestrator";
+      }
+
+      return {
+        text: `Selected [${chosenPattern.toUpperCase()}]: ${rationale}`,
+        sources: [],
+        usage,
+        model,
+        pattern: chosenPattern,
+      };
+    }
+  );
+
+  const selected = (metaNode.pattern as string) || "orchestrator";
+  emit({ track, type: "relabel", label: `Auto → ${selected}` });
+
+  switch (selected) {
+    case "debate":
+      return runDebate(q, opts, emit, track);
+    case "router":
+      return runRouter(q, opts, emit, track);
+    case "consistency":
+      return runConsistency(q, opts, emit, track);
+    case "single":
+      return runSingle(q, opts, emit, track);
+    case "orchestrator":
+    default:
+      return runOrchestrator(q, opts, emit, track);
+  }
+}
+
+// Optional Critic Reflection Loop
+async function runCriticPass(
+  q: string,
+  draft: Leaf,
+  opts: Opts,
+  emit: Emit,
+  track: string
+): Promise<Leaf> {
+  let currentDraft = draft.text;
+  let allSources = draft.sources ?? [];
+
+  for (let round = 1; round <= 2; round++) {
+    const criticVerdict = await nodeRun(
       emit,
       track,
       {
         id: `critic-${round}`,
         role: "critic",
-        title: "Critic",
-        subtitle: `Review round ${round} of ${CRITIC_MAX_ROUNDS}`,
+        title: `Critic (Round ${round})`,
+        subtitle: "Scrutinizing draft for bugs, omissions, and hallucinations",
       },
       async () => {
-        const r = await callJSON<{ accept: boolean; issues: string[] }>(
-          `You are the CRITIC. Review the draft answer against the task.
-Decide: is this draft good enough to ship as the final answer?
-Accept unless there are SUBSTANTIVE problems (wrong facts, missing requirements, confusing structure) — do not reject for style nits.
-Return JSON: {"accept": boolean, "issues": [concrete, actionable problems — empty if accepted]}.`,
-          `Task: ${q}\n\nDraft answer:\n${draft.text}`,
-          {
-            type: "OBJECT",
-            properties: {
-              accept: { type: "BOOLEAN" },
-              issues: { type: "ARRAY", items: { type: "STRING" } },
-            },
-            required: ["accept", "issues"],
-          }
-        );
+        let accept = true;
+        let issues: string[] = [];
+        let usage = 0;
+        let model: string | undefined;
+
+        try {
+          const r = await callJSON<{ accept: boolean; issues: string[] }>(
+            `You are a strict CRITIC. Scrutinize the draft response against the user's task.
+If the draft is accurate, complete, and high quality, set accept=true.
+If it has notable flaws, omissions, or errors, set accept=false and list actionable issues.`,
+            `Task: ${q}\n\n=== Draft ===\n${currentDraft}`,
+            `{ "accept": boolean, "issues": ["issue 1", "issue 2"] }`,
+            opts.llmOptions
+          );
+          accept = r.value.accept;
+          issues = r.value.issues || [];
+          usage = r.usage;
+          model = r.model;
+        } catch {
+          accept = true;
+        }
+
         return {
-          text: r.value.accept
-            ? "✅ Accepted — the draft is good enough to ship."
-            : "Needs revision:\n" +
-              r.value.issues.map((i) => `- ${i}`).join("\n"),
+          text: accept ? "✓ Draft approved without revisions." : `Issues found:\n${issues.map((it) => `- ${it}`).join("\n")}`,
           sources: [],
-          usage: r.usage,
-          model: r.model,
-          accept: r.value.accept,
+          usage,
+          model,
+          accept,
+          issues,
         };
       }
     );
 
-    // Fail-open: only an explicit rejection triggers a revision round.
-    if (critique.accept !== false) break;
+    if (criticVerdict.accept) {
+      break;
+    }
 
-    const revised = await nodeRun(
+    const reviser = await nodeRun(
       emit,
       track,
       {
         id: `reviser-${round}`,
         role: "reviser",
-        title: "Reviser",
-        subtitle: `Applying round-${round} feedback`,
+        title: `Reviser (Round ${round})`,
+        subtitle: "Fixing identified critique points",
       },
-      () =>
-        callText(
-          "You are the REVISER. Produce an improved final answer to the task that fixes every valid point in the critique. Output only the improved answer.",
-          `Task: ${q}\n\nDraft:\n${draft.text}\n\nCritique:\n${critique.text}`,
-          false
-        ) as Promise<Leaf & Record<string, unknown>>
+      async () => {
+        const r = await callText(
+          `You are the REVISER. Improve and rewrite the draft based on the Critic's feedback.`,
+          `Task: ${q}\n\n=== Previous Draft ===\n${currentDraft}\n\n=== Critic Issues ===\n${criticVerdict.text}`,
+          opts.web,
+          undefined,
+          opts.llmOptions
+        );
+        allSources = [...allSources, ...(r.sources ?? [])];
+        return r;
+      }
     );
-    draft = { text: revised.text, sources: draft.sources };
+
+    currentDraft = reviser.text;
   }
-  return draft;
-}
 
-const PATTERN_LABELS: Record<string, string> = {
-  single: "Single agent",
-  orchestrator: "Orchestrator",
-  debate: "Debate",
-  router: "Router",
-  consistency: "Self-consistency",
-  auto: "Auto",
-};
-
-// Meta-routing (pattern-of-patterns): rather than the user guessing which
-// topology suits a task, an agent reasons about the task's shape and selects
-// the pattern — then the system runs it. The selector is one cheap JSON call.
-const PATTERN_GUIDE = `- orchestrator: broad tasks with separable parts that can be researched in parallel then merged (plans, reports, comparisons across several dimensions).
-- debate: contested or opinion-shaped questions where the best answer emerges from arguing sides (should X or Y, trade-offs, judgement calls).
-- consistency: questions with one correct-ish answer that a model can get wrong by accident (arithmetic, logic, factual recall, step-by-step reasoning).
-- router: narrow, single-domain requests best handled by one specialist in one shot (write this snippet, draft this paragraph).
-- single: trivial or conversational requests where multi-agent machinery would only add latency.`;
-
-async function selectPattern(
-  q: string,
-  emit: Emit,
-  track: string
-): Promise<string> {
-  const choice = await nodeRun(
-    emit,
-    track,
-    {
-      id: "meta",
-      role: "router",
-      title: "Meta-router",
-      subtitle: "Choosing which multi-agent pattern fits this task",
-    },
-    async () => {
-      const r = await callJSON<{ pattern: string; reason?: string }>(
-        `You are the META-ROUTER of a multi-agent system. Analyse the task and choose which agent topology will produce the best answer:\n${PATTERN_GUIDE}\nReturn JSON {pattern, reason}. Keep the reason to one sentence.`,
-        q,
-        {
-          type: "OBJECT",
-          properties: {
-            pattern: {
-              type: "STRING",
-              enum: ["orchestrator", "debate", "consistency", "router", "single"],
-            },
-            reason: { type: "STRING" },
-          },
-          required: ["pattern"],
-        }
-      );
-      const picked = PATTERN_LABELS[r.value.pattern] ? r.value.pattern : "orchestrator";
-      return {
-        text: `Selected **${PATTERN_LABELS[picked]}**${r.value.reason ? `\n${r.value.reason}` : ""}`,
-        sources: [],
-        usage: r.usage,
-        model: r.model,
-        picked,
-      };
-    }
-  );
-  return (choice.picked as string) ?? "orchestrator";
+  return {
+    text: currentDraft,
+    sources: allSources,
+  };
 }
 
 async function runTrack(
@@ -820,108 +752,73 @@ async function runTrack(
   emit: Emit,
   track: string
 ): Promise<Leaf> {
-  // Wrap emit to tally calls + tokens as node_done events pass through.
-  const stats = { calls: 0, tokens: 0 };
   const t0 = Date.now();
-  const em: Emit = (evt) => {
-    if (evt.type === "node_done") {
-      stats.calls += 1;
-      stats.tokens += (evt.tokens as number) || 0;
-    }
-    emit(evt);
-  };
+  let finalLeaf: Leaf;
 
-  // Auto: let a meta-agent choose the topology, then run it.
-  let effective = pattern;
-  if (pattern === "auto") {
-    effective = await selectPattern(q, em, track);
-    emit({
-      track,
-      type: "track_label",
-      label: `Auto → ${PATTERN_LABELS[effective] ?? effective}`,
-    });
-  }
-
-  let base: Leaf;
-  switch (effective) {
+  switch (pattern) {
     case "single":
-      base = await runSingle(q, opts, em, track);
+      finalLeaf = await runSingle(q, opts, emit, track);
       break;
     case "debate":
-      base = await runDebate(q, opts, em, track);
+      finalLeaf = await runDebate(q, opts, emit, track);
       break;
     case "router":
-      base = await runRouter(q, opts, em, track);
+      finalLeaf = await runRouter(q, opts, emit, track);
       break;
     case "consistency":
-      base = await runConsistency(q, opts, em, track);
+      finalLeaf = await runConsistency(q, opts, emit, track);
+    case "auto":
+      finalLeaf = await runAuto(q, opts, emit, track);
       break;
     case "orchestrator":
     default:
-      base = await runOrchestrator(q, opts, em, track);
+      finalLeaf = await runOrchestrator(q, opts, emit, track);
       break;
   }
-  if (opts.critic) base = await withCritic(base, q, em, track);
+
+  if (opts.critic) {
+    finalLeaf = await runCriticPass(q, finalLeaf, opts, emit, track);
+  }
+
   emit({
     track,
     type: "final",
-    answer: base.text,
-    sources: base.sources,
-    stats: { ...stats, ms: Date.now() - t0 },
+    answer: finalLeaf.text,
+    sources: finalLeaf.sources ?? [],
+    stats: { ms: Date.now() - t0 },
   });
-  return base;
+
+  return finalLeaf;
 }
 
-// ---------------- Judge (compare mode) ----------------
-//
-// Blind pairwise evaluation: the judge sees "Answer X" and "Answer Y" with no
-// hint of which pattern produced them. To cancel position bias we judge twice
-// with the order swapped and average the scores.
-
+// Double-Blind Pairwise LLM-as-Judge
 type Rubric = { correctness: number; completeness: number; clarity: number };
-type PairVerdict = { X: Rubric; Y: Rubric; rationale: string };
-
-const RUBRIC_SCHEMA = {
-  type: "OBJECT",
-  properties: {
-    correctness: { type: "NUMBER" },
-    completeness: { type: "NUMBER" },
-    clarity: { type: "NUMBER" },
-  },
-  required: ["correctness", "completeness", "clarity"],
-};
 
 async function judgeOnce(
   q: string,
   ansX: string,
-  ansY: string
-): Promise<{ v: PairVerdict; usage: number }> {
-  const r = await callJSON<PairVerdict>(
-    `You are an impartial JUDGE. Two anonymous assistants answered the same task.
-Score each answer 1-10 on: correctness (factually right, no errors),
-completeness (covers what the task needs), clarity (well structured, easy to use).
-Judge only quality — never length; a concise answer that covers the task fully
-deserves full marks. Refer to them only as "Answer X" and "Answer Y".
-Give a one-sentence rationale for the comparison.`,
+  ansY: string,
+  llmOptions?: LLMRequestOptions
+): Promise<{ v: { X: Rubric; Y: Rubric; rationale: string }; usage: number }> {
+  const r = await callJSON<{ X: Rubric; Y: Rubric; rationale: string }>(
+    `You are an impartial double-blind JUDGE. Score each answer 1-10 on correctness, completeness, and clarity.`,
     `Task: ${q}\n\n=== Answer X ===\n${ansX}\n\n=== Answer Y ===\n${ansY}`,
-    {
-      type: "OBJECT",
-      properties: {
-        X: RUBRIC_SCHEMA,
-        Y: RUBRIC_SCHEMA,
-        rationale: { type: "STRING" },
-      },
-      required: ["X", "Y", "rationale"],
-    }
+    `{
+  "X": { "correctness": 8.5, "completeness": 9.0, "clarity": 8.5 },
+  "Y": { "correctness": 9.0, "completeness": 8.0, "clarity": 9.0 },
+  "rationale": "Comparative rationale..."
+}`,
+    llmOptions
   );
+
   return { v: r.value, usage: r.usage };
 }
 
-const total = (r: Rubric) => r.correctness + r.completeness + r.clarity;
+const total = (r: Rubric) => (r.correctness || 0) + (r.completeness || 0) + (r.clarity || 0);
 const avg = (a: Rubric, b: Rubric): Rubric => ({
-  correctness: (a.correctness + b.correctness) / 2,
-  completeness: (a.completeness + b.completeness) / 2,
-  clarity: (a.clarity + b.clarity) / 2,
+  correctness: ((a.correctness || 0) + (b.correctness || 0)) / 2,
+  completeness: ((a.completeness || 0) + (b.completeness || 0)) / 2,
+  clarity: ((a.clarity || 0) + (b.clarity || 0)) / 2,
 });
 
 async function runJudge(
@@ -930,22 +827,24 @@ async function runJudge(
   answerB: string,
   labelA: string,
   labelB: string,
-  emit: Emit
+  emit: Emit,
+  llmOptions?: LLMRequestOptions
 ): Promise<void> {
   emit({ type: "judging" });
   try {
-    // Orientation 1: X=A, Y=B. Orientation 2: X=B, Y=A.
     const [o1, o2] = await Promise.all([
-      judgeOnce(q, answerA, answerB),
-      judgeOnce(q, answerB, answerA),
+      judgeOnce(q, answerA, answerB, llmOptions),
+      judgeOnce(q, answerB, answerA, llmOptions),
     ]);
+
     const scoreA = avg(o1.v.X, o2.v.Y);
     const scoreB = avg(o1.v.Y, o2.v.X);
     const diff = total(scoreA) - total(scoreB);
     const winner = Math.abs(diff) < 0.5 ? "tie" : diff > 0 ? "A" : "B";
-    const rationale = o1.v.rationale
+    const rationale = (o1.v.rationale || "")
       .replaceAll("Answer X", labelA)
       .replaceAll("Answer Y", labelB);
+
     emit({
       type: "verdict",
       scores: { A: scoreA, B: scoreB },
@@ -957,10 +856,19 @@ async function runJudge(
   } catch {
     emit({
       type: "verdict_error",
-      message: "The judge could not score this run (likely rate-limited).",
+      message: "The evaluator could not score this run (rate-limited or format error).",
     });
   }
 }
+
+const PATTERN_LABELS: Record<string, string> = {
+  orchestrator: "Orchestrator (Plan → Workers → Synth)",
+  debate: "Debate (Panel → Rebuttal → Judge)",
+  router: "Router (Specialist Dispatch)",
+  consistency: "Self-Consistency (Stochastic Voting)",
+  single: "Single Agent (Baseline)",
+  auto: "Auto (Meta-Routing)",
+};
 
 export async function POST(request: Request) {
   let body: {
@@ -969,31 +877,61 @@ export async function POST(request: Request) {
     critic?: boolean;
     web?: boolean;
     compare?: boolean;
+    model?: string;
+    provider?: string;
+    apiKey?: string;
+    baseUrl?: string;
   } = {};
+
   try {
     body = await request.json();
   } catch {
-    // handled below
+    // Handled below
   }
+
   const question = (body.question ?? "").trim();
   const pattern = body.pattern ?? "orchestrator";
   const critic = !!body.critic;
   const web = !!body.web;
   const compare = !!body.compare;
 
+  const llmOptions: LLMRequestOptions = {
+    model: body.model,
+    provider: body.provider as LLMRequestOptions["provider"],
+    apiKey: body.apiKey,
+    baseUrl: body.baseUrl,
+  };
+
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       const send: Emit = (obj) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+
       try {
         if (!question) {
-          send({ type: "error", message: "Please enter a task." });
+          send({ type: "error", message: "Please provide a task to execute." });
           return;
         }
-        if (!process.env.GEMINI_API_KEY) {
-          send({ type: "error", message: "Server is missing GEMINI_API_KEY." });
-          return;
+
+        const resolved = resolveProviderConfig(llmOptions);
+        if (!resolved.apiKey && resolved.provider !== "ollama" && !resolved.baseUrl.includes("localhost")) {
+          // Check if any key is available
+          const hasAnyKey =
+            process.env.OPENAI_API_KEY ||
+            process.env.DEEPSEEK_API_KEY ||
+            process.env.ANTHROPIC_API_KEY ||
+            process.env.LLM_API_KEY ||
+            process.env.GEMINI_API_KEY;
+
+          if (!hasAnyKey) {
+            send({
+              type: "error",
+              message:
+                "No LLM provider configured. Please set OPENAI_API_KEY, DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, or start Ollama locally.",
+            });
+            return;
+          }
         }
 
         const doCompare = compare && pattern !== "single";
@@ -1002,27 +940,34 @@ export async function POST(request: Request) {
           const labelB = "Single agent (baseline)";
           send({ type: "track", track: "A", pattern, label: labelA });
           send({ type: "track", track: "B", pattern: "single", label: labelB });
+
           const [finalA, finalB] = await Promise.all([
-            runTrack(pattern, question, { web, critic }, send, "A"),
-            runTrack("single", question, { web, critic: false }, send, "B"),
+            runTrack(pattern, question, { web, critic, llmOptions }, send, "A"),
+            runTrack("single", question, { web, critic: false, llmOptions }, send, "B"),
           ]);
-          // Blind-judge the two final answers.
+
           await runJudge(
             question,
             finalA.text,
             finalB.text,
             labelA,
             labelB,
-            send
+            send,
+            llmOptions
           );
         } else {
-          send({ type: "track", track: "A", pattern, label: PATTERN_LABELS[pattern] ?? pattern });
-          await runTrack(pattern, question, { web, critic }, send, "A");
+          send({
+            type: "track",
+            track: "A",
+            pattern,
+            label: PATTERN_LABELS[pattern] ?? pattern,
+          });
+          await runTrack(pattern, question, { web, critic, llmOptions }, send, "A");
         }
+
         send({ type: "done" });
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Something went wrong.";
+        const message = err instanceof Error ? err.message : "Something went wrong.";
         console.error("Multi-agent route error:", err);
         send({ type: "error", message });
       } finally {

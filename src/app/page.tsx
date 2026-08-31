@@ -4,6 +4,7 @@ import { useState } from "react";
 import { parseGitDiff } from "@/lib/diff-parser";
 import { ParsedDiff, AuditReport, TaskTelemetry } from "@/types";
 import { DiffViewer, AuditReportCard, RoiDashboard } from "@/components";
+import { UNIVERSAL_MODEL_PRESETS } from "@/lib/llm";
 
 // ---------- Types ----------
 type Source = { title: string; uri: string };
@@ -160,6 +161,11 @@ export default function Home() {
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [verdictError, setVerdictError] = useState("");
 
+  // Universal Model & MCP Integration state
+  const [selectedModelId, setSelectedModelId] = useState<string>("deepseek-v3");
+  const [showMcpModal, setShowMcpModal] = useState(false);
+  const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
+
   // Diff & Audit state
   const [rawDiff, setRawDiff] = useState<string>(SAMPLE_DIFF);
   const [parsedDiff, setParsedDiff] = useState<ParsedDiff>(() => parseGitDiff(SAMPLE_DIFF));
@@ -172,6 +178,9 @@ export default function Home() {
 
   const started = tracks.length > 0 || running;
   const compareEnabled = pattern !== "single";
+  const activeModelPreset =
+    UNIVERSAL_MODEL_PRESETS.find((p) => p.id === selectedModelId) ??
+    UNIVERSAL_MODEL_PRESETS[0];
 
   const handleDiffChange = (newDiff: string) => {
     setRawDiff(newDiff);
@@ -193,6 +202,8 @@ export default function Home() {
         body: JSON.stringify({
           diff: diffToAudit,
           context: task || "Coding Agent Generated Pull Request",
+          model: activeModelPreset.defaultModel,
+          provider: activeModelPreset.provider,
         }),
       });
 
@@ -249,6 +260,8 @@ export default function Home() {
           critic,
           web,
           compare: compare && compareEnabled,
+          model: activeModelPreset.defaultModel,
+          provider: activeModelPreset.provider,
         }),
       });
       if (!res.ok || !res.body) throw new Error("server");
@@ -439,7 +452,7 @@ export default function Home() {
         </div>
 
         {/* Global Workspace Navigation Tabs */}
-        <div className="mx-auto mt-6 flex max-w-2xl justify-center">
+        <div className="mx-auto mt-6 flex max-w-4xl flex-wrap items-center justify-between gap-3">
           <div className="inline-flex rounded-2xl border border-white/10 bg-white/[0.04] p-1.5 backdrop-blur shadow-xl">
             <button
               onClick={() => setActiveTab("orchestration")}
@@ -494,6 +507,33 @@ export default function Home() {
             >
               <span>📊</span>
               <span>Telemetry ROI</span>
+            </button>
+          </div>
+
+          {/* Model Engine Selector & MCP Ecosystem Button */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 backdrop-blur shadow-sm">
+              <span className="text-xs text-white/50">Engine:</span>
+              <select
+                value={selectedModelId}
+                onChange={(e) => setSelectedModelId(e.target.value)}
+                aria-label="Select LLM Engine"
+                className="bg-transparent text-xs font-semibold text-violet-300 outline-none cursor-pointer"
+              >
+                {UNIVERSAL_MODEL_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id} className="bg-[#12121c] text-white">
+                    {p.name} ({p.badge})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={() => setShowMcpModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-violet-500/30 bg-violet-500/10 px-3.5 py-2 text-xs font-medium text-violet-200 transition hover:bg-violet-500/20 shadow-sm backdrop-blur"
+            >
+              <span>🔌</span>
+              <span>MCP & CLI Gate</span>
             </button>
           </div>
         </div>
@@ -742,6 +782,152 @@ export default function Home() {
         {activeTab === "telemetry" && (
           <div className="mt-8 max-w-5xl mx-auto">
             <RoiDashboard telemetryHistory={telemetryHistory} />
+          </div>
+        )}
+
+        {/* MCP Ecosystem Integration Modal */}
+        {showMcpModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
+            <div className="relative w-full max-w-2xl rounded-2xl border border-white/10 bg-[#0e0e17] p-6 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                <div className="flex items-center gap-2.5">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-500/20 text-base">
+                    🔌
+                  </span>
+                  <div>
+                    <h3 className="text-base font-semibold text-white">
+                      AgentShip MCP & Ecosystem Hub
+                    </h3>
+                    <p className="text-xs text-white/40">
+                      Connect your favorite terminal coding agents and IDEs.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowMcpModal(false)}
+                  className="rounded-lg p-1 text-white/40 hover:bg-white/5 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Endpoint Banner */}
+              <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-xs text-emerald-300 font-mono">
+                    MCP Server Endpoint: http://localhost:3000/api/mcp
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText("http://localhost:3000/api/mcp");
+                    setCopiedSnippet("mcp-url");
+                    setTimeout(() => setCopiedSnippet(null), 2000);
+                  }}
+                  className="text-xs text-emerald-300 hover:underline"
+                >
+                  {copiedSnippet === "mcp-url" ? "✓ Copied" : "Copy URL"}
+                </button>
+              </div>
+
+              {/* Instructions list */}
+              <div className="mt-5 space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+                {/* 1. Claude Code */}
+                <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-white">
+                      1. Claude Code (CLI)
+                    </h4>
+                    <button
+                      onClick={() => {
+                        const snippet = `claude mcp add agentship http://localhost:3000/api/mcp`;
+                        navigator.clipboard.writeText(snippet);
+                        setCopiedSnippet("claude");
+                        setTimeout(() => setCopiedSnippet(null), 2000);
+                      }}
+                      className="text-xs text-violet-300 hover:underline"
+                    >
+                      {copiedSnippet === "claude" ? "✓ Copied" : "Copy Command"}
+                    </button>
+                  </div>
+                  <pre className="mt-2 rounded-lg bg-black/40 p-2.5 text-[11px] font-mono text-violet-200 overflow-x-auto">
+                    claude mcp add agentship http://localhost:3000/api/mcp
+                  </pre>
+                </div>
+
+                {/* 2. Cursor / Windsurf */}
+                <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-white">
+                      2. Cursor / Windsurf (.cursor/mcp.json)
+                    </h4>
+                    <button
+                      onClick={() => {
+                        const snippet = JSON.stringify(
+                          {
+                            mcpServers: {
+                              agentship: {
+                                url: "http://localhost:3000/api/mcp",
+                              },
+                            },
+                          },
+                          null,
+                          2
+                        );
+                        navigator.clipboard.writeText(snippet);
+                        setCopiedSnippet("cursor");
+                        setTimeout(() => setCopiedSnippet(null), 2000);
+                      }}
+                      className="text-xs text-violet-300 hover:underline"
+                    >
+                      {copiedSnippet === "cursor" ? "✓ Copied" : "Copy JSON"}
+                    </button>
+                  </div>
+                  <pre className="mt-2 rounded-lg bg-black/40 p-2.5 text-[11px] font-mono text-violet-200 overflow-x-auto">
+{`{
+  "mcpServers": {
+    "agentship": {
+      "url": "http://localhost:3000/api/mcp"
+    }
+  }
+}`}
+                  </pre>
+                </div>
+
+                {/* 3. Pi Coding Agent */}
+                <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-white">
+                      3. Pi Coding Agent (pi-coding-agent)
+                    </h4>
+                    <button
+                      onClick={() => {
+                        const snippet = `pi -e ./extensions/pi-agentship.ts`;
+                        navigator.clipboard.writeText(snippet);
+                        setCopiedSnippet("pi");
+                        setTimeout(() => setCopiedSnippet(null), 2000);
+                      }}
+                      className="text-xs text-violet-300 hover:underline"
+                    >
+                      {copiedSnippet === "pi" ? "✓ Copied" : "Copy Command"}
+                    </button>
+                  </div>
+                  <pre className="mt-2 rounded-lg bg-black/40 p-2.5 text-[11px] font-mono text-violet-200 overflow-x-auto">
+                    pi -e ./extensions/pi-agentship.ts
+                  </pre>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={() => setShowMcpModal(false)}
+                  className="rounded-xl bg-white/10 px-4 py-2 text-xs font-medium text-white hover:bg-white/15"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -1032,7 +1218,7 @@ function NodeCard({ node }: { node: NodeState }) {
           >
             {fmtMs(node.ms)}
             {node.tokens ? ` · ${node.tokens.toLocaleString()} tok` : ""}
-            {node.model ? ` · ${node.model.replace("gemini-", "")}` : ""}
+            {node.model ? ` · ${node.model}` : ""}
           </span>
         )}
         <StatusDot state={node.state} failed={node.failed} />

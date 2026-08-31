@@ -24,8 +24,8 @@ export function RoiDashboard({ telemetryHistory }: RoiDashboardProps) {
         ).toFixed(1)
       : "—";
 
-  // Estimated Cost (Gemini Flash ~$0.10 / 1M tokens)
-  const estimatedCost = ((totalTokens / 1_000_000) * 0.1).toFixed(4);
+  // Estimated Cost (Standard blended ~$0.20 / 1M tokens)
+  const estimatedCost = ((totalTokens / 1_000_000) * 0.2).toFixed(4);
 
   return (
     <div className="space-y-6">
@@ -47,7 +47,7 @@ export function RoiDashboard({ telemetryHistory }: RoiDashboardProps) {
             {totalTokens.toLocaleString()}
           </div>
           <div className="mt-2 text-[11px] text-violet-300 font-mono">
-            ≈ ${estimatedCost} USD (Flash tier)
+            ≈ ${estimatedCost} USD (Blended)
           </div>
         </div>
 

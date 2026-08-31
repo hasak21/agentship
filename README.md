@@ -118,19 +118,41 @@ cd agentship
 npm install
 ```
 
-### 2. Environment Configuration
+### 2. Universal Environment Configuration
 
-Create a `.env.local` file in the project root:
+Create a `.env.local` file in the project root with any of your preferred model providers:
 
 ```env
-GEMINI_API_KEY=your-google-ai-studio-api-key
-# Optional: Proxy for environments requiring outbound proxy
+# --- Option A: DeepSeek (Recommended for high speed & reasoning) ---
+DEEPSEEK_API_KEY=your-deepseek-api-key
+# DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+
+# --- Option B: OpenAI / OpenRouter / Generic OpenAI-Compatible ---
+OPENAI_API_KEY=your-openai-or-openrouter-key
+# OPENAI_BASE_URL=https://openrouter.ai/api/v1
+# OPENAI_MODEL=gpt-4o
+
+# --- Option C: Anthropic Claude ---
+ANTHROPIC_API_KEY=your-anthropic-api-key
+
+# --- Option D: Local / Self-Hosted (Ollama / vLLM) ---
+# OLLAMA_BASE_URL=http://localhost:11434/v1
+# OLLAMA_MODEL=qwen2.5-coder:latest
+
+# --- Option E: Google Gemini (Optional) ---
+# GEMINI_API_KEY=your-gemini-key
+
+# Optional Proxy
 # HTTPS_PROXY=http://127.0.0.1:7890
 ```
 
-### 3. Run Development Server
+### 3. Run Development Server & Tests
 
 ```bash
+# Run unit tests
+npm test
+
+# Start AgentShip Mission Control
 npm run dev
 ```
 
@@ -138,7 +160,26 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 📡 API Reference
+## 📡 API Reference & Model Context Protocol (MCP)
+
+### `POST /api/mcp` (Model Context Protocol JSON-RPC 2.0)
+Standard MCP server supporting tools (`audit_diff`, `inspect_diff`, `run_multiagent_topology`, `get_telemetry_summary`) and resources (`agentship://guidelines/audit_rubric`, `agentship://topologies/catalog`).
+
+**Connect via Claude Code:**
+```bash
+claude mcp add agentship http://localhost:3000/api/mcp
+```
+
+**Connect via Cursor (.cursor/mcp.json):**
+```json
+{
+  "mcpServers": {
+    "agentship": {
+      "url": "http://localhost:3000/api/mcp"
+    }
+  }
+}
+```
 
 ### `POST /api/audit`
 Audits a Git Unified Diff or code change payload across security, correctness, testing, and maintainability.
@@ -147,15 +188,18 @@ Audits a Git Unified Diff or code change payload across security, correctness, t
 ```json
 {
   "diff": "diff --git a/file.ts b/file.ts\n...",
-  "context": "Feature implementation description"
+  "context": "Feature implementation description",
+  "model": "deepseek-chat",
+  "provider": "deepseek"
 }
 ```
 
 **Response:**
 ```json
 {
-  "id": "audit-1740870000000",
-  "auditorModel": "gemini-2.5-flash",
+  "id": "audit-1740870000000-xyz",
+  "auditorModel": "deepseek-chat",
+  "auditorProvider": "deepseek",
   "overallScore": 92,
   "passed": true,
   "summary": "Implementation is robust with good test coverage.",
@@ -184,7 +228,7 @@ Audits a Git Unified Diff or code change payload across security, correctness, t
 ```
 
 ### `POST /api/research`
-Executes tasks through multi-agent topologies and streams SSE execution events.
+Executes tasks through multi-agent topologies (Orchestrator, Debate, Router, Self-Consistency, Single Baseline, Auto) and streams SSE execution events.
 
 ---
 
@@ -195,11 +239,14 @@ Executes tasks through multi-agent topologies and streams SSE execution events.
   - [x] Cross-Model Quality & Security Audit Gate with 4-dimension scoring & auto-patch.
   - [x] Telemetry ROI dashboard and session execution log.
   - [x] AgentShip multi-tab mission control UI.
-- [ ] **Sprint 2 (Upcoming)**:
-  - [ ] Standard Model Context Protocol (MCP) Server endpoint (`/api/mcp`) for native Claude Code & Cursor integration.
-  - [ ] Pi coding agent plugin extension (`extensions/pi-agentship.ts`).
-  - [ ] Multi-model auditor selection (DeepSeek R1/V3, Claude 3.7 Sonnet, Gemini 2.5 Pro).
-- [ ] **Sprint 3 (Future)**:
+- [x] **Sprint 2 (Delivered)**:
+  - [x] Universal LLM Provider Engine (DeepSeek V3/R1, Claude 3.7 Sonnet, GPT-4o, Ollama Local, Gemini).
+  - [x] Decoupled from any single model vendor; universal OpenAI-compatible + Anthropic protocol support.
+  - [x] Standard Model Context Protocol (MCP) Server endpoint (`/api/mcp`) for native Claude Code & Cursor integration.
+  - [x] Pi coding agent plugin extension (`extensions/pi-agentship.ts`).
+  - [x] Multi-model selector in mission control workbench.
+  - [x] Comprehensive unit test suite with `tsx --test`.
+- [ ] **Sprint 3 (Upcoming)**:
   - [ ] Persistent storage (Supabase / SQLite) for team audit history & trend regression.
   - [ ] Automated Git PR Webhook triggers.
 

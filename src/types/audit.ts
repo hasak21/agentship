@@ -10,6 +10,18 @@ export type AuditCategory =
   | "test_coverage"
   | "maintainability";
 
+export type AuditorProvider = "gemini" | "deepseek" | "anthropic" | "openai";
+
+export interface AuditorModelOption {
+  id: string;
+  name: string;
+  provider: AuditorProvider;
+  modelString: string;
+  description: string;
+  badge?: string;
+  recommended?: boolean;
+}
+
 export type AuditIssue = {
   id: string;
   category: AuditCategory;
@@ -39,6 +51,7 @@ export type AuditReport = {
   id: string;
   taskId?: string;
   auditorModel: string;
+  auditorProvider?: AuditorProvider;
   auditedAt: number;
   overallScore: number; // 0 - 100
   passed: boolean;
