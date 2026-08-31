@@ -4,6 +4,11 @@
 // On a normal server or in production (no proxy env var), this does nothing.
 
 export async function register() {
+  // Prevent Node 22 libuv event loop from exiting on idle
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    setInterval(() => {}, 60000);
+  }
+
   const proxyUrl =
     process.env.HTTPS_PROXY ||
     process.env.https_proxy ||
