@@ -48,20 +48,20 @@ type Pattern =
   | "consistency"
   | "single";
 
-const PATTERNS: { id: Pattern; label: string; blurb: string }[] = [
-  { id: "auto", label: "Auto", blurb: "A meta-agent picks the pattern" },
-  { id: "orchestrator", label: "Orchestrator", blurb: "Plan → parallel workers → synthesize" },
-  { id: "debate", label: "Debate", blurb: "Openings → rebuttals → a judge rules" },
-  { id: "router", label: "Router", blurb: "Classify → route to a specialist" },
-  { id: "consistency", label: "Consistency", blurb: "Sample 4× independently → vote" },
-  { id: "single", label: "Single", blurb: "One model, one call (baseline)" },
+const PATTERNS: { id: Pattern; label: string; icon: string; blurb: string }[] = [
+  { id: "auto", label: "Auto", icon: "🧠", blurb: "A meta-agent dynamically selects the optimal topology" },
+  { id: "orchestrator", label: "Orchestrator", icon: "🧭", blurb: "Plan → parallel worker fan-out → synthesis" },
+  { id: "debate", label: "Debate", icon: "💬", blurb: "Openings → counter-rebuttals → judicial ruling" },
+  { id: "router", label: "Router", icon: "🚦", blurb: "Classify intent → route to domain specialist" },
+  { id: "consistency", label: "Consistency", icon: "🎲", blurb: "Sample 4× independently → majority voting" },
+  { id: "single", label: "Single", icon: "⚡", blurb: "One model, direct single call (baseline)" },
 ];
 
 const EXAMPLES = [
   "Write a TypeScript rate-limiter middleware with tests and audit it",
   "Refactor a user auth hook in React to support OAuth and refresh tokens",
-  "Plan a scalable multi-agent microservice architecture",
-  "Implement a thread-safe LRU cache with expiration in Python",
+  "Plan a scalable multi-agent microservice architecture with resilience",
+  "Implement a thread-safe LRU cache with TTL expiration in Python",
 ];
 
 const SAMPLE_DIFF = `diff --git a/src/middleware/rate-limiter.ts b/src/middleware/rate-limiter.ts
@@ -102,11 +102,11 @@ index 0000000..8a91b2c
 +    return null;
 +  };
 +}
-diff --git a/tests/rate-limiter.test.ts b/tests/rate-limiter.test.ts
-new file mode 100644
-index 0000000..9c42d1f
---- /dev/null
-+++ b/tests/rate-limiter.test.ts
++diff --git a/tests/rate-limiter.test.ts b/tests/rate-limiter.test.ts
++new file mode 100644
++index 0000000..9c42d1f
++--- /dev/null
+++++ b/tests/rate-limiter.test.ts
 @@ -0,0 +1,25 @@
 +import { describe, it, expect } from "vitest";
 +import { rateLimiter } from "../src/middleware/rate-limiter";
@@ -286,7 +286,7 @@ export default function Home() {
         }
       }
     } catch {
-      setError("Something went wrong. Please try again.");
+      setError("Something went wrong. Please check your network and provider settings.");
     } finally {
       setRunning(false);
     }
@@ -347,28 +347,30 @@ export default function Home() {
     const trackId = evt.track ?? "A";
     setTracks((prev) => {
       const next = prev.map((t) => ({ ...t, nodes: [...t.nodes] }));
-      const track = next.find((t) => t.id === trackId);
-      if (!track && evt.type === "track") {
-        next.push({
+      let track = next.find((t) => t.id === trackId);
+      if (!track) {
+        track = {
           id: trackId,
-          pattern: evt.pattern ?? "",
-          label: evt.label ?? "",
+          pattern: evt.pattern ?? "orchestrator",
+          label: evt.label ?? (trackId === "A" ? "Pattern Run" : "Comparator"),
           nodes: [],
-        });
-        return next;
+        };
+        next.push(track);
       }
-      if (!track) return prev;
-
       switch (evt.type) {
-        case "node":
-          track.nodes.push({
-            id: evt.id ?? "",
-            role: evt.role ?? "agent",
-            title: evt.title ?? "",
-            subtitle: evt.subtitle ?? "",
-            state: "running",
-          });
+        case "node_start": {
+          const exists = track.nodes.some((x) => x.id === evt.id);
+          if (!exists) {
+            track.nodes.push({
+              id: evt.id!,
+              role: evt.role ?? "agent",
+              title: evt.title ?? "Step",
+              subtitle: evt.subtitle ?? "",
+              state: "running",
+            });
+          }
           break;
+        }
         case "node_done": {
           const n = track.nodes.find((x) => x.id === evt.id);
           if (n) {
@@ -428,38 +430,38 @@ export default function Home() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden px-4 py-8 sm:py-12">
-      {/* Background glows */}
+    <main className="relative min-h-screen bg-[#0a0d14] text-slate-100 px-4 py-8 sm:py-10">
+      {/* Background ambient lighting */}
       <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-        <div className="animate-glow absolute left-1/2 top-[-15%] h-[520px] w-[720px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-violet-600/25 via-fuchsia-500/15 to-blue-500/25 blur-[140px]" />
-        <div className="animate-glow absolute bottom-[-10%] left-[8%] h-[380px] w-[380px] rounded-full bg-blue-600/15 blur-[140px]" />
-        <div className="animate-glow absolute right-[6%] top-[30%] h-[300px] w-[300px] rounded-full bg-fuchsia-600/10 blur-[140px]" />
+        <div className="animate-glow absolute left-1/2 top-[-10%] h-[480px] w-[720px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-indigo-600/15 via-violet-600/10 to-sky-600/15 blur-[120px]" />
+        <div className="animate-glow absolute bottom-[-10%] left-[5%] h-[350px] w-[350px] rounded-full bg-indigo-600/10 blur-[120px]" />
       </div>
 
       <div className="mx-auto w-full max-w-6xl">
-        {/* Header Branding */}
-        <div className="text-center">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-3.5 py-1 text-xs text-violet-200">
+        {/* Header Branding & Status Bar */}
+        <header className="flex flex-col items-center justify-center text-center">
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-[#121622] px-4 py-1.5 text-xs font-semibold text-indigo-300 shadow-md">
             <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
             AgentShip · Mission Control & Multi-Model Audit Gate
           </div>
-          <h1 className="bg-gradient-to-b from-white via-white/90 to-white/40 bg-clip-text text-4xl font-bold tracking-tight text-transparent sm:text-5xl font-mono">
+          <h1 className="text-3xl font-extrabold tracking-tight text-white sm:text-5xl font-mono">
             ✦ AgentShip
           </h1>
-          <p className="mx-auto mt-2 max-w-2xl text-sm text-white/50">
+          <p className="mx-auto mt-2 max-w-2xl text-sm text-slate-300 leading-relaxed">
             Visual workspace and multi-model quality & security audit gate for CLI Coding Agents (Claude Code, DeepSeek Harness, OpenCode, Pi).
           </p>
-        </div>
+        </header>
 
-        {/* Global Workspace Navigation Tabs */}
-        <div className="mx-auto mt-6 flex max-w-4xl flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex rounded-2xl border border-white/10 bg-white/[0.04] p-1.5 backdrop-blur shadow-xl">
+        {/* Global Navigation & Engine Toolbar */}
+        <div className="mx-auto mt-7 flex max-w-4xl flex-wrap items-center justify-between gap-3">
+          {/* Segment Tabs */}
+          <nav className="inline-flex rounded-2xl border border-slate-700/80 bg-[#121622] p-1.5 shadow-xl backdrop-blur">
             <button
               onClick={() => setActiveTab("orchestration")}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-medium transition ${
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
                 activeTab === "orchestration"
-                  ? "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg"
-                  : "text-white/60 hover:text-white"
+                  ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/30"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/40"
               }`}
             >
               <span>🧭</span>
@@ -467,61 +469,61 @@ export default function Home() {
             </button>
             <button
               onClick={() => setActiveTab("diff")}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-medium transition ${
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
                 activeTab === "diff"
-                  ? "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg"
-                  : "text-white/60 hover:text-white"
+                  ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/30"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/40"
               }`}
             >
               <span>🔍</span>
               <span>Visual Diff Review</span>
               {parsedDiff.fileCount > 0 && (
-                <span className="rounded-full bg-white/20 px-1.5 py-0.2 text-[10px]">
+                <span className="rounded-full bg-indigo-950 px-2 py-0.5 text-[11px] font-mono border border-indigo-400/40 text-indigo-300">
                   {parsedDiff.fileCount}
                 </span>
               )}
             </button>
             <button
               onClick={() => setActiveTab("audit")}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-medium transition ${
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
                 activeTab === "audit"
-                  ? "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg"
-                  : "text-white/60 hover:text-white"
+                  ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/30"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/40"
               }`}
             >
               <span>🛡️</span>
               <span>Cross-Audit Gate</span>
               {auditReport && (
-                <span className={`rounded-full px-1.5 py-0.2 text-[10px] ${auditReport.passed ? 'bg-emerald-500/30 text-emerald-300' : 'bg-red-500/30 text-red-300'}`}>
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-mono font-bold ${auditReport.passed ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40' : 'bg-rose-500/25 text-rose-300 border border-rose-500/40'}`}>
                   {auditReport.overallScore}
                 </span>
               )}
             </button>
             <button
               onClick={() => setActiveTab("telemetry")}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-medium transition ${
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
                 activeTab === "telemetry"
-                  ? "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg"
-                  : "text-white/60 hover:text-white"
+                  ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/30"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/40"
               }`}
             >
               <span>📊</span>
               <span>Telemetry ROI</span>
             </button>
-          </div>
+          </nav>
 
-          {/* Model Engine Selector & MCP Ecosystem Button */}
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 backdrop-blur shadow-sm">
-              <span className="text-xs text-white/50">Engine:</span>
+          {/* Model Selector & MCP Launch Button */}
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2 rounded-xl border border-slate-700/80 bg-[#121622] px-3.5 py-2 shadow-md">
+              <span className="text-xs font-semibold text-slate-400">Engine:</span>
               <select
                 value={selectedModelId}
                 onChange={(e) => setSelectedModelId(e.target.value)}
                 aria-label="Select LLM Engine"
-                className="bg-transparent text-xs font-semibold text-violet-300 outline-none cursor-pointer"
+                className="bg-transparent text-xs font-bold text-indigo-300 outline-none cursor-pointer font-mono"
               >
                 {UNIVERSAL_MODEL_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-[#12121c] text-white">
+                  <option key={p.id} value={p.id} className="bg-[#121622] text-slate-100">
                     {p.name} ({p.badge})
                   </option>
                 ))}
@@ -530,7 +532,7 @@ export default function Home() {
 
             <button
               onClick={() => setShowMcpModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-violet-500/30 bg-violet-500/10 px-3.5 py-2 text-xs font-medium text-violet-200 transition hover:bg-violet-500/20 shadow-sm backdrop-blur"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-500/40 bg-indigo-500/15 px-3.5 py-2 text-xs font-bold text-indigo-200 transition hover:bg-indigo-500/25 active:scale-[0.98] shadow-md"
             >
               <span>🔌</span>
               <span>MCP & CLI Gate</span>
@@ -540,33 +542,38 @@ export default function Home() {
 
         {/* Tab 1: Agent Topologies & Multi-Agent Orchestration */}
         {activeTab === "orchestration" && (
-          <div className="mt-8">
-            {/* Pattern selector */}
-            <div className="mx-auto max-w-4xl">
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <section className="mt-8">
+            <div className="mx-auto max-w-4xl space-y-4">
+              {/* Pattern selector */}
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
                 {PATTERNS.map((p) => {
                   const active = pattern === p.id;
                   return (
                     <button
                       key={p.id}
                       onClick={() => setPattern(p.id)}
-                      className={`rounded-xl border p-3 text-left transition ${
+                      className={`rounded-2xl border p-3.5 text-left transition-all shadow-md ${
                         active
-                          ? "border-violet-400/50 bg-violet-500/15"
-                          : "border-white/10 bg-white/[0.03] hover:border-white/20"
+                          ? "border-indigo-500 bg-[#171f33] ring-1 ring-indigo-500/50"
+                          : "border-slate-700/80 bg-[#121622] hover:border-slate-600 hover:bg-[#161c28]"
                       }`}
                     >
-                      <div className="text-sm font-medium text-white/90">
-                        {p.label}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">{p.icon}</span>
+                        <span className="text-sm font-bold text-slate-100">
+                          {p.label}
+                        </span>
                       </div>
-                      <div className="mt-0.5 text-xs text-white/40">{p.blurb}</div>
+                      <div className="mt-1 text-xs leading-snug text-slate-300 font-medium">
+                        {p.blurb}
+                      </div>
                     </button>
                   );
                 })}
               </div>
 
               {/* Toggles */}
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2.5 pt-1">
                 <Toggle
                   label="🕵️ Critic pass"
                   on={critic}
@@ -585,15 +592,14 @@ export default function Home() {
                 />
               </div>
 
-              {/* Input */}
+              {/* Input Form */}
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
                   run();
                 }}
-                className="mt-4"
               >
-                <div className="relative rounded-2xl border border-white/10 bg-white/5 p-2 shadow-2xl shadow-black/40 backdrop-blur transition-colors focus-within:border-violet-400/50">
+                <div className="relative rounded-2xl border border-slate-700/80 bg-[#121622] p-2.5 shadow-2xl transition-all focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/20">
                   <textarea
                     value={task}
                     onChange={(e) => setTask(e.target.value)}
@@ -605,18 +611,18 @@ export default function Home() {
                     }}
                     placeholder="Give the agents a coding or research task… (Enter to dispatch, Shift+Enter for new line)"
                     rows={2}
-                    className="w-full resize-none bg-transparent px-4 py-3 pr-16 text-sm outline-none placeholder:text-white/30"
+                    className="w-full resize-none bg-transparent px-4 py-3 pr-16 text-sm text-slate-100 font-medium outline-none placeholder:text-slate-400"
                   />
                   <button
                     type="submit"
                     disabled={running || !task.trim()}
                     aria-label="Run agents"
-                    className="absolute bottom-3 right-3 grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-tr from-violet-500 to-fuchsia-500 text-white shadow-lg shadow-violet-900/40 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="absolute bottom-3.5 right-3.5 grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-500 text-white shadow-lg shadow-indigo-600/30 transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {running ? (
                       <span className="spinner h-4 w-4 rounded-full border-2 border-white/40 border-t-white" />
                     ) : (
-                      <span className="text-lg leading-none">↑</span>
+                      <span className="text-xl font-bold leading-none">↑</span>
                     )}
                   </button>
                 </div>
@@ -624,12 +630,12 @@ export default function Home() {
 
               {/* Examples */}
               {!started && (
-                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                <div className="flex flex-wrap justify-center gap-2 pt-1">
                   {EXAMPLES.map((x) => (
                     <button
                       key={x}
                       onClick={() => run(x)}
-                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60 transition hover:border-white/20 hover:text-white"
+                      className="rounded-full border border-slate-700/80 bg-[#161c28] px-3.5 py-1 text-xs text-slate-300 font-medium transition hover:border-indigo-500 hover:text-white"
                     >
                       {x}
                     </button>
@@ -639,7 +645,7 @@ export default function Home() {
 
               {/* Error */}
               {error && (
-                <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                <div className="rounded-xl border border-rose-500/40 bg-rose-500/15 px-4 py-3 text-sm text-rose-200 font-medium shadow-md">
                   {error}
                 </div>
               )}
@@ -647,7 +653,7 @@ export default function Home() {
               {/* Tracks */}
               {tracks.length > 0 && (
                 <div
-                  className={`mt-10 grid gap-5 ${
+                  className={`pt-6 grid gap-6 ${
                     tracks.length > 1 ? "lg:grid-cols-2" : "max-w-4xl mx-auto"
                   }`}
                 >
@@ -661,48 +667,48 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Judge */}
+              {/* Judge Scoring */}
               {judging && (
-                <div className="animate-fade-up mt-6 flex items-center gap-3 rounded-2xl border border-amber-400/25 bg-amber-500/5 px-5 py-4">
-                  <span className="spinner h-5 w-5 rounded-full border-2 border-white/20 border-t-amber-400" />
+                <div className="animate-fade-up flex items-center gap-3.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 shadow-lg">
+                  <span className="spinner h-5 w-5 rounded-full border-2 border-amber-300/30 border-t-amber-400" />
                   <div>
-                    <div className="text-sm font-medium text-white/90">
-                      ⚖️ Judge is scoring both answers…
+                    <div className="text-sm font-bold text-amber-200">
+                      ⚖️ Blind Judge is scoring both multi-agent runs…
                     </div>
-                    <div className="text-xs text-white/40">
-                      Blind pairwise evaluation, judged twice with positions swapped
+                    <div className="text-xs text-amber-300/80 font-medium">
+                      Pairwise evaluation across Correctness, Completeness, and Clarity.
                     </div>
                   </div>
                 </div>
               )}
               {verdictError && (
-                <div className="mt-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/15 px-4 py-3 text-sm text-amber-200">
                   ⚖️ {verdictError}
                 </div>
               )}
               {verdict && (
                 <VerdictCard
                   verdict={verdict}
-                  labelA={tracks.find((t) => t.id === "A")?.label ?? "A"}
-                  labelB={tracks.find((t) => t.id === "B")?.label ?? "B"}
+                  labelA={tracks.find((t) => t.id === "A")?.label ?? "Pattern Run"}
+                  labelB={tracks.find((t) => t.id === "B")?.label ?? "Comparator"}
                 />
               )}
             </div>
-          </div>
+          </section>
         )}
 
         {/* Tab 2: Visual Diff Review */}
         {activeTab === "diff" && (
-          <div className="mt-8 space-y-6 max-w-5xl mx-auto">
+          <section className="mt-8 space-y-6 max-w-5xl mx-auto">
             {/* Diff Input / Edit area */}
-            <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-white/80">
+            <div className="rounded-2xl border border-slate-700/80 bg-[#121622] p-4.5 shadow-xl">
+              <div className="flex items-center justify-between mb-2.5">
+                <span className="text-xs font-bold text-slate-200">
                   📥 Ingest Git Unified Diff (from CLI Agent or Git):
                 </span>
                 <button
                   onClick={() => handleDiffChange(SAMPLE_DIFF)}
-                  className="text-xs text-violet-400 hover:text-violet-300 transition"
+                  className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold transition"
                 >
                   Load Sample PR Diff
                 </button>
@@ -712,7 +718,7 @@ export default function Home() {
                 onChange={(e) => handleDiffChange(e.target.value)}
                 placeholder="Paste unified git diff here (diff --git a/... b/...)..."
                 rows={3}
-                className="w-full rounded-xl border border-white/10 bg-black/40 p-3 font-mono text-xs text-white/80 outline-none focus:border-violet-400 resize-y"
+                className="w-full rounded-xl border border-slate-700 bg-[#0b0e17] p-3 font-mono text-xs text-slate-200 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-y"
               />
             </div>
 
@@ -722,25 +728,25 @@ export default function Home() {
               onAuditClick={() => triggerAudit()}
               isAuditing={isAuditing}
             />
-          </div>
+          </section>
         )}
 
         {/* Tab 3: Cross-Audit Gate */}
         {activeTab === "audit" && (
-          <div className="mt-8 max-w-5xl mx-auto space-y-6">
+          <section className="mt-8 max-w-5xl mx-auto space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-semibold text-white">
+                <h3 className="text-lg font-bold text-slate-100">
                   Multi-Model Code Quality & Security Audit Gate
                 </h3>
-                <p className="text-xs text-white/50">
+                <p className="text-xs text-slate-300">
                   Cross-examine agent generated code with independent Auditor LLMs to eliminate blind spots.
                 </p>
               </div>
               <button
                 onClick={() => triggerAudit()}
                 disabled={isAuditing || !rawDiff.trim()}
-                className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-4 py-2 text-xs font-medium text-white shadow-lg shadow-violet-900/30 transition hover:opacity-90 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-600/30 transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
               >
                 {isAuditing ? (
                   <>
@@ -757,65 +763,65 @@ export default function Home() {
             </div>
 
             {auditError && (
-              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+              <div className="rounded-xl border border-rose-500/40 bg-rose-500/15 p-4 text-sm text-rose-200 font-medium">
                 {auditError}
               </div>
             )}
 
             {isAuditing && !auditReport && (
-              <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-12 text-center">
-                <span className="spinner inline-block h-8 w-8 rounded-full border-2 border-white/20 border-t-violet-400 mb-3" />
-                <h4 className="text-base font-medium text-white/90">
+              <div className="rounded-2xl border border-indigo-500/30 bg-indigo-950/20 p-12 text-center shadow-xl">
+                <span className="spinner inline-block h-8 w-8 rounded-full border-2 border-indigo-400/30 border-t-indigo-400 mb-3" />
+                <h4 className="text-base font-bold text-slate-100">
                   Auditor is scanning diff across 4 dimensions…
                 </h4>
-                <p className="mt-1 text-xs text-white/40">
+                <p className="mt-1.5 text-xs text-slate-300">
                   Checking Security vulnerabilities, Logic bugs, Edge cases, and Test coverage.
                 </p>
               </div>
             )}
 
             {auditReport && <AuditReportCard report={auditReport} />}
-          </div>
+          </section>
         )}
 
         {/* Tab 4: Telemetry & ROI Dashboard */}
         {activeTab === "telemetry" && (
-          <div className="mt-8 max-w-5xl mx-auto">
+          <section className="mt-8 max-w-5xl mx-auto">
             <RoiDashboard telemetryHistory={telemetryHistory} />
-          </div>
+          </section>
         )}
 
         {/* MCP Ecosystem Integration Modal */}
         {showMcpModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
-            <div className="relative w-full max-w-2xl rounded-2xl border border-white/10 bg-[#0e0e17] p-6 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-white/5 pb-4">
-                <div className="flex items-center gap-2.5">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-500/20 text-base">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
+            <div className="relative w-full max-w-2xl rounded-2xl border border-slate-700/80 bg-[#121622] p-6 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-700/80 pb-4">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/20 text-lg border border-indigo-500/30">
                     🔌
                   </span>
                   <div>
-                    <h3 className="text-base font-semibold text-white">
+                    <h3 className="text-base font-bold text-slate-100">
                       AgentShip MCP & Ecosystem Hub
                     </h3>
-                    <p className="text-xs text-white/40">
+                    <p className="text-xs text-slate-300">
                       Connect your favorite terminal coding agents and IDEs.
                     </p>
                   </div>
                 </div>
                 <button
                   onClick={() => setShowMcpModal(false)}
-                  className="rounded-lg p-1 text-white/40 hover:bg-white/5 hover:text-white"
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
                 >
                   ✕
                 </button>
               </div>
 
               {/* Endpoint Banner */}
-              <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-2.5">
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="text-xs text-emerald-300 font-mono">
+              <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-950/30 px-4 py-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-xs text-emerald-300 font-mono font-bold">
                     MCP Server Endpoint: http://localhost:3000/api/mcp
                   </span>
                 </div>
@@ -825,7 +831,7 @@ export default function Home() {
                     setCopiedSnippet("mcp-url");
                     setTimeout(() => setCopiedSnippet(null), 2000);
                   }}
-                  className="text-xs text-emerald-300 hover:underline"
+                  className="text-xs font-bold text-emerald-300 hover:underline"
                 >
                   {copiedSnippet === "mcp-url" ? "✓ Copied" : "Copy URL"}
                 </button>
@@ -834,9 +840,9 @@ export default function Home() {
               {/* Instructions list */}
               <div className="mt-5 space-y-4 max-h-[60vh] overflow-y-auto pr-1">
                 {/* 1. Claude Code */}
-                <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                <div className="rounded-xl border border-slate-700/80 bg-[#161c28] p-4">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-semibold text-white">
+                    <h4 className="text-xs font-bold text-slate-100">
                       1. Claude Code (CLI)
                     </h4>
                     <button
@@ -846,20 +852,20 @@ export default function Home() {
                         setCopiedSnippet("claude");
                         setTimeout(() => setCopiedSnippet(null), 2000);
                       }}
-                      className="text-xs text-violet-300 hover:underline"
+                      className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 hover:underline"
                     >
                       {copiedSnippet === "claude" ? "✓ Copied" : "Copy Command"}
                     </button>
                   </div>
-                  <pre className="mt-2 rounded-lg bg-black/40 p-2.5 text-[11px] font-mono text-violet-200 overflow-x-auto">
+                  <pre className="mt-2 rounded-lg bg-[#0b0e17] p-3 text-xs font-mono text-indigo-300 border border-slate-800 overflow-x-auto">
                     claude mcp add agentship http://localhost:3000/api/mcp
                   </pre>
                 </div>
 
                 {/* 2. Cursor / Windsurf */}
-                <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                <div className="rounded-xl border border-slate-700/80 bg-[#161c28] p-4">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-semibold text-white">
+                    <h4 className="text-xs font-bold text-slate-100">
                       2. Cursor / Windsurf (.cursor/mcp.json)
                     </h4>
                     <button
@@ -879,12 +885,12 @@ export default function Home() {
                         setCopiedSnippet("cursor");
                         setTimeout(() => setCopiedSnippet(null), 2000);
                       }}
-                      className="text-xs text-violet-300 hover:underline"
+                      className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 hover:underline"
                     >
                       {copiedSnippet === "cursor" ? "✓ Copied" : "Copy JSON"}
                     </button>
                   </div>
-                  <pre className="mt-2 rounded-lg bg-black/40 p-2.5 text-[11px] font-mono text-violet-200 overflow-x-auto">
+                  <pre className="mt-2 rounded-lg bg-[#0b0e17] p-3 text-xs font-mono text-indigo-300 border border-slate-800 overflow-x-auto">
 {`{
   "mcpServers": {
     "agentship": {
@@ -896,9 +902,9 @@ export default function Home() {
                 </div>
 
                 {/* 3. Pi Coding Agent */}
-                <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                <div className="rounded-xl border border-slate-700/80 bg-[#161c28] p-4">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-semibold text-white">
+                    <h4 className="text-xs font-bold text-slate-100">
                       3. Pi Coding Agent (pi-coding-agent)
                     </h4>
                     <button
@@ -908,12 +914,12 @@ export default function Home() {
                         setCopiedSnippet("pi");
                         setTimeout(() => setCopiedSnippet(null), 2000);
                       }}
-                      className="text-xs text-violet-300 hover:underline"
+                      className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 hover:underline"
                     >
                       {copiedSnippet === "pi" ? "✓ Copied" : "Copy Command"}
                     </button>
                   </div>
-                  <pre className="mt-2 rounded-lg bg-black/40 p-2.5 text-[11px] font-mono text-violet-200 overflow-x-auto">
+                  <pre className="mt-2 rounded-lg bg-[#0b0e17] p-3 text-xs font-mono text-indigo-300 border border-slate-800 overflow-x-auto">
                     pi -e ./extensions/pi-agentship.ts
                   </pre>
                 </div>
@@ -922,7 +928,7 @@ export default function Home() {
               <div className="mt-6 flex justify-end">
                 <button
                   onClick={() => setShowMcpModal(false)}
-                  className="rounded-xl bg-white/10 px-4 py-2 text-xs font-medium text-white hover:bg-white/15"
+                  className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-bold text-slate-100 hover:bg-slate-700 transition"
                 >
                   Close
                 </button>
@@ -952,12 +958,12 @@ function Toggle({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`rounded-full border px-3 py-1 text-xs transition ${
+      className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-all ${
         disabled
-          ? "cursor-not-allowed border-white/5 text-white/20"
+          ? "cursor-not-allowed border-slate-800 bg-[#0e121a] text-slate-600"
           : on
-            ? "border-violet-400/50 bg-violet-500/20 text-white"
-            : "border-white/10 bg-white/[0.03] text-white/50 hover:text-white"
+            ? "border-indigo-500/80 bg-indigo-500/20 text-indigo-200 shadow-sm"
+            : "border-slate-700/80 bg-[#121622] text-slate-300 hover:border-slate-600 hover:text-white"
       }`}
     >
       {label}
@@ -972,14 +978,14 @@ function fmtMs(ms: number) {
 function ScoreBar({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center gap-2 text-xs">
-      <span className="w-24 text-white/45">{label}</span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+      <span className="w-24 font-medium text-slate-300">{label}</span>
+      <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-800">
         <div
-          className="h-full rounded-full bg-gradient-to-r from-violet-400 to-fuchsia-400"
+          className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-violet-400"
           style={{ width: `${(value / 10) * 100}%` }}
         />
       </div>
-      <span className="w-8 text-right tabular-nums text-white/70">
+      <span className="w-8 text-right font-mono font-bold tabular-nums text-slate-100">
         {value.toFixed(1)}
       </span>
     </div>
@@ -1004,15 +1010,15 @@ function VerdictCard({
     { id: "B", label: labelB },
   ];
   return (
-    <div className="animate-fade-up mx-auto mt-6 max-w-4xl rounded-2xl border border-amber-400/25 bg-gradient-to-b from-amber-500/10 to-white/[0.02] p-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-lg">⚖️</span>
-        <span className="font-medium text-white/90">Judge&apos;s verdict</span>
+    <div className="animate-fade-up mx-auto mt-6 max-w-4xl rounded-2xl border border-amber-500/40 bg-[#151a27] p-5 shadow-2xl">
+      <div className="flex flex-wrap items-center gap-2.5 border-b border-slate-700/80 pb-3">
+        <span className="text-xl">⚖️</span>
+        <span className="font-bold text-slate-100">Judge&apos;s Pairwise Verdict</span>
         <span
-          className={`ml-auto rounded-full px-3 py-1 text-xs font-medium ${
+          className={`ml-auto rounded-full px-3.5 py-1 text-xs font-bold ${
             verdict.winner === "tie"
-              ? "bg-white/10 text-white/70"
-              : "bg-emerald-500/15 text-emerald-300"
+              ? "bg-slate-700 text-slate-200"
+              : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
           }`}
         >
           {verdict.winner === "tie" ? "🤝" : "🏆"} {winnerLabel}
@@ -1026,22 +1032,22 @@ function VerdictCard({
           return (
             <div
               key={s.id}
-              className={`rounded-xl border p-4 ${
+              className={`rounded-xl border p-4 shadow-sm ${
                 won
-                  ? "border-emerald-400/30 bg-emerald-500/5"
-                  : "border-white/10 bg-white/[0.03]"
+                  ? "border-emerald-500/40 bg-emerald-950/20"
+                  : "border-slate-700/80 bg-[#121622]"
               }`}
             >
               <div className="mb-3 flex items-baseline justify-between gap-2">
-                <span className="truncate text-sm font-medium text-white/85">
+                <span className="truncate text-sm font-bold text-slate-100">
                   {s.label}
                 </span>
-                <span className="text-xl font-semibold tabular-nums text-white">
+                <span className="text-xl font-extrabold font-mono tabular-nums text-slate-100">
                   {verdict.totals[s.id].toFixed(1)}
-                  <span className="text-xs font-normal text-white/40">/30</span>
+                  <span className="text-xs font-normal text-slate-400">/30</span>
                 </span>
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <ScoreBar label="Correctness" value={r.correctness} />
                 <ScoreBar label="Completeness" value={r.completeness} />
                 <ScoreBar label="Clarity" value={r.clarity} />
@@ -1052,11 +1058,11 @@ function VerdictCard({
       </div>
 
       {verdict.rationale && (
-        <p className="mt-4 text-sm leading-relaxed text-white/60">
+        <p className="mt-4 text-sm leading-relaxed text-slate-200 border-t border-slate-700/80 pt-3">
           {verdict.rationale}
         </p>
       )}
-      <p className="mt-2 text-xs text-white/30">
+      <p className="mt-2 text-xs font-mono text-slate-400">
         Blind pairwise evaluation · judged twice with positions swapped ·{" "}
         {verdict.tokens.toLocaleString()} judge tokens
       </p>
@@ -1066,7 +1072,7 @@ function VerdictCard({
 
 function StatChip({ label, value }: { label: string; value: string }) {
   return (
-    <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-normal tabular-nums text-white/60">
+    <span className="rounded-md border border-slate-700 bg-[#1a2030] px-2.5 py-0.5 text-xs font-mono font-medium tabular-nums text-slate-200">
       {label} {value}
     </span>
   );
@@ -1081,32 +1087,32 @@ function StatusDot({
 }) {
   if (state === "running")
     return (
-      <span className="spinner inline-block h-4 w-4 rounded-full border-2 border-white/20 border-t-violet-400" />
+      <span className="spinner inline-block h-4 w-4 rounded-full border-2 border-indigo-400/30 border-t-indigo-400" />
     );
   if (failed)
     return (
-      <span className="grid h-4 w-4 place-items-center rounded-full bg-red-500/20 text-[10px] text-red-400">
+      <span className="grid h-4 w-4 place-items-center rounded-full bg-rose-500/25 text-[10px] font-bold text-rose-300">
         ✕
       </span>
     );
   return (
-    <span className="grid h-4 w-4 place-items-center rounded-full bg-emerald-500/20 text-[10px] text-emerald-400">
+    <span className="grid h-4 w-4 place-items-center rounded-full bg-emerald-500/25 text-[10px] font-bold text-emerald-300">
       ✓
     </span>
   );
 }
 
 const CONF_STYLE: Record<string, string> = {
-  high: "border-emerald-400/30 bg-emerald-500/10 text-emerald-300",
-  medium: "border-amber-400/30 bg-amber-500/10 text-amber-300",
-  low: "border-red-400/30 bg-red-500/10 text-red-300",
+  high: "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
+  medium: "border-amber-500/40 bg-amber-500/15 text-amber-300",
+  low: "border-rose-500/40 bg-rose-500/15 text-rose-300",
 };
 
 function ConfidenceBadge({ level }: { level: "high" | "medium" | "low" }) {
   return (
     <span
-      className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${CONF_STYLE[level]}`}
-      title="Worker's self-reported confidence — the synthesizer weighs sub-answers by this"
+      className={`rounded-md border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${CONF_STYLE[level]}`}
+      title="Worker's self-reported confidence"
     >
       {level}
     </span>
@@ -1122,19 +1128,24 @@ function TrackView({
 }) {
   const running = track.nodes.some((n) => n.state === "running") || !track.final;
   return (
-    <div className="animate-fade-up rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="animate-fade-up rounded-2xl border border-slate-700/80 bg-[#121622] p-5 shadow-xl">
       {/* Track header */}
-      <div className="mb-3 flex items-center gap-2">
-        <span className="rounded-lg bg-white/5 px-2 py-1 text-xs font-medium text-white/70">
+      <div className="mb-3.5 flex items-center justify-between border-b border-slate-700/80 pb-3">
+        <span className="rounded-lg border border-slate-700 bg-[#161c28] px-3 py-1 text-xs font-bold text-slate-100">
           {track.label}
         </span>
-        {running && (
-          <span className="text-xs text-white/35">running…</span>
+        {running ? (
+          <span className="flex items-center gap-1.5 text-xs text-indigo-300 font-semibold">
+            <span className="spinner h-3 w-3 rounded-full border-2 border-indigo-400/30 border-t-indigo-400" />
+            Executing DAG…
+          </span>
+        ) : (
+          <span className="text-xs text-emerald-400 font-bold">✓ Complete</span>
         )}
       </div>
 
       {/* Nodes */}
-      <div className="space-y-2.5">
+      <div className="space-y-3">
         {track.nodes.map((n) => (
           <NodeCard key={n.id} node={n} />
         ))}
@@ -1142,9 +1153,9 @@ function TrackView({
 
       {/* Final answer */}
       {track.final && (
-        <div className="animate-fade-up mt-4 rounded-xl border border-violet-400/25 bg-gradient-to-b from-violet-500/10 to-white/[0.02] p-4">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-medium text-white/90">
-            <span>✅</span> Final Output
+        <div className="animate-fade-up mt-5 rounded-xl border border-indigo-500/30 bg-[#161c28] p-4.5 shadow-lg">
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-sm font-bold text-slate-100">
+            <span className="text-emerald-400">✅</span> Final Output
             {track.final.stats && (
               <span className="ml-auto flex flex-wrap gap-1.5">
                 <StatChip label="⏱" value={fmtMs(track.final.stats.ms)} />
@@ -1163,10 +1174,10 @@ function TrackView({
           <SourceList sources={track.final.sources} />
 
           {onViewDiff && (
-            <div className="mt-3 pt-3 border-t border-white/5 flex justify-end">
+            <div className="mt-3.5 pt-3 border-t border-slate-700/80 flex justify-end">
               <button
                 onClick={onViewDiff}
-                className="text-xs text-violet-400 hover:text-violet-300 font-mono flex items-center gap-1"
+                className="text-xs text-indigo-400 hover:text-indigo-300 font-mono font-bold flex items-center gap-1"
               >
                 <span>🔍 Inspect Visual Diff →</span>
               </button>
@@ -1184,63 +1195,62 @@ function NodeCard({ node }: { node: NodeState }) {
   const hasResult = !!node.result;
   return (
     <div
-      className={`animate-fade-up rounded-xl border p-3.5 ${
+      className={`animate-fade-up rounded-xl border p-3.5 transition-all shadow-sm ${
         node.failed
-          ? "border-red-400/25 bg-red-500/[0.06]"
-          : "border-white/10 bg-white/[0.03]"
+          ? "border-rose-500/30 bg-rose-950/20"
+          : "border-slate-700/80 bg-[#161c28]"
       }`}
     >
-      <div className="flex items-center gap-2.5">
-        <span className="grid h-8 w-8 place-items-center rounded-lg bg-white/5 text-base">
+      <div className="flex items-center gap-3">
+        <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#1a2030] text-base border border-slate-700">
           {icon}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm font-medium text-white/85">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold text-slate-100">
               {node.title}
             </span>
             {node.confidence && <ConfidenceBadge level={node.confidence} />}
             {node.retried && (
               <span
-                className="text-[10px] text-amber-400/70"
+                className="text-[10px] text-amber-300 font-bold bg-amber-950/30 px-1.5 py-0.5 rounded border border-amber-500/30"
                 title="This agent failed once and was automatically re-dispatched"
               >
                 ↻ retried
               </span>
             )}
           </div>
-          <div className="truncate text-xs text-white/40">{node.subtitle}</div>
+          <div className="truncate text-xs text-slate-300 font-medium">{node.subtitle}</div>
         </div>
         {node.state === "done" && node.ms !== undefined && (
           <span
-            className="whitespace-nowrap text-[11px] tabular-nums text-white/30"
+            className="whitespace-nowrap text-xs font-mono tabular-nums text-slate-400"
             title={node.model ? `model: ${node.model}` : undefined}
           >
             {fmtMs(node.ms)}
             {node.tokens ? ` · ${node.tokens.toLocaleString()} tok` : ""}
-            {node.model ? ` · ${node.model}` : ""}
           </span>
         )}
         <StatusDot state={node.state} failed={node.failed} />
       </div>
 
       {node.state === "running" && !hasResult && (
-        <div className="mt-3 space-y-2 border-t border-white/5 pt-3">
-          <div className="pulse-bar h-2.5 w-full rounded bg-white/10" />
-          <div className="pulse-bar h-2.5 w-2/3 rounded bg-white/10" />
+        <div className="mt-3 space-y-2 border-t border-slate-700/60 pt-3">
+          <div className="pulse-bar h-2.5 w-full rounded bg-slate-700/80" />
+          <div className="pulse-bar h-2.5 w-2/3 rounded bg-slate-700/80" />
         </div>
       )}
 
       {hasResult && (
-        <div className="mt-2">
+        <div className="mt-2.5">
           <button
             onClick={() => setOpen((v) => !v)}
-            className="text-xs text-white/40 transition hover:text-white/70"
+            className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold transition"
           >
-            {open ? "▾ hide details" : "▸ show details"}
+            {open ? "▾ Hide reasoning trace" : "▸ Show reasoning trace"}
           </button>
           {open && (
-            <div className="mt-2 max-h-56 overflow-auto border-t border-white/5 pt-3 text-sm text-white/70">
+            <div className="mt-2 max-h-60 overflow-auto rounded-lg bg-[#0b0e17] p-3 border border-slate-800 text-xs text-slate-200 font-mono">
               <FormattedText text={node.result ?? ""} compact />
               <SourceList sources={node.sources} />
             </div>
@@ -1254,18 +1264,18 @@ function NodeCard({ node }: { node: NodeState }) {
 function SourceList({ sources }: { sources?: Source[] }) {
   if (!sources || sources.length === 0) return null;
   return (
-    <div className="mt-3 border-t border-white/5 pt-2">
-      <div className="mb-1 text-xs uppercase tracking-wide text-white/35">
+    <div className="mt-3 border-t border-slate-700/80 pt-2.5">
+      <div className="mb-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
         Sources
       </div>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-2">
         {sources.map((s, i) => (
           <a
             key={i}
             href={s.uri}
             target="_blank"
             rel="noopener noreferrer"
-            className="max-w-[220px] truncate rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-blue-300 transition hover:border-white/20 hover:text-blue-200"
+            className="max-w-[220px] truncate rounded-md border border-slate-700 bg-[#121622] px-2.5 py-1 text-xs text-sky-300 font-medium transition hover:border-sky-400 hover:text-sky-200"
             title={s.title}
           >
             {i + 1}. {s.title}
@@ -1282,7 +1292,7 @@ function inline(text: string, keyBase: string) {
     const key = `${keyBase}-${i}`;
     if (p.startsWith("**") && p.endsWith("**"))
       return (
-        <strong key={key} className="font-semibold text-white">
+        <strong key={key} className="font-bold text-slate-100">
           {p.slice(2, -2)}
         </strong>
       );
@@ -1290,7 +1300,7 @@ function inline(text: string, keyBase: string) {
       return (
         <code
           key={key}
-          className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-[0.85em] text-violet-200"
+          className="rounded border border-slate-700 bg-[#1a2030] px-1.5 py-0.5 font-mono text-[0.9em] text-indigo-300"
         >
           {p.slice(1, -1)}
         </code>
@@ -1303,14 +1313,14 @@ function FormattedText({ text, compact }: { text: string; compact?: boolean }) {
   const lines = text.split("\n");
   return (
     <div
-      className={`${compact ? "space-y-1" : "space-y-2"} leading-relaxed text-white/85`}
+      className={`${compact ? "space-y-1.5" : "space-y-2.5"} leading-relaxed text-slate-200`}
     >
       {lines.map((line, i) => {
         const key = `l-${i}`;
         if (/^#{1,6}\s/.test(line)) {
           const content = line.replace(/^#{1,6}\s/, "");
           return (
-            <h3 key={key} className="mt-3 font-semibold text-white">
+            <h3 key={key} className="mt-3 font-bold text-slate-100 text-base">
               {inline(content, key)}
             </h3>
           );
@@ -1318,14 +1328,14 @@ function FormattedText({ text, compact }: { text: string; compact?: boolean }) {
         if (/^\s*[-*]\s/.test(line)) {
           const content = line.replace(/^\s*[-*]\s/, "");
           return (
-            <div key={key} className="flex gap-2">
-              <span className="mt-0.5 text-violet-400">•</span>
+            <div key={key} className="flex gap-2 text-sm">
+              <span className="mt-0.5 text-indigo-400 font-bold">•</span>
               <span>{inline(content, key)}</span>
             </div>
           );
         }
         if (line.trim() === "") return <div key={key} className="h-1" />;
-        return <p key={key}>{inline(line, key)}</p>;
+        return <p key={key} className="text-sm">{inline(line, key)}</p>;
       })}
     </div>
   );

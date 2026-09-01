@@ -27,11 +27,11 @@ export function DiffViewer({
 
   if (fileCount === 0) {
     return (
-      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-12 text-center">
-        <span className="text-3xl mb-3">🔍</span>
-        <h3 className="text-base font-medium text-white/80">No Diff Available</h3>
-        <p className="mt-1 text-sm text-white/40 max-w-sm">
-          Run an Agent task or paste a Git Unified Diff to inspect file changes and trigger multi-model quality audit.
+      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-700/80 bg-[#121622]/90 p-12 text-center shadow-xl">
+        <span className="text-4xl mb-3">🔍</span>
+        <h3 className="text-base font-semibold text-slate-100">No Diff Available</h3>
+        <p className="mt-1.5 text-sm text-slate-300 max-w-md leading-relaxed">
+          Run an Agent task or paste a Git Unified Diff in the box above to inspect file changes and trigger a multi-model quality & security audit.
         </p>
       </div>
     );
@@ -40,17 +40,17 @@ export function DiffViewer({
   return (
     <div className="space-y-4">
       {/* Top Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 backdrop-blur">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-700/80 bg-[#121622] p-3.5 shadow-lg backdrop-blur">
         {/* Left: Summary Stats & File Selector */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 text-xs font-mono">
-            <span className="rounded-md bg-white/5 px-2.5 py-1 text-white/70">
+            <span className="rounded-md border border-slate-700 bg-[#1a2030] px-2.5 py-1 text-slate-200 font-medium">
               📁 {fileCount} file{fileCount === 1 ? "" : "s"}
             </span>
-            <span className="rounded-md bg-emerald-500/10 px-2 py-1 text-emerald-300 font-semibold">
+            <span className="rounded-md border border-emerald-600/30 bg-emerald-500/15 px-2.5 py-1 text-emerald-300 font-bold">
               +{totalAdditions}
             </span>
-            <span className="rounded-md bg-red-500/10 px-2 py-1 text-red-300 font-semibold">
+            <span className="rounded-md border border-rose-600/30 bg-rose-500/15 px-2.5 py-1 text-rose-300 font-bold">
               -{totalDeletions}
             </span>
           </div>
@@ -61,9 +61,9 @@ export function DiffViewer({
               value={selectedFile}
               onChange={(e) => setSelectedFile(e.target.value)}
               aria-label="Filter file"
-              className="rounded-lg border border-white/10 bg-[#12121c] px-2.5 py-1 text-xs text-white/80 outline-none focus:border-violet-400"
+              className="rounded-lg border border-slate-700 bg-[#1a2030] px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 cursor-pointer font-mono"
             >
-              <option value="all">All Files ({fileCount})</option>
+              <option value="all">All Changed Files ({fileCount})</option>
               {files.map((f, i) => (
                 <option key={i} value={f.newPath}>
                   {f.newPath} (+{f.additions} -{f.deletions})
@@ -74,27 +74,27 @@ export function DiffViewer({
         </div>
 
         {/* Right: View Mode Toggle & Audit Action Button */}
-        <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-lg border border-white/10 bg-white/5 p-0.5 text-xs">
+        <div className="flex items-center gap-2.5">
+          <div className="inline-flex rounded-lg border border-slate-700 bg-[#1a2030] p-0.5 text-xs font-medium">
             <button
               onClick={() => setViewMode("unified")}
-              className={`rounded-md px-2.5 py-1 transition ${
+              className={`rounded-md px-3 py-1.5 transition ${
                 viewMode === "unified"
-                  ? "bg-violet-600 text-white font-medium shadow"
-                  : "text-white/50 hover:text-white"
+                  ? "bg-indigo-600 text-white font-semibold shadow-md"
+                  : "text-slate-300 hover:text-white"
               }`}
             >
-              Unified
+              Unified View
             </button>
             <button
               onClick={() => setViewMode("split")}
-              className={`rounded-md px-2.5 py-1 transition ${
+              className={`rounded-md px-3 py-1.5 transition ${
                 viewMode === "split"
-                  ? "bg-violet-600 text-white font-medium shadow"
-                  : "text-white/50 hover:text-white"
+                  ? "bg-indigo-600 text-white font-semibold shadow-md"
+                  : "text-slate-300 hover:text-white"
               }`}
             >
-              Split
+              Side-by-Side Split
             </button>
           </div>
 
@@ -102,7 +102,7 @@ export function DiffViewer({
             <button
               onClick={onAuditClick}
               disabled={isAuditing}
-              className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-violet-500 to-fuchsia-500 px-3.5 py-1.5 text-xs font-medium text-white shadow-lg shadow-violet-900/30 transition hover:opacity-90 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 px-4 py-1.5 text-xs font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
             >
               {isAuditing ? (
                 <>
