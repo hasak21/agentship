@@ -58,6 +58,26 @@ test("repository mutation during checks produces a blocker", () => {
   assert.equal(findings[0]?.evidence.afterDiffSha256, "after-diff");
 });
 
+test("requirements marked for confirmation block until confirmed", () => {
+  const pending = buildFindings(
+    [check()],
+    undefined,
+    [],
+    [{ id: "R1", confirmation: "required" }]
+  );
+  assert.equal(pending[0]?.kind, "requirement_confirmation_missing");
+  assert.equal(calculateVerdict(pending), "BLOCK");
+
+  const confirmed = buildFindings(
+    [check()],
+    undefined,
+    [],
+    [{ id: "R1", confirmation: "confirmed" }]
+  );
+  assert.deepEqual(confirmed, []);
+  assert.equal(calculateVerdict(confirmed), "PASS");
+});
+
 test("check environments are allowlisted and secrets are redacted", async () => {
   const previousSecret = process.env.AGENTSHIP_TEST_SECRET;
   const previousIgnored = process.env.AGENTSHIP_TEST_IGNORED;

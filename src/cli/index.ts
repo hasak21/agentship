@@ -8,10 +8,11 @@ interface CliOptions {
   base?: string;
   staged: boolean;
   outputPath?: string;
+  confirmedRequirementIds: string[];
 }
 
 function parseArgs(args: string[]): CliOptions {
-  const options: CliOptions = { staged: false };
+  const options: CliOptions = { staged: false, confirmedRequirementIds: [] };
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (index === 0 && arg === "review") continue;
@@ -19,13 +20,18 @@ function parseArgs(args: string[]): CliOptions {
       options.staged = true;
       continue;
     }
-    if (["--task", "--config", "--base", "--output"].includes(arg)) {
+    if (["--task", "--config", "--base", "--output", "--confirm"].includes(arg)) {
       const value = args[++index];
       if (!value) throw new Error(`${arg} requires a value.`);
       if (arg === "--task") options.taskPath = value;
       if (arg === "--config") options.configPath = value;
       if (arg === "--base") options.base = value;
       if (arg === "--output") options.outputPath = value;
+      if (arg === "--confirm") {
+        options.confirmedRequirementIds.push(
+          ...value.split(",").map((id) => id.trim()).filter(Boolean)
+        );
+      }
       continue;
     }
     if (arg === "--help" || arg === "-h") {
@@ -50,6 +56,7 @@ Options:
   --staged         Review staged changes instead of the working tree
   --config <path>  Configuration path (default: .agentship.yml)
   --output <path>  JSON report path
+  --confirm <ids>  Confirm comma-separated requirements marked [confirm]
   -h, --help       Show this help`);
 }
 
@@ -62,6 +69,7 @@ async function main() {
     base: options.base,
     staged: options.staged,
     outputPath: options.outputPath,
+    confirmedRequirementIds: options.confirmedRequirementIds,
   });
 
   const { report } = result;

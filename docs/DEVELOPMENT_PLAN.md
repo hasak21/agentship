@@ -49,10 +49,10 @@ Exit criterion: changes to AgentShip routinely carry an independently produced v
 ## M3 — Intent-to-diff verification
 
 - [x] Parse task documents into individually addressable requirements.
-- [ ] Require confirmation for ambiguous high-impact requirements.
-- [ ] Map requirements to files, symbols, tests, and documentation.
-- [ ] Identify apparently missing and unrelated changes.
-- [ ] Measure omission recall and false-positive rate on a fixture corpus.
+- [~] Require confirmation for ambiguous high-impact requirements (explicit `[confirm]` workflow delivered; automatic classification and authenticated approval pending).
+- [~] Map requirements to files, symbols, tests, and documentation (explicit path mapping delivered; inferred mapping pending).
+- [~] Identify apparently missing and unrelated changes (explicit missing paths and unattributed changed-file evidence delivered; semantic relevance pending).
+- [~] Measure omission recall and false-positive rate (explicit-path fixture baseline delivered; semantic defect corpus pending).
 
 Exit criterion: omitted requirements are detected with measured, publishable accuracy.
 

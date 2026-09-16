@@ -172,6 +172,21 @@ From a source checkout:
 npm run review -- --task task.md
 ```
 
+Task requirements may opt into explicit operator confirmation with a `[confirm]`
+prefix. Supply their stable IDs when reviewing:
+
+```markdown
+## Requirements
+
+1. [confirm] Rotate the production signing key.
+```
+
+```bash
+npm run review -- --task task.md --confirm R1
+```
+
+The confirmation is recorded evidence, not authenticated approval or a signature.
+
 Build and verify the standalone Node 20 CLI artifact:
 
 ```bash

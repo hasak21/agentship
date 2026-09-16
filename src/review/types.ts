@@ -50,7 +50,9 @@ export interface ReviewFinding {
     | "required_check_failed"
     | "required_check_timed_out"
     | "optional_check_failed"
-    | "repository_changed_during_review";
+    | "repository_changed_during_review"
+    | "explicit_requirement_path_unchanged"
+    | "requirement_confirmation_missing";
   title: string;
   evidence: {
     check?: string;
@@ -60,6 +62,8 @@ export interface ReviewFinding {
     afterHead?: string;
     beforeDiffSha256?: string;
     afterDiffSha256?: string;
+    requirementId?: string;
+    expectedPaths?: string[];
   };
 }
 
@@ -90,8 +94,19 @@ export interface ReviewReport {
       id: string;
       text: string;
       line: number;
-      confirmation: "explicit";
+      confirmation: "not_required" | "required" | "confirmed";
     }>;
+    mappings: Array<{
+      requirementId: string;
+      basis: "explicit_path" | "none";
+      references: string[];
+      observedFiles: string[];
+      status: "observed" | "missing" | "unmapped";
+    }>;
+    changeCoverage: {
+      attributedFiles: string[];
+      unattributedFiles: string[];
+    };
   };
   configuration: {
     path: string;
