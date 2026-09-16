@@ -112,7 +112,7 @@ export function DiffViewer({
               ) : (
                 <>
                   <span>🛡️</span>
-                  <span>Cross-Audit Diff</span>
+                  <span>Request Evidence Review</span>
                 </>
               )}
             </button>

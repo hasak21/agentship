@@ -11,8 +11,19 @@ import {
   LLMRequestOptions,
   LLMResponse,
   LLMSource,
+  parsePublicLLMOptions,
+  PublicLLMInputError,
   resolveProviderConfig,
 } from "@/lib/llm";
+import {
+  guardErrorResponse,
+  HttpGuardError,
+  readBoundedJsonObject,
+  requireApiAccess,
+} from "@/lib/http-guard";
+import { dispatchTopology } from "@/lib/topology-dispatch";
+
+const MAX_RESEARCH_REQUEST_BYTES = 256 * 1024;
 
 type Source = LLMSource;
 
@@ -755,26 +766,14 @@ async function runTrack(
   const t0 = Date.now();
   let finalLeaf: Leaf;
 
-  switch (pattern) {
-    case "single":
-      finalLeaf = await runSingle(q, opts, emit, track);
-      break;
-    case "debate":
-      finalLeaf = await runDebate(q, opts, emit, track);
-      break;
-    case "router":
-      finalLeaf = await runRouter(q, opts, emit, track);
-      break;
-    case "consistency":
-      finalLeaf = await runConsistency(q, opts, emit, track);
-    case "auto":
-      finalLeaf = await runAuto(q, opts, emit, track);
-      break;
-    case "orchestrator":
-    default:
-      finalLeaf = await runOrchestrator(q, opts, emit, track);
-      break;
-  }
+  finalLeaf = await dispatchTopology(pattern, {
+    single: () => runSingle(q, opts, emit, track),
+    debate: () => runDebate(q, opts, emit, track),
+    router: () => runRouter(q, opts, emit, track),
+    consistency: () => runConsistency(q, opts, emit, track),
+    auto: () => runAuto(q, opts, emit, track),
+    orchestrator: () => runOrchestrator(q, opts, emit, track),
+  });
 
   if (opts.critic) {
     finalLeaf = await runCriticPass(q, finalLeaf, opts, emit, track);
@@ -879,14 +878,14 @@ export async function POST(request: Request) {
     compare?: boolean;
     model?: string;
     provider?: string;
-    apiKey?: string;
-    baseUrl?: string;
-  } = {};
+  };
 
   try {
-    body = await request.json();
-  } catch {
-    // Handled below
+    requireApiAccess(request);
+    body = await readBoundedJsonObject(request, MAX_RESEARCH_REQUEST_BYTES);
+  } catch (error) {
+    if (error instanceof HttpGuardError) return guardErrorResponse(error);
+    return Response.json({ error: "Invalid request." }, { status: 400 });
   }
 
   const question = (body.question ?? "").trim();
@@ -895,12 +894,16 @@ export async function POST(request: Request) {
   const web = !!body.web;
   const compare = !!body.compare;
 
-  const llmOptions: LLMRequestOptions = {
-    model: body.model,
-    provider: body.provider as LLMRequestOptions["provider"],
-    apiKey: body.apiKey,
-    baseUrl: body.baseUrl,
-  };
+  let llmOptions: LLMRequestOptions;
+  try {
+    llmOptions = parsePublicLLMOptions(body as Record<string, unknown>);
+  } catch (error) {
+    const message =
+      error instanceof PublicLLMInputError
+        ? error.message
+        : "Invalid provider configuration.";
+    return Response.json({ error: message }, { status: 400 });
+  }
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

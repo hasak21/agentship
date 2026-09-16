@@ -82,6 +82,7 @@ export const UNIVERSAL_MODEL_PRESETS: ModelPreset[] = [
 
 // Circuit breaker for rate-limited endpoints
 const CIRCUIT_COOLDOWN_MS = 60_000;
+const DEFAULT_LLM_REQUEST_TIMEOUT_MS = 30_000;
 const circuitCooldowns = new Map<string, number>();
 
 function isCircuitOpen(key: string): boolean {
@@ -115,6 +116,8 @@ export function resolveProviderConfig(options?: LLMRequestOptions): {
     (process.env.OLLAMA_BASE_URL ? "ollama" : null) ||
     "openai-compatible";
 
+  const hasExplicitBaseUrl = Boolean(options?.baseUrl);
+  const allowEnvironmentCredential = !hasExplicitBaseUrl || Boolean(options?.apiKey);
   let baseUrl = options?.baseUrl || "";
   let apiKey = options?.apiKey || "";
   let model = options?.model || "";
@@ -122,25 +125,25 @@ export function resolveProviderConfig(options?: LLMRequestOptions): {
   switch (provider) {
     case "deepseek":
       baseUrl = baseUrl || process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1";
-      apiKey = apiKey || process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || "";
+      apiKey = apiKey || (allowEnvironmentCredential ? process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || "" : "");
       model = model || process.env.DEEPSEEK_MODEL || "deepseek-chat";
       break;
 
     case "anthropic":
       baseUrl = baseUrl || process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
-      apiKey = apiKey || process.env.ANTHROPIC_API_KEY || "";
+      apiKey = apiKey || (allowEnvironmentCredential ? process.env.ANTHROPIC_API_KEY || "" : "");
       model = model || process.env.ANTHROPIC_MODEL || "claude-3-7-sonnet-20250219";
       break;
 
     case "ollama":
       baseUrl = baseUrl || process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1";
-      apiKey = apiKey || process.env.OLLAMA_API_KEY || "ollama";
+      apiKey = apiKey || (allowEnvironmentCredential ? process.env.OLLAMA_API_KEY || "ollama" : "");
       model = model || process.env.OLLAMA_MODEL || "qwen2.5-coder:latest";
       break;
 
     case "gemini":
       baseUrl = baseUrl || process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
-      apiKey = apiKey || process.env.GEMINI_API_KEY || "";
+      apiKey = apiKey || (allowEnvironmentCredential ? process.env.GEMINI_API_KEY || "" : "");
       model = model || process.env.GEMINI_MODEL || "gemini-2.5-flash";
       break;
 
@@ -152,12 +155,28 @@ export function resolveProviderConfig(options?: LLMRequestOptions): {
         process.env.OPENAI_BASE_URL ||
         process.env.LLM_BASE_URL ||
         "https://api.openai.com/v1";
-      apiKey = apiKey || process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || "";
+      apiKey = apiKey || (allowEnvironmentCredential ? process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || "" : "");
       model = model || process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-4o-mini";
       break;
   }
 
+  validateProviderBaseUrl(baseUrl);
   return { provider, model, apiKey, baseUrl };
+}
+
+function validateProviderBaseUrl(baseUrl: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error("LLM provider base URL must be a valid absolute URL.");
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("LLM provider base URL must use HTTP or HTTPS.");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("LLM provider base URL must not contain credentials.");
+  }
 }
 
 /**
@@ -241,11 +260,11 @@ async function callOpenAICompatibleChat(
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetchWithTimeout(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
-      });
+      }, options.timeoutMs);
 
       if (res.ok) {
         const data = await res.json();
@@ -332,11 +351,11 @@ async function callAnthropicMessages(
   };
 
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
-    });
+    }, options.timeoutMs);
 
     if (res.ok) {
       const data = await res.json();
@@ -407,14 +426,14 @@ async function callGeminiAPI(
   }
 
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-goog-api-key": options.apiKey,
       },
       body: JSON.stringify(payload),
-    });
+    }, options.timeoutMs);
 
     if (res.ok) {
       const data = await res.json();
@@ -505,5 +524,28 @@ export function extractJsonFromResponse<T = Record<string, unknown>>(rawText: st
     } catch {
       throw new Error(`Failed to parse JSON from LLM response. Snippet: ${rawText.slice(0, 200)}`);
     }
+  }
+}
+
+export async function fetchWithTimeout(
+  input: string | URL | Request,
+  init: RequestInit,
+  timeoutMs = Number(process.env.LLM_REQUEST_TIMEOUT_MS) ||
+    DEFAULT_LLM_REQUEST_TIMEOUT_MS
+): Promise<Response> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("LLM request timeout must be greater than zero.");
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`LLM request timed out after ${timeoutMs}ms.`)),
+    timeoutMs
+  );
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
 }

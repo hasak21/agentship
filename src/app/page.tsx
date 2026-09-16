@@ -147,7 +147,7 @@ const ROLE_ICON: Record<string, string> = {
 };
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"orchestration" | "diff" | "audit" | "telemetry">("orchestration");
+  const [activeTab, setActiveTab] = useState<"orchestration" | "diff" | "audit" | "telemetry">("diff");
   const [task, setTask] = useState("");
   const [pattern, setPattern] = useState<Pattern>("orchestrator");
   const [critic, setCritic] = useState(false);
@@ -442,13 +442,13 @@ export default function Home() {
         <header className="flex flex-col items-center justify-center text-center">
           <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-[#121622] px-4 py-1.5 text-xs font-semibold text-indigo-300 shadow-md">
             <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            AgentShip · Mission Control & Multi-Model Audit Gate
+            AgentShip Verify · Independent Evidence, Not Agent Claims
           </div>
           <h1 className="text-3xl font-extrabold tracking-tight text-white sm:text-5xl font-mono">
-            ✦ AgentShip
+            ✦ AgentShip Verify
           </h1>
           <p className="mx-auto mt-2 max-w-2xl text-sm text-slate-300 leading-relaxed">
-            Visual workspace and multi-model quality & security audit gate for CLI Coding Agents (Claude Code, DeepSeek Harness, OpenCode, Pi).
+            Evidence-based preflight for agent-written code. Run the checks yourself, inspect the change, and decide whether it is ready to ship.
           </p>
         </header>
 
@@ -465,7 +465,7 @@ export default function Home() {
               }`}
             >
               <span>🧭</span>
-              <span>Agent Topologies</span>
+              <span>Model Lab</span>
             </button>
             <button
               onClick={() => setActiveTab("diff")}
@@ -476,7 +476,7 @@ export default function Home() {
               }`}
             >
               <span>🔍</span>
-              <span>Visual Diff Review</span>
+              <span>Preflight Diff</span>
               {parsedDiff.fileCount > 0 && (
                 <span className="rounded-full bg-indigo-950 px-2 py-0.5 text-[11px] font-mono border border-indigo-400/40 text-indigo-300">
                   {parsedDiff.fileCount}
@@ -492,10 +492,10 @@ export default function Home() {
               }`}
             >
               <span>🛡️</span>
-              <span>Cross-Audit Gate</span>
+              <span>Evidence Review</span>
               {auditReport && (
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-mono font-bold ${auditReport.passed ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40' : 'bg-rose-500/25 text-rose-300 border border-rose-500/40'}`}>
-                  {auditReport.overallScore}
+                  {auditReport.passed ? "PASS" : "BLOCK"}
                 </span>
               )}
             </button>
@@ -508,7 +508,7 @@ export default function Home() {
               }`}
             >
               <span>📊</span>
-              <span>Telemetry ROI</span>
+              <span>Run History</span>
             </button>
           </nav>
 
@@ -535,12 +535,12 @@ export default function Home() {
               className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-500/40 bg-indigo-500/15 px-3.5 py-2 text-xs font-bold text-indigo-200 transition hover:bg-indigo-500/25 active:scale-[0.98] shadow-md"
             >
               <span>🔌</span>
-              <span>MCP & CLI Gate</span>
+              <span>CLI & MCP</span>
             </button>
           </div>
         </div>
 
-        {/* Tab 1: Agent Topologies & Multi-Agent Orchestration */}
+        {/* Experimental model-topology lab; verification remains the primary workflow. */}
         {activeTab === "orchestration" && (
           <section className="mt-8">
             <div className="mx-auto max-w-4xl space-y-4">
@@ -609,7 +609,7 @@ export default function Home() {
                         run();
                       }
                     }}
-                    placeholder="Give the agents a coding or research task… (Enter to dispatch, Shift+Enter for new line)"
+                    placeholder="Experimental: compare model strategies on a task… (Enter to dispatch)"
                     rows={2}
                     className="w-full resize-none bg-transparent px-4 py-3 pr-16 text-sm text-slate-100 font-medium outline-none placeholder:text-slate-400"
                   />
@@ -802,7 +802,7 @@ export default function Home() {
                   </span>
                   <div>
                     <h3 className="text-base font-bold text-slate-100">
-                      AgentShip MCP & Ecosystem Hub
+                      AgentShip Verify Integration Hub
                     </h3>
                     <p className="text-xs text-slate-300">
                       Connect your favorite terminal coding agents and IDEs.

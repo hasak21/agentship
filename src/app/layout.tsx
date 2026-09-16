@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AgentShip — Coding Agent Mission Control & Cross-Audit Gate",
+  title: "AgentShip Verify — Evidence-Based Preflight for Agent Code",
   description:
-    "Visual Mission Control and Multi-Model Code Quality Audit Gate for CLI Coding Agents (Claude Code, DeepSeek Harness, OpenCode, Pi).",
+    "Independently run checks, bind requirements, and produce reproducible evidence before shipping agent-written code.",
 };
 
 export default function RootLayout({

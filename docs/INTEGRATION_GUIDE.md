@@ -6,7 +6,7 @@ This guide explains how to connect and use **AgentShip** alongside mainstream CL
 
 ## 1. Integration Architecture
 
-AgentShip acts as the **Layer-2 Mission Control & Cross-Audit Gate** for your CLI agents:
+AgentShip acts as an **independent verification layer** for your CLI agents:
 
 ```
 [ Developer Terminal ] ───► Runs: Claude Code / Pi / OpenCode / DSH
@@ -15,8 +15,8 @@ AgentShip acts as the **Layer-2 Mission Control & Cross-Audit Gate** for your CL
 [ AgentShip ] ◄────────────────── (Ingest via REST API / Web UI / MCP)
        │
        ├─► 🔍 Visual Diff Review (Interactive multi-file inspection)
-       ├─► 🛡️ Cross-Audit Gate (Independent Security & Correctness verification)
-       └─► 📊 Telemetry ROI (Cost attribution & latency tracking)
+       ├─► 🛡️ Evidence Review (Independent security & correctness analysis)
+       └─► 🧾 Verification Report (Executed checks bound to Git state)
 ```
 
 ---

@@ -5,7 +5,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeDiffAudit } from "@/lib/auditor";
 import { parseGitDiff } from "@/lib/diff-parser";
+import {
+  guardErrorResponse,
+  HttpGuardError,
+  readBoundedJsonObject,
+  requireApiAccess,
+} from "@/lib/http-guard";
 import { callUniversalLLM, LLMRequestOptions } from "@/lib/llm";
+
+const MAX_MCP_REQUEST_BYTES = 2 * 1024 * 1024;
 
 const MCP_SERVER_INFO = {
   name: "AgentShip Mission Control & Quality Gate",
@@ -123,18 +131,13 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  let body: Record<string, unknown> = {};
+  let body: Record<string, unknown>;
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      {
-        jsonrpc: "2.0",
-        id: null,
-        error: { code: -32700, message: "Parse error: Invalid JSON payload." },
-      },
-      { status: 400 }
-    );
+    requireApiAccess(request);
+    body = await readBoundedJsonObject(request, MAX_MCP_REQUEST_BYTES);
+  } catch (error) {
+    if (error instanceof HttpGuardError) return guardErrorResponse(error);
+    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
   const id = body.id ?? null;

@@ -1,13 +1,13 @@
-# ✦ AgentShip — Coding Agent Mission Control & Cross-Audit Gate
+# ✦ AgentShip Verify — Evidence-Based Preflight for Agent Code
 
 [![Next.js](https://img.shields.io/badge/Next.js-16.2_(App_Router)-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38bdf8?style=flat-square&logo=tailwindcss)](https://tailwindcss.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg?style=flat-square)](LICENSE)
 
-**AgentShip** is an open-source **Visual Mission Control and Multi-Model Quality & Security Audit Gate** designed for CLI-first AI coding agents (such as **Claude Code**, **DeepSeek Harness (dsh)**, **OpenCode**, and **Pi**).
+**AgentShip Verify** independently checks agent-written changes and records reproducible evidence before you commit or merge them. It is designed for developers using tools such as **Claude Code**, **Codex**, **Cursor**, **OpenCode**, and **Pi**.
 
-Rather than reinventing another monolithic code generation CLI, AgentShip acts as an **ecosystem companion (Layer-2)** that bridges the gap between terminal agents and developer experience.
+The core rule is simple: an agent's statement that tests passed is a claim, not evidence. AgentShip runs configured checks itself and binds their results to the exact task and Git state reviewed.
 
 ---
 
@@ -17,7 +17,7 @@ Terminal coding agents excel at speed and autonomous execution, but present thre
 
 1. **Terminal Inspection Limits**: Reviewing large, multi-file Git diffs and complex execution branches in a terminal TUI is cumbersome and error-prone.
 2. **Single-Model Blind Spots**: An agent that writes code is prone to confirmation bias when self-evaluating; bugs, subtle race conditions, and security risks slip through.
-3. **Lack of Attribution & ROI Metrics**: Engineering teams lack real-time visibility into agent task duration, token costs, lines modified, and code quality benchmarks.
+3. **Intent Drift**: Agents may omit a requirement or modify unrelated files while still reporting the task complete.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -26,10 +26,10 @@ Terminal coding agents excel at speed and autonomous execution, but present thre
 └──────────────────────────────┬──────────────────────────────┘
                                │ (SSE / REST / MCP)
 ┌──────────────────────────────┴──────────────────────────────┐
-│                        AgentShip                            │
+│                     AgentShip Verify                       │
 │                                                             │
-│  🧭 Multi-Agent Lab     🔍 Visual Diff Review               │
-│  🛡️ Cross-Audit Gate    📊 Telemetry & ROI Dashboard        │
+│  ✅ Executed Checks     🔍 Preflight Diff                    │
+│  🧾 Evidence Manifest   🎯 Task Requirements                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -52,8 +52,8 @@ Terminal coding agents excel at speed and autonomous execution, but present thre
   - 🧹 **Maintainability**: Cyclomatic complexity, code clarity, antipatterns.
 - **Actionable Findings**: Categorized by `BLOCKER`, `WARNING`, and `NITPICK` with code snippets and **copyable fix patches**.
 
-### 3. 🧭 Multi-Agent Orchestration Lab
-Run tasks through multiple multi-agent topologies and compare performance:
+### 3. 🧭 Experimental Model Lab
+The existing research surface can compare model topologies, but it is experimental and is not part of the trusted verification verdict:
 - 🧭 **Orchestrator**: Planner → Parallel Workers (with typed confidence handoffs) → Synthesizer.
 - 💬 **Debate**: 3 Debaters (pragmatic, skeptical, creative) → Cross-Rebuttal round → Judge ruling.
 - 🚦 **Router**: Intent classification → Specialized domain agent (Code, Writing, Analysis, General).
@@ -62,7 +62,7 @@ Run tasks through multiple multi-agent topologies and compare performance:
 - 🕵️ **Critic Reflection**: Multi-round structured review with automated revision loop.
 - ⚖️ **Double-Blind Pairwise Judge**: Position-swapped automated scoring to eliminate position bias.
 
-### 4. 📊 Telemetry & ROI Cost Dashboard
+### 4. 📊 Run History
 - Tracks wall-clock time, token usage, net code volume delta, and average quality scores.
 - Session execution log table for cost attribution and performance benchmarking.
 
@@ -144,6 +144,12 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 
 # Optional Proxy
 # HTTPS_PROXY=http://127.0.0.1:7890
+
+# Required as a Bearer token when exposing AgentShip beyond localhost
+# AGENTSHIP_API_TOKEN=replace-with-a-long-random-value
+
+# Optional outbound provider request deadline (default: 30000)
+# LLM_REQUEST_TIMEOUT_MS=30000
 ```
 
 ### 3. Run Development Server & Tests
@@ -152,11 +158,28 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 # Run unit tests
 npm test
 
-# Start AgentShip Mission Control
+# Start the optional AgentShip Verify web interface
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+### 4. Run the evidence-based preflight
+
+From a source checkout:
+
+```bash
+npm run review -- --task task.md
+```
+
+Build and verify the standalone Node 20 CLI artifact:
+
+```bash
+npm run verify:cli
+node dist/agentship.cjs review --task task.md
+```
+
+The review writes a JSON evidence manifest and Markdown report under `.agentship/reviews/`.
 
 ---
 

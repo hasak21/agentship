@@ -22,6 +22,7 @@ export interface LLMRequestOptions {
   maxTokens?: number;
   responseFormat?: "text" | "json_object";
   webSearch?: boolean;
+  timeoutMs?: number;
 }
 
 export interface LLMTokenUsage {

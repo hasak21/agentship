@@ -1,0 +1,36 @@
+version: 1
+mode: report
+
+checks:
+  - name: lint
+    run: npm run lint
+    required: true
+    timeoutSeconds: 120
+
+  - name: test
+    run: npm test
+    required: true
+    timeoutSeconds: 120
+
+  - name: build
+    run: npm run build
+    required: true
+    timeoutSeconds: 180
+    network: allowed
+    environment:
+      - HTTP_PROXY
+      - HTTPS_PROXY
+      - NO_PROXY
+
+  - name: cli-package
+    run: npm run verify:cli
+    required: true
+    timeoutSeconds: 120
+
+policy:
+  blockOn:
+    - required_check_failed
+    - required_check_timed_out
+  protectedPaths:
+    - pattern: src/app/api/**
+      requireManualApproval: true
