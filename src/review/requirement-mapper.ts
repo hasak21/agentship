@@ -245,6 +245,8 @@ function combinedCheckStatus(
   if (checks.length === 0) return "not_configured";
   if (checks.some(({ status }) => status === "timed_out")) return "timed_out";
   if (checks.some(({ status }) => status === "failed")) return "failed";
+  if (checks.some(({ status }) => status === "passed")) return "passed";
+  if (checks.some(({ status }) => status === "skipped")) return "skipped";
   return "passed";
 }
 

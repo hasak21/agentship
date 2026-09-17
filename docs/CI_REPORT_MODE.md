@@ -9,11 +9,13 @@ AgentShip's initial CI workflow is intentionally artifact-only. It is designed t
 3. The pull-request subject is checked out separately under `subject/`.
 4. AgentShip is built from `verifier/`; `.agentship.yml` is also loaded from that trusted checkout.
 5. A base-owned script reads the GitHub event JSON and writes the PR body to a bounded temporary task document without shell interpolation.
-6. The trusted executable runs base-owned checks against `subject/` and writes evidence there.
+6. The trusted executable enforces base-owned changed-file/diff limits, selects checks through base-owned `whenChanged` patterns, runs applicable checks against `subject/`, and records skipped checks explicitly.
 7. JSON, Markdown, and SARIF reports are uploaded as workflow artifacts even when verification blocks.
 8. The fixed Markdown report is appended to the workflow job summary without granting write permission to the repository.
 
 All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review.
+
+`limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. Every check also has its own timeout and the job has a workflow timeout. These controls do not impose CPU, memory, disk, process-count, or network quotas.
 
 ## Required repository settings
 

@@ -60,7 +60,7 @@ Exit criterion: omitted requirements are detected with measured, publishable acc
 
 - [~] Build a fork-safe GitHub Action (trusted-base, read-only, artifact-only report workflow delivered; live fork-PR validation pending).
 - [~] Publish Check Run, Markdown, JSON, and SARIF outputs (Markdown/JSON/SARIF artifacts and a job summary are delivered; Check Run publication remains pending).
-- [ ] Add changed-path filtering and execution budgets.
+- [~] Add changed-path filtering and execution budgets (deterministic check selection, pre-execution changed-file/diff limits, and wall-clock timeouts delivered; isolated CPU/memory/process quotas remain pending).
 - [ ] Add baselines, suppressions with ownership, and report history.
 
 Exit criterion: a team can install AgentShip without granting merge-blocking authority.

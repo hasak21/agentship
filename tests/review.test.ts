@@ -1,14 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import {
   buildFindings,
   calculateVerdict,
+  evaluateReviewBudgets,
   findProtectedRequirementIds,
   renderSarif,
+  runReview,
+  selectChangedFiles,
 } from "../src/review/review";
 import { mapRequirementsToChangedFiles } from "../src/review/requirement-mapper";
 import { buildCheckEnvironment, runCheck } from "../src/review/runner";
 import type { CheckEvidence, ReviewReport } from "../src/review/types";
+
+const execFileAsync = promisify(execFile);
 
 function check(overrides: Partial<CheckEvidence> = {}): CheckEvidence {
   return {
@@ -59,7 +69,7 @@ function reportWithFindings(
     configuration: { path: ".agentship.yml", sha256: "config-hash" },
     checks: [],
     findings,
-    summary: { passed: 0, failed: 0, timedOut: 0 },
+    summary: { passed: 0, failed: 0, timedOut: 0, skipped: 0 },
   };
 }
 
@@ -81,6 +91,104 @@ test("all passing checks produce a pass verdict", () => {
   const findings = buildFindings([check()]);
   assert.deepEqual(findings, []);
   assert.equal(calculateVerdict(findings), "PASS");
+});
+
+test("path-filtered checks select exact and directory changes", () => {
+  const selected = selectChangedFiles(
+    {
+      name: "review-core",
+      run: "npm test",
+      whenChanged: ["src/review/**", "package.json"],
+    },
+    ["README.md", "src/review/review.ts", "package.json", "src/app/page.tsx"]
+  );
+  assert.deepEqual(selected, ["src/review/review.ts", "package.json"]);
+});
+
+test("skipped path-filtered checks do not fail unless explicitly required by a task", () => {
+  const skipped = check({ status: "skipped", exitCode: null });
+  assert.deepEqual(buildFindings([skipped]), []);
+
+  const findings = buildFindings(
+    [skipped],
+    undefined,
+    [
+      {
+        requirementId: "R1",
+        status: "missing",
+        references: [],
+        missingReferences: [],
+        checkEvidence: [{ name: "test", status: "skipped" }],
+        symbolEvidence: [],
+        missingRoles: [],
+      },
+    ]
+  );
+  assert.equal(findings[0]?.kind, "explicit_requirement_evidence_unsatisfied");
+  assert.deepEqual(findings[0]?.evidence.expectedChecks, [
+    { name: "test", status: "skipped" },
+  ]);
+});
+
+test("review input budgets produce evidence-backed blockers", () => {
+  const excesses = evaluateReviewBudgets(
+    { limits: { maxChangedFiles: 1, maxDiffBytes: 4 } },
+    ["src/a.ts", "src/b.ts"],
+    "12345"
+  );
+  assert.deepEqual(excesses, [
+    { budget: "changed_files", observed: 2, limit: 1 },
+    { budget: "diff_bytes", observed: 5, limit: 4 },
+  ]);
+
+  const findings = buildFindings([check()], undefined, [], [], undefined, excesses);
+  assert.equal(findings.length, 2);
+  assert.ok(findings.every(({ kind }) => kind === "review_budget_exceeded"));
+  assert.equal(calculateVerdict(findings), "BLOCK");
+});
+
+test("an exceeded review budget skips repository commands before execution", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-budget-"));
+  try {
+    await execFileAsync("git", ["init", "-q"], { cwd: directory });
+    await execFileAsync("git", ["config", "user.email", "test@example.com"], {
+      cwd: directory,
+    });
+    await execFileAsync("git", ["config", "user.name", "AgentShip Test"], {
+      cwd: directory,
+    });
+    await writeFile(path.join(directory, "subject.txt"), "before\n", "utf8");
+    await writeFile(
+      path.join(directory, ".agentship.yml"),
+      `version: 1
+mode: report
+limits:
+  maxDiffBytes: 1
+checks:
+  - name: must-not-run
+    run: node -e "require('node:fs').writeFileSync('command-ran', 'yes')"
+`,
+      "utf8"
+    );
+    await execFileAsync("git", ["add", "."], { cwd: directory });
+    await execFileAsync("git", ["commit", "-qm", "fixture"], { cwd: directory });
+    await writeFile(path.join(directory, "subject.txt"), "after\n", "utf8");
+
+    const result = await runReview({
+      cwd: directory,
+      outputPath: ".agentship/reviews/budget.json",
+    });
+
+    assert.equal(result.report.verdict, "BLOCK");
+    assert.equal(result.report.checks[0]?.status, "skipped");
+    assert.equal(
+      result.report.checks[0]?.skipReason,
+      "review_budget_exceeded"
+    );
+    await assert.rejects(access(path.join(directory, "command-ran")));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("repository mutation during checks produces a blocker", () => {

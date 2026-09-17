@@ -106,11 +106,13 @@ test("maps named checks to their observed execution status", () => {
       requirement("R1", "Pass `check:test`."),
       requirement("R2", "Pass `check:integration`."),
       requirement("R3", "Change `change:src/auth/session.ts` and pass `check:lint`."),
+      requirement("R4", "Pass `check:e2e`."),
     ],
     ["src/auth/session.ts"],
     [
       { name: "test", status: "passed" },
       { name: "lint", status: "failed" },
+      { name: "e2e", status: "skipped" },
     ]
   );
 
@@ -124,6 +126,8 @@ test("maps named checks to their observed execution status", () => {
   assert.equal(mappings[2].basis, "explicit_path_and_check");
   assert.equal(mappings[2].status, "missing");
   assert.deepEqual(mappings[2].checkEvidence, [{ name: "lint", status: "failed" }]);
+  assert.equal(mappings[3].status, "missing");
+  assert.deepEqual(mappings[3].checkEvidence, [{ name: "e2e", status: "skipped" }]);
 });
 
 test("maps explicit symbols to added or deleted diff lines", () => {

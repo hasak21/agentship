@@ -15,7 +15,20 @@ import {
   summarizeChangeCoverage,
   type RequirementMapping,
 } from "./requirement-mapper";
-import type { CheckEvidence, ReviewFinding, ReviewReport, ReviewVerdict } from "./types";
+import type {
+  AgentShipConfig,
+  CheckEvidence,
+  ReviewCheckConfig,
+  ReviewFinding,
+  ReviewReport,
+  ReviewVerdict,
+} from "./types";
+
+interface BudgetExcess {
+  budget: "changed_files" | "diff_bytes";
+  observed: number;
+  limit: number;
+}
 
 export interface RunReviewOptions {
   cwd: string;
@@ -45,6 +58,11 @@ export async function runReview(options: RunReviewOptions): Promise<{
   });
   const head = await getHead(repositoryRoot);
   const diffSha256 = sha256(gitEvidence.diff);
+  const budgetExcesses = evaluateReviewBudgets(
+    config,
+    gitEvidence.changedFiles,
+    gitEvidence.diff
+  );
 
   const task = options.taskPath
     ? await loadTask(repositoryRoot, options.taskPath)
@@ -58,7 +76,24 @@ export async function runReview(options: RunReviewOptions): Promise<{
 
   const checks: CheckEvidence[] = [];
   for (const check of config.checks) {
-    checks.push(await runCheck(check, repositoryRoot));
+    if (budgetExcesses.length > 0) {
+      checks.push(skippedCheckEvidence(check, "review_budget_exceeded"));
+      continue;
+    }
+    const matchedFiles = selectChangedFiles(check, gitEvidence.changedFiles);
+    if (check.whenChanged && matchedFiles.length === 0) {
+      checks.push(skippedCheckEvidence(check, "no_changed_path_match"));
+      continue;
+    }
+    const evidence = await runCheck(check, repositoryRoot);
+    checks.push(
+      check.whenChanged
+        ? {
+            ...evidence,
+            selection: { patterns: check.whenChanged, matchedFiles },
+          }
+        : evidence
+    );
   }
   if (task) {
     task.mappings = mapRequirementsToChangedFiles(
@@ -87,6 +122,13 @@ export async function runReview(options: RunReviewOptions): Promise<{
   const postCheckDiffSha256 = sha256(postCheckGitEvidence.diff);
   const stableDuringChecks =
     head === postCheckHead && diffSha256 === postCheckDiffSha256;
+  const budget = config.limits
+    ? {
+        changedFiles: gitEvidence.changedFiles.length,
+        diffBytes: Buffer.byteLength(gitEvidence.diff),
+        limits: config.limits,
+      }
+    : undefined;
   const findings = buildFindings(
     checks,
     {
@@ -103,7 +145,8 @@ export async function runReview(options: RunReviewOptions): Promise<{
           strict: task.options.strictChangeCoverage,
           unattributedFiles: task.changeCoverage.unattributedFiles,
         }
-      : undefined
+      : undefined,
+    budgetExcesses
   );
   const verdict = calculateVerdict(findings);
   const finished = Date.now();
@@ -134,11 +177,13 @@ export async function runReview(options: RunReviewOptions): Promise<{
       sha256: sha256(configSource),
     },
     checks,
+    budget,
     findings,
     summary: {
       passed: checks.filter((check) => check.status === "passed").length,
       failed: checks.filter((check) => check.status === "failed").length,
       timedOut: checks.filter((check) => check.status === "timed_out").length,
+      skipped: checks.filter((check) => check.status === "skipped").length,
     },
   };
 
@@ -180,7 +225,7 @@ export function buildFindings(
     missingReferences: string[];
     checkEvidence: Array<{
       name: string;
-      status: "passed" | "failed" | "timed_out" | "not_configured";
+      status: "passed" | "failed" | "timed_out" | "skipped" | "not_configured";
     }>;
     symbolEvidence: Array<{
       path: string;
@@ -196,10 +241,11 @@ export function buildFindings(
   changeCoverage?: {
     strict: boolean;
     unattributedFiles: string[];
-  }
+  },
+  budgetExcesses: BudgetExcess[] = []
 ): ReviewFinding[] {
   const findings = checks.flatMap((check, index): ReviewFinding[] => {
-    if (check.status === "passed") return [];
+    if (check.status === "passed" || check.status === "skipped") return [];
     const required = check.required;
     const kind = required
       ? check.status === "timed_out"
@@ -294,7 +340,84 @@ export function buildFindings(
     });
   }
 
+  for (const excess of budgetExcesses) {
+    findings.push({
+      id: `budget-${excess.budget}`,
+      severity: "blocker",
+      kind: "review_budget_exceeded",
+      title: `Review ${excess.budget.replaceAll("_", " ")} budget exceeded (${excess.observed} > ${excess.limit})`,
+      evidence: excess,
+    });
+  }
+
   return findings;
+}
+
+export function selectChangedFiles(
+  check: ReviewCheckConfig,
+  changedFiles: string[]
+): string[] {
+  if (!check.whenChanged) return changedFiles;
+  return changedFiles.filter((file) =>
+    check.whenChanged?.some((pattern) => pathMatches(pattern, file))
+  );
+}
+
+export function evaluateReviewBudgets(
+  config: Pick<AgentShipConfig, "limits">,
+  changedFiles: string[],
+  diff: string
+): BudgetExcess[] {
+  const excesses: BudgetExcess[] = [];
+  if (
+    config.limits?.maxChangedFiles !== undefined &&
+    changedFiles.length > config.limits.maxChangedFiles
+  ) {
+    excesses.push({
+      budget: "changed_files",
+      observed: changedFiles.length,
+      limit: config.limits.maxChangedFiles,
+    });
+  }
+  const diffBytes = Buffer.byteLength(diff);
+  if (
+    config.limits?.maxDiffBytes !== undefined &&
+    diffBytes > config.limits.maxDiffBytes
+  ) {
+    excesses.push({
+      budget: "diff_bytes",
+      observed: diffBytes,
+      limit: config.limits.maxDiffBytes,
+    });
+  }
+  return excesses;
+}
+
+function skippedCheckEvidence(
+  check: ReviewCheckConfig,
+  skipReason: CheckEvidence["skipReason"]
+): CheckEvidence {
+  const timestamp = new Date().toISOString();
+  return {
+    name: check.name,
+    command: check.run,
+    required: check.required !== false,
+    network: check.network ?? "unspecified",
+    environment: [],
+    status: "skipped",
+    exitCode: null,
+    signal: null,
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    durationMs: 0,
+    stdout: "",
+    stderr: "",
+    outputTruncated: false,
+    ...(check.whenChanged
+      ? { selection: { patterns: check.whenChanged, matchedFiles: [] } }
+      : {}),
+    skipReason,
+  };
 }
 
 export function findProtectedRequirementIds(
@@ -436,7 +559,15 @@ function renderMarkdown(report: ReviewReport): string {
   const checks = report.checks
     .map(
       (check) =>
-        `| ${check.name} | ${check.status} | ${check.exitCode ?? "—"} | ${check.durationMs} ms | \`${check.command}\` |`
+        `| ${check.name} | ${check.status} | ${check.exitCode ?? "—"} | ${check.durationMs} ms | ${
+          check.skipReason
+            ? `skipped: ${check.skipReason}`
+            : check.selection
+            ? check.selection.matchedFiles.length > 0
+              ? check.selection.matchedFiles.map((file) => `\`${file}\``).join(", ")
+              : "no path match"
+            : "all changes"
+        } | \`${check.command}\` |`
     )
     .join("\n");
   const findings = report.findings.length
@@ -490,6 +621,20 @@ function renderMarkdown(report: ReviewReport): string {
         ...report.task.changeCoverage.unattributedFiles.map((file) => `  - \`${file}\``),
       ].join("\n")
     : "No task was supplied, so change attribution was not evaluated.";
+  const budget = report.budget
+    ? [
+        `- Changed files: ${report.budget.changedFiles}${
+          report.budget.limits.maxChangedFiles === undefined
+            ? ""
+            : ` / ${report.budget.limits.maxChangedFiles}`
+        }`,
+        `- Diff bytes: ${report.budget.diffBytes}${
+          report.budget.limits.maxDiffBytes === undefined
+            ? ""
+            : ` / ${report.budget.limits.maxDiffBytes}`
+        }`,
+      ].join("\n")
+    : "No review input budgets were configured.";
 
-  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Command |\n| --- | --- | ---: | ---: | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
+  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
 }

@@ -51,6 +51,7 @@ This model covers the local review CLI, public Next.js endpoints, provider clien
 | T13 | Task changes between approval and review | Task digest in report | Detected by consumers only; signatures remain open |
 | T14 | Generated test merely encodes implementation | No causal base/head validation yet | Open |
 | T15 | In-memory or app-level rate limits fail across replicas | No distributed limiter is claimed | Host/control-plane limiter required |
+| T16 | Oversized pull-request input consumes excessive check time | Base-owned changed-file/diff-byte limits block before checks; check and workflow wall-clock timeouts bound duration | CPU, memory, disk, process-count, and network quotas remain open |
 
 ## Preconditions for privileged hostile-pull-request enforcement
 

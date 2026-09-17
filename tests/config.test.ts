@@ -74,3 +74,63 @@ policy:
     }
   );
 });
+
+test("configuration accepts path-aware checks and review input budgets", async () => {
+  await withConfig(
+    `version: 1
+mode: report
+limits:
+  maxChangedFiles: 100
+  maxDiffBytes: 1048576
+checks:
+  - name: review
+    run: npm test
+    whenChanged:
+      - src/review/**
+      - package.json
+`,
+    async (directory) => {
+      const { config } = await loadConfig(directory);
+      assert.deepEqual(config.checks[0]?.whenChanged, [
+        "src/review/**",
+        "package.json",
+      ]);
+      assert.deepEqual(config.limits, {
+        maxChangedFiles: 100,
+        maxDiffBytes: 1048576,
+      });
+    }
+  );
+});
+
+test("configuration rejects unsafe check paths and invalid budgets", async () => {
+  await withConfig(
+    `version: 1
+mode: report
+limits:
+  maxChangedFiles: 0
+checks:
+  - name: review
+    run: npm test
+    whenChanged:
+      - ../outside/**
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /must be repository-relative/);
+    }
+  );
+
+  await withConfig(
+    `version: 1
+mode: report
+limits:
+  maxDiffBytes: 1.5
+checks:
+  - name: review
+    run: npm test
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /must be a positive integer/);
+    }
+  );
+});

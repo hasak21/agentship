@@ -1,6 +1,6 @@
 export type ReviewMode = "report" | "gate";
 export type ReviewVerdict = "PASS" | "WARN" | "BLOCK";
-export type CheckStatus = "passed" | "failed" | "timed_out";
+export type CheckStatus = "passed" | "failed" | "timed_out" | "skipped";
 
 export interface ReviewCheckConfig {
   name: string;
@@ -9,6 +9,7 @@ export interface ReviewCheckConfig {
   timeoutSeconds?: number;
   network?: "allowed" | "denied";
   environment?: string[];
+  whenChanged?: string[];
 }
 
 export interface ProtectedPathPolicy {
@@ -20,6 +21,10 @@ export interface AgentShipConfig {
   version: 1;
   mode: ReviewMode;
   checks: ReviewCheckConfig[];
+  limits?: {
+    maxChangedFiles?: number;
+    maxDiffBytes?: number;
+  };
   policy?: {
     blockOn?: string[];
     protectedPaths?: ProtectedPathPolicy[];
@@ -41,6 +46,11 @@ export interface CheckEvidence {
   stdout: string;
   stderr: string;
   outputTruncated: boolean;
+  selection?: {
+    patterns: string[];
+    matchedFiles: string[];
+  };
+  skipReason?: "no_changed_path_match" | "review_budget_exceeded";
 }
 
 export interface ReviewFinding {
@@ -55,6 +65,7 @@ export interface ReviewFinding {
     | "explicit_requirement_evidence_unsatisfied"
     | "inferred_requirement_role_missing"
     | "unattributed_changes"
+    | "review_budget_exceeded"
     | "requirement_confirmation_missing";
   title: string;
   evidence: {
@@ -78,6 +89,9 @@ export interface ReviewFinding {
     }>;
     expectedRoles?: Array<"test" | "documentation">;
     unexpectedPaths?: string[];
+    budget?: "changed_files" | "diff_bytes";
+    observed?: number;
+    limit?: number;
   };
 }
 
@@ -164,10 +178,19 @@ export interface ReviewReport {
     sha256: string;
   };
   checks: CheckEvidence[];
+  budget?: {
+    changedFiles: number;
+    diffBytes: number;
+    limits: {
+      maxChangedFiles?: number;
+      maxDiffBytes?: number;
+    };
+  };
   findings: ReviewFinding[];
   summary: {
     passed: number;
     failed: number;
     timedOut: number;
+    skipped: number;
   };
 }

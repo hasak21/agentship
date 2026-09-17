@@ -86,6 +86,8 @@ The initial GitHub workflow uses the unprivileged `pull_request` event with `con
 
 The subject's configured checks still execute hostile repository code with network access inside the hosted runner. This mode is suitable only for secretless, read-only reporting on GitHub-hosted disposable runners. It is not safe for self-hosted runners, privileged triggers, write tokens, secrets, cloud metadata access, or merge gating. GitHub repository settings can also opt into write tokens or secrets for fork workflows; operators must leave those options disabled. Live fork-PR validation remains required before the workflow is marked fully delivered.
 
+Base-owned `whenChanged` patterns select checks using only exact repository paths and trailing `/**` directory patterns. A non-applicable check is recorded as `skipped`, never as passing; a task that explicitly requires that check remains unsatisfied. Base-owned changed-file and diff-byte limits produce a blocker and skip repository commands before an oversized review executes. Per-check and workflow wall-clock timeouts are also enforced, but there are no CPU, memory, disk, process-count, or network quotas yet.
+
 Protected-path confirmation currently applies to requirements with observed protected file or symbol mappings. A task that omits those mappings can evade requirement-level confirmation unless strict change coverage catches the unattributed file. Global protected-file enforcement from immutable base policy remains M5 work.
 
 ## Repository-state integrity

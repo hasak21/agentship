@@ -28,6 +28,51 @@ function assertCheck(value: unknown, index: number): asserts value is ReviewChec
   ) {
     throw new Error(`checks[${index}].environment must contain variable names.`);
   }
+  if (check.whenChanged !== undefined) {
+    if (!Array.isArray(check.whenChanged) || check.whenChanged.length === 0) {
+      throw new Error(`checks[${index}].whenChanged must contain path patterns.`);
+    }
+    check.whenChanged.forEach((pattern, patternIndex) =>
+      assertPathPattern(pattern, `checks[${index}].whenChanged[${patternIndex}]`)
+    );
+  }
+}
+
+function assertLimits(value: unknown): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object") {
+    throw new Error("limits must be an object.");
+  }
+  const limits = value as Record<string, unknown>;
+  for (const name of ["maxChangedFiles", "maxDiffBytes"] as const) {
+    const limit = limits[name];
+    if (
+      limit !== undefined &&
+      (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit <= 0)
+    ) {
+      throw new Error(`limits.${name} must be a positive integer.`);
+    }
+  }
+}
+
+function assertPathPattern(value: unknown, field: string): asserts value is string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${field} must be a non-empty string.`);
+  }
+  const prefix = value.endsWith("/**") ? value.slice(0, -3) : value;
+  if (
+    !prefix ||
+    prefix.startsWith("/") ||
+    prefix === ".." ||
+    prefix.startsWith("../") ||
+    prefix.includes("/../") ||
+    prefix.includes("\\") ||
+    prefix.includes("*")
+  ) {
+    throw new Error(
+      `${field} must be repository-relative and supports only exact paths or trailing /**.`
+    );
+  }
 }
 
 function assertPolicy(value: unknown): void {
@@ -52,27 +97,7 @@ function assertPolicy(value: unknown): void {
       throw new Error(`policy.protectedPaths[${index}] must be an object.`);
     }
     const entry = value as Record<string, unknown>;
-    if (typeof entry.pattern !== "string" || !entry.pattern.trim()) {
-      throw new Error(
-        `policy.protectedPaths[${index}].pattern must be a non-empty string.`
-      );
-    }
-    const prefix = entry.pattern.endsWith("/**")
-      ? entry.pattern.slice(0, -3)
-      : entry.pattern;
-    if (
-      !prefix ||
-      prefix.startsWith("/") ||
-      prefix === ".." ||
-      prefix.startsWith("../") ||
-      prefix.includes("/../") ||
-      prefix.includes("\\") ||
-      prefix.includes("*")
-    ) {
-      throw new Error(
-        `policy.protectedPaths[${index}].pattern must be repository-relative and supports only exact paths or trailing /**.`
-      );
-    }
+    assertPathPattern(entry.pattern, `policy.protectedPaths[${index}].pattern`);
     if (
       entry.requireManualApproval !== undefined &&
       typeof entry.requireManualApproval !== "boolean"
@@ -102,6 +127,7 @@ export async function loadConfig(
     throw new Error("AgentShip configuration must contain at least one check.");
   }
   parsed.checks.forEach(assertCheck);
+  assertLimits(parsed.limits);
   assertPolicy(parsed.policy);
 
   return {

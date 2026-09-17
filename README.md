@@ -209,6 +209,14 @@ node dist/agentship.cjs review --task task.md
 
 The review writes JSON, Markdown, and SARIF evidence under `.agentship/reviews/`.
 
+Checks may declare `whenChanged` with exact repository paths or trailing `/**`
+directory patterns. A check with no matching changed path is recorded as `skipped`;
+an explicit `` `check:name` `` requirement still treats that status as unsatisfied.
+Repository-owned `limits.maxChangedFiles` and `limits.maxDiffBytes` stop command
+execution and emit blockers before an oversized review runs. Per-check timeouts and the
+workflow timeout provide wall-clock bounds; CPU, memory, process, and network isolation
+remain future maintainer-mode controls.
+
 Run the checked-in omission calibration corpus, or supply another compatible corpus:
 
 ```bash

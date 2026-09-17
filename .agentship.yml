@@ -1,6 +1,10 @@
 version: 1
 mode: report
 
+limits:
+  maxChangedFiles: 500
+  maxDiffBytes: 5242880
+
 checks:
   - name: lint
     run: npm run lint
@@ -16,6 +20,12 @@ checks:
     run: npm run build
     required: true
     timeoutSeconds: 180
+    whenChanged:
+      - src/**
+      - package.json
+      - package-lock.json
+      - next.config.mjs
+      - tsconfig.json
     network: allowed
     environment:
       - HTTP_PROXY
@@ -26,6 +36,12 @@ checks:
     run: npm run verify:cli
     required: true
     timeoutSeconds: 120
+    whenChanged:
+      - src/cli/**
+      - src/review/**
+      - scripts/verify-cli.mjs
+      - package.json
+      - package-lock.json
 
 policy:
   blockOn:
