@@ -3,6 +3,18 @@ export interface TaskRequirement {
   text: string;
   line: number;
   confirmation: "not_required" | "required" | "confirmed";
+  confirmationBasis: Array<"task_marker" | "protected_path">;
+}
+
+export interface TaskOptions {
+  strictChangeCoverage: boolean;
+}
+
+export function parseTaskOptions(markdown: string): TaskOptions {
+  return {
+    strictChangeCoverage:
+      /<!--\s*agentship:\s*strict-change-coverage\s*-->/i.test(markdown),
+  };
 }
 
 /** Extract numbered requirements from a Markdown `## Requirements` section. */
@@ -33,6 +45,7 @@ export function parseTaskRequirements(markdown: string): TaskRequirement[] {
         : match[2],
       line: index + 1,
       confirmation: requiresConfirmation ? "required" : "not_required",
+      confirmationBasis: requiresConfirmation ? ["task_marker"] : [],
     });
   }
 
@@ -41,7 +54,8 @@ export function parseTaskRequirements(markdown: string): TaskRequirement[] {
 
 export function applyRequirementConfirmations(
   requirements: TaskRequirement[],
-  confirmedIds: string[]
+  confirmedIds: string[],
+  protectedRequirementIds: string[] = []
 ): TaskRequirement[] {
   const knownIds = new Set(requirements.map((requirement) => requirement.id));
   const unknown = confirmedIds.filter((id) => !knownIds.has(id));
@@ -49,11 +63,20 @@ export function applyRequirementConfirmations(
     throw new Error(`Unknown requirement confirmation: ${unknown.join(", ")}.`);
   }
   const confirmed = new Set(confirmedIds);
+  const protectedIds = new Set(protectedRequirementIds);
   return requirements.map((requirement) => ({
     ...requirement,
+    confirmationBasis: [
+      ...new Set([
+        ...requirement.confirmationBasis,
+        ...(protectedIds.has(requirement.id) ? (["protected_path"] as const) : []),
+      ]),
+    ],
     confirmation:
-      requirement.confirmation === "required" && confirmed.has(requirement.id)
-        ? "confirmed"
-        : requirement.confirmation,
+      requirement.confirmationBasis.length > 0 || protectedIds.has(requirement.id)
+        ? confirmed.has(requirement.id)
+          ? "confirmed"
+          : "required"
+        : "not_required",
   }));
 }

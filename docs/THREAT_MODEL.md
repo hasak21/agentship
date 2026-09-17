@@ -20,7 +20,7 @@ This model covers the local review CLI, public Next.js endpoints, provider clien
 3. **HTTP client to route handler:** all request fields are untrusted.
 4. **Agent/model output to verifier:** model output is claimed or inferred, never executed evidence.
 5. **Verifier to provider:** destinations and credentials are deployment-owned.
-6. **Fork to maintainer infrastructure:** not yet supported safely; fork contents, tests, tasks, and configuration are hostile.
+6. **Fork to maintainer infrastructure:** the GitHub-hosted report workflow treats fork contents, tests, and task text as hostile; privileged or self-hosted execution remains unsupported.
 7. **Report to consumer:** manifests are hash-bound but not yet signed.
 
 ## Adversaries
@@ -43,18 +43,18 @@ This model covers the local review CLI, public Next.js endpoints, provider clien
 | T5 | Check prints allowed credentials into captured output | Minimal environment and sensitive-value redaction | Partially mitigated; host files remain readable |
 | T6 | Timed-out check leaves child processes alive | POSIX process-group and Windows process-tree termination | Mitigated for normal processes |
 | T7 | Check mutates the reviewed tree after its digest is captured | Before/after head and diff comparison blocks the report | Detected, not prevented |
-| T8 | Malicious repository command executes on maintainer host | None in version 1 local runner | Open — do not run hostile PRs |
-| T9 | Forked code reads filesystem, metadata services, or network secrets | Environment allowlist only | Open until isolated runner |
-| T10 | Pull request weakens its own AgentShip policy | None | Open until trusted out-of-tree policy loading |
+| T8 | Malicious repository command executes on maintainer infrastructure | CI report runs only on a disposable GitHub-hosted runner; local runner remains trusted-only | Open on local/self-hosted runners; hosted-runner containment is provider-owned |
+| T9 | Forked code reads filesystem, metadata services, or network secrets | CI grants read-only permissions, passes no repository secrets, blanks CLI token variables, and uses a disposable hosted runner | Network and GitHub runtime service credentials remain reachable; do not use secrets or self-hosted runners |
+| T10 | Pull request weakens its own AgentShip policy or verifier | CI loads verifier, task extractor, and policy from a separate base-SHA checkout | Mitigated for initial report workflow; organization settings and base compromise remain trusted |
 | T11 | Prompt injection persuades a model to approve malicious code | LLM output cannot satisfy deterministic checks | Partially mitigated; inferred findings remain attackable |
 | T12 | Report is edited after generation | Input and diff hashes | Open until manifest signing/attestation |
 | T13 | Task changes between approval and review | Task digest in report | Detected by consumers only; signatures remain open |
 | T14 | Generated test merely encodes implementation | No causal base/head validation yet | Open |
 | T15 | In-memory or app-level rate limits fail across replicas | No distributed limiter is claimed | Host/control-plane limiter required |
 
-## Preconditions for hostile pull requests
+## Preconditions for privileged hostile-pull-request enforcement
 
-AgentShip must not advertise maintainer-safe execution until all of these are implemented and tested:
+The secretless artifact-only GitHub-hosted report workflow is a constrained early mode. AgentShip must not advertise self-hosted, privileged, or merge-gating execution until all of these are implemented and tested:
 
 1. Checks run in disposable OS-level isolation with CPU, memory, process, disk, and wall-clock limits.
 2. The checkout is mounted read-only or changes are captured in a disposable overlay.

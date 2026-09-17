@@ -1,0 +1,110 @@
+[
+  {
+    "id": "exact-observed",
+    "requirement": "Update `change:src/auth/session.ts`.",
+    "changedFiles": ["src/auth/session.ts"],
+    "expectedStatus": "observed"
+  },
+  {
+    "id": "exact-missing",
+    "requirement": "Update `change:src/payments/charge.ts`.",
+    "changedFiles": ["src/payments/refund.ts"],
+    "expectedStatus": "missing"
+  },
+  {
+    "id": "glob-observed",
+    "requirement": "Add coverage under `change:tests/auth/**`.",
+    "changedFiles": ["tests/auth/session.test.ts"],
+    "expectedStatus": "observed"
+  },
+  {
+    "id": "glob-missing",
+    "requirement": "Update handlers under `change:src/api/**`.",
+    "changedFiles": ["src/ui/page.tsx"],
+    "expectedStatus": "missing"
+  },
+  {
+    "id": "multi-path-partial",
+    "requirement": "Update `change:src/auth/session.ts` and `change:tests/auth/session.test.ts`.",
+    "changedFiles": ["src/auth/session.ts"],
+    "expectedStatus": "missing"
+  },
+  {
+    "id": "ordinary-path-context",
+    "requirement": "Preserve the API described by `src/auth/types.ts`.",
+    "changedFiles": [],
+    "expectedStatus": "unmapped"
+  },
+  {
+    "id": "prose-unmapped",
+    "requirement": "Preserve existing session behavior.",
+    "changedFiles": ["src/auth/session.ts"],
+    "expectedStatus": "unmapped"
+  },
+  {
+    "id": "check-passed",
+    "requirement": "Pass `check:test`.",
+    "changedFiles": [],
+    "checks": [{ "name": "test", "status": "passed" }],
+    "expectedStatus": "observed"
+  },
+  {
+    "id": "check-failed",
+    "requirement": "Pass `check:test`.",
+    "changedFiles": [],
+    "checks": [{ "name": "test", "status": "failed" }],
+    "expectedStatus": "missing"
+  },
+  {
+    "id": "check-not-configured",
+    "requirement": "Pass `check:integration`.",
+    "changedFiles": [],
+    "checks": [{ "name": "test", "status": "passed" }],
+    "expectedStatus": "missing"
+  },
+  {
+    "id": "inferred-test-observed",
+    "requirement": "Add regression tests for refresh.",
+    "changedFiles": ["tests/auth/refresh.test.ts"],
+    "expectedStatus": "inferred_observed"
+  },
+  {
+    "id": "inferred-test-missing",
+    "requirement": "Add regression tests for refresh.",
+    "changedFiles": ["src/auth/refresh.ts"],
+    "expectedStatus": "inferred_missing"
+  },
+  {
+    "id": "inferred-doc-observed",
+    "requirement": "Update the operator guide.",
+    "changedFiles": ["docs/operator-guide.md"],
+    "expectedStatus": "inferred_observed"
+  },
+  {
+    "id": "negated-role-unmapped",
+    "requirement": "Update the handler without changing tests or docs.",
+    "changedFiles": ["src/handler.ts"],
+    "expectedStatus": "unmapped"
+  },
+  {
+    "id": "symbol-changed",
+    "requirement": "Change `symbol:src/auth/session.ts#refreshSession`.",
+    "changedFiles": ["src/auth/session.ts"],
+    "diff": "diff --git a/src/auth/session.ts b/src/auth/session.ts\n--- a/src/auth/session.ts\n+++ b/src/auth/session.ts\n@@ -1 +1 @@\n-oldSession();\n+refreshSession();",
+    "expectedStatus": "observed"
+  },
+  {
+    "id": "symbol-absent",
+    "requirement": "Change `symbol:src/auth/session.ts#rotateKey`.",
+    "changedFiles": ["src/auth/session.ts"],
+    "diff": "diff --git a/src/auth/session.ts b/src/auth/session.ts\n--- a/src/auth/session.ts\n+++ b/src/auth/session.ts\n@@ -1 +1 @@\n-oldSession();\n+refreshSession();",
+    "expectedStatus": "missing"
+  },
+  {
+    "id": "symbol-diff-unavailable",
+    "requirement": "Change `symbol:src/new.ts#createThing`.",
+    "changedFiles": ["src/new.ts"],
+    "diff": "untracked:src/new.ts:0123456789abcdef",
+    "expectedStatus": "missing"
+  }
+]

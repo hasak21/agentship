@@ -49,17 +49,17 @@ Exit criterion: changes to AgentShip routinely carry an independently produced v
 ## M3 — Intent-to-diff verification
 
 - [x] Parse task documents into individually addressable requirements.
-- [~] Require confirmation for ambiguous high-impact requirements (explicit `[confirm]` workflow delivered; automatic classification and authenticated approval pending).
-- [~] Map requirements to files, symbols, tests, and documentation (explicit path mapping delivered; inferred mapping pending).
-- [~] Identify apparently missing and unrelated changes (explicit missing paths and unattributed changed-file evidence delivered; semantic relevance pending).
-- [~] Measure omission recall and false-positive rate (explicit-path fixture baseline delivered; semantic defect corpus pending).
+- [x] Require confirmation for task-marked ambiguity and requirements touching configured high-impact protected paths.
+- [x] Map requirements to files, symbols, tests, and documentation through explicit path/check/symbol evidence and labeled test/documentation role inference.
+- [x] Identify explicit/inferred omissions and opt-in strict unattributed changes while keeping semantic relevance claims out of deterministic evidence.
+- [~] Measure omission recall and false-positive rate (corpus-hashed 12-case executable baseline delivered at 0.667 precision/recall; representative external corpus pending).
 
 Exit criterion: omitted requirements are detected with measured, publishable accuracy.
 
 ## M4 — CI report mode
 
-- [ ] Build a fork-safe GitHub Action.
-- [ ] Publish Check Run, Markdown, JSON, and SARIF outputs.
+- [~] Build a fork-safe GitHub Action (trusted-base, read-only, artifact-only report workflow delivered; live fork-PR validation pending).
+- [~] Publish Check Run, Markdown, JSON, and SARIF outputs (Markdown/JSON/SARIF artifacts and a job summary are delivered; Check Run publication remains pending).
 - [ ] Add changed-path filtering and execution budgets.
 - [ ] Add baselines, suppressions with ownership, and report history.
 
@@ -85,7 +85,7 @@ Exit criterion: a malicious pull request cannot escape the runner, obtain secret
 
 ## M7 — Calibration and public benchmark
 
-- [ ] Build a seeded-defect patch corpus.
+- [x] Build a seeded-defect patch corpus with 12 declarative before/after patches, independently executed file oracles, and a standalone runner.
 - [ ] Track accepted, rejected, fixed, and overridden findings.
 - [ ] Measure evidence-backed precision, recall, false blocks, and triage time.
 - [ ] Publish a reproducible coding-agent trust leaderboard.

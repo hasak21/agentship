@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import path from "node:path";
+import { runIntentBenchmark } from "../review/intent-benchmark";
 import { runReview } from "../review/review";
 
 interface CliOptions {
@@ -48,6 +49,7 @@ function printHelp() {
 
 Usage:
   agentship review [options]
+  agentship benchmark --fixtures <path>
   npm run review -- [options]
 
 Options:
@@ -60,8 +62,34 @@ Options:
   -h, --help       Show this help`);
 }
 
+function parseBenchmarkArgs(args: string[]): string {
+  let fixturePath: string | undefined;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--fixtures") {
+      fixturePath = args[++index];
+      if (!fixturePath) throw new Error("--fixtures requires a value.");
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      printHelp();
+      process.exit(0);
+    }
+    throw new Error(`Unknown benchmark argument: ${arg}`);
+  }
+  if (!fixturePath) throw new Error("benchmark requires --fixtures <path>.");
+  return fixturePath;
+}
+
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  if (args[0] === "benchmark") {
+    const fixturePath = path.resolve(process.cwd(), parseBenchmarkArgs(args.slice(1)));
+    const benchmark = await runIntentBenchmark(fixturePath);
+    console.log(JSON.stringify(benchmark, null, 2));
+    return;
+  }
+  const options = parseArgs(args);
   const result = await runReview({
     cwd: process.cwd(),
     taskPath: options.taskPath,
@@ -78,6 +106,7 @@ async function main() {
   console.log(`Changed files: ${report.repository.changedFiles.length}`);
   console.log(`Evidence: ${path.relative(process.cwd(), result.jsonPath)}`);
   console.log(`Report: ${path.relative(process.cwd(), result.markdownPath)}`);
+  console.log(`SARIF: ${path.relative(process.cwd(), result.sarifPath)}`);
 
   if (report.mode === "gate" && report.verdict === "BLOCK") {
     process.exitCode = 1;

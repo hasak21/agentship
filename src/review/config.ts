@@ -30,6 +30,60 @@ function assertCheck(value: unknown, index: number): asserts value is ReviewChec
   }
 }
 
+function assertPolicy(value: unknown): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object") {
+    throw new Error("policy must be an object.");
+  }
+  const policy = value as Record<string, unknown>;
+  if (
+    policy.blockOn !== undefined &&
+    (!Array.isArray(policy.blockOn) ||
+      policy.blockOn.some((kind) => typeof kind !== "string" || !kind.trim()))
+  ) {
+    throw new Error("policy.blockOn must contain finding names.");
+  }
+  if (policy.protectedPaths === undefined) return;
+  if (!Array.isArray(policy.protectedPaths)) {
+    throw new Error("policy.protectedPaths must be an array.");
+  }
+  policy.protectedPaths.forEach((value, index) => {
+    if (!value || typeof value !== "object") {
+      throw new Error(`policy.protectedPaths[${index}] must be an object.`);
+    }
+    const entry = value as Record<string, unknown>;
+    if (typeof entry.pattern !== "string" || !entry.pattern.trim()) {
+      throw new Error(
+        `policy.protectedPaths[${index}].pattern must be a non-empty string.`
+      );
+    }
+    const prefix = entry.pattern.endsWith("/**")
+      ? entry.pattern.slice(0, -3)
+      : entry.pattern;
+    if (
+      !prefix ||
+      prefix.startsWith("/") ||
+      prefix === ".." ||
+      prefix.startsWith("../") ||
+      prefix.includes("/../") ||
+      prefix.includes("\\") ||
+      prefix.includes("*")
+    ) {
+      throw new Error(
+        `policy.protectedPaths[${index}].pattern must be repository-relative and supports only exact paths or trailing /**.`
+      );
+    }
+    if (
+      entry.requireManualApproval !== undefined &&
+      typeof entry.requireManualApproval !== "boolean"
+    ) {
+      throw new Error(
+        `policy.protectedPaths[${index}].requireManualApproval must be boolean.`
+      );
+    }
+  });
+}
+
 export async function loadConfig(
   repositoryRoot: string,
   configPath = ".agentship.yml"
@@ -48,6 +102,7 @@ export async function loadConfig(
     throw new Error("AgentShip configuration must contain at least one check.");
   }
   parsed.checks.forEach(assertCheck);
+  assertPolicy(parsed.policy);
 
   return {
     config: parsed as unknown as AgentShipConfig,

@@ -52,6 +52,9 @@ export interface ReviewFinding {
     | "optional_check_failed"
     | "repository_changed_during_review"
     | "explicit_requirement_path_unchanged"
+    | "explicit_requirement_evidence_unsatisfied"
+    | "inferred_requirement_role_missing"
+    | "unattributed_changes"
     | "requirement_confirmation_missing";
   title: string;
   evidence: {
@@ -64,6 +67,17 @@ export interface ReviewFinding {
     afterDiffSha256?: string;
     requirementId?: string;
     expectedPaths?: string[];
+    expectedChecks?: Array<{
+      name: string;
+      status: CheckStatus | "not_configured";
+    }>;
+    expectedSymbols?: Array<{
+      path: string;
+      symbol: string;
+      status: "changed" | "file_unchanged" | "symbol_not_in_diff" | "diff_unavailable";
+    }>;
+    expectedRoles?: Array<"test" | "documentation">;
+    unexpectedPaths?: string[];
   };
 }
 
@@ -90,18 +104,55 @@ export interface ReviewReport {
   task?: {
     path: string;
     sha256: string;
+    options: {
+      strictChangeCoverage: boolean;
+    };
     requirements: Array<{
       id: string;
       text: string;
       line: number;
       confirmation: "not_required" | "required" | "confirmed";
+      confirmationBasis: Array<"task_marker" | "protected_path">;
     }>;
     mappings: Array<{
       requirementId: string;
-      basis: "explicit_path" | "none";
+      basis:
+        | "explicit_path"
+        | "explicit_check"
+        | "explicit_path_and_check"
+        | "explicit_symbol"
+        | "explicit_mixed"
+        | "inferred_file_role"
+        | "none";
       references: string[];
       observedFiles: string[];
-      status: "observed" | "missing" | "unmapped";
+      missingReferences: string[];
+      checkReferences: string[];
+      checkEvidence: Array<{
+        name: string;
+        status: CheckStatus | "not_configured";
+      }>;
+      symbolReferences: Array<{
+        path: string;
+        symbol: string;
+      }>;
+      symbolEvidence: Array<{
+        path: string;
+        symbol: string;
+        status: "changed" | "file_unchanged" | "symbol_not_in_diff" | "diff_unavailable";
+      }>;
+      inferredRoles: Array<"test" | "documentation">;
+      roleEvidence: Array<{
+        role: "test" | "documentation";
+        observedFiles: string[];
+      }>;
+      missingRoles: Array<"test" | "documentation">;
+      status:
+        | "observed"
+        | "missing"
+        | "inferred_observed"
+        | "inferred_missing"
+        | "unmapped";
     }>;
     changeCoverage: {
       attributedFiles: string[];

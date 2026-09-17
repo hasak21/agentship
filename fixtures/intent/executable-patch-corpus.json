@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 1,
+  "kind": "executable_patch",
+  "cases": [
+    {
+      "id": "auth-expiry-omitted",
+      "category": "behavioral security omission",
+      "requirement": "Reject expired refresh tokens before issuing a session.",
+      "rationale": "The candidate adds refresh handling but omits the required expiry guard.",
+      "baseFiles": {
+        "src/auth/session.ts": "export function issueSession(user: string) { return { user }; }\n"
+      },
+      "patch": {
+        "src/auth/session.ts": "export function issueSession(user: string) { return { user }; }\nexport function refreshSession(token: Token) { return issueSession(token.user); }\n"
+      },
+      "oracle": [
+        { "type": "file_contains", "path": "src/auth/session.ts", "value": "isExpired(token)" }
+      ]
+    },
+    {
+      "id": "auth-expiry-complete",
+      "category": "complete behavioral change",
+      "requirement": "Reject expired refresh tokens before issuing a session.",
+      "rationale": "The candidate includes the required expiry guard.",
+      "baseFiles": {
+        "src/auth/session.ts": "export function issueSession(user: string) { return { user }; }\n"
+      },
+      "patch": {
+        "src/auth/session.ts": "export function issueSession(user: string) { return { user }; }\nexport function refreshSession(token: Token) { if (isExpired(token)) throw new Error(\"expired\"); return issueSession(token.user); }\n"
+      },
+      "oracle": [
+        { "type": "file_contains", "path": "src/auth/session.ts", "value": "isExpired(token)" }
+      ]
+    },
+    {
+      "id": "regression-test-omitted",
+      "category": "explicit test omission",
+      "requirement": "Implement discounts in `change:src/cart.ts` and cover them in `change:tests/cart.test.ts`.",
+      "rationale": "The implementation changes but the required regression test is absent.",
+      "baseFiles": {
+        "src/cart.ts": "export const total = (items: number[]) => items.reduce((a, b) => a + b, 0);\n"
+      },
+      "patch": {
+        "src/cart.ts": "export const total = (items: number[], discount = 0) => items.reduce((a, b) => a + b, 0) - discount;\n"
+      },
+      "oracle": [
+        { "type": "file_contains", "path": "tests/cart.test.ts", "value": "discount" }
+      ]
+    },
+    {
+      "id": "regression-test-complete",
+      "category": "complete explicit change",
+      "requirement": "Implement discounts in `change:src/cart.ts` and cover them in `change:tests/cart.test.ts`.",
+      "rationale": "Both implementation and independently required test are present.",
+      "baseFiles": {
+        "src/cart.ts": "export const total = (items: number[]) => items.reduce((a, b) => a + b, 0);\n"
+      },
+      "patch": {
+        "src/cart.ts": "export const total = (items: number[], discount = 0) => items.reduce((a, b) => a + b, 0) - discount;\n",
+        "tests/cart.test.ts": "test(\"discount\", () => expect(total([5], 2)).toBe(3));\n"
+      },
+      "oracle": [
+        { "type": "file_contains", "path": "tests/cart.test.ts", "value": "discount" }
+      ]
+    },
+    {
+      "id": "operator-guide-omitted",
+      "category": "inferred documentation omission",
+      "requirement": "Update the operator guide for the new dry-run flag.",
+      "rationale": "The flag is implemented without updating operator documentation.",
+      "baseFiles": {
+        "src/cli/options.ts": "export const flags = [];\n",
+        "docs/operator-guide.md": "# Operator guide\n"
+      },
+      "patch": {
+        "src/cli/options.ts": "export const flags = [\"--dry-run\"];\n"
+      },
+      "oracle": [
+        { "type": "file_contains", "path": "docs/operator-guide.md", "value": "--dry-run" }
+      ]
+    },
+    {
+      "id": "operator-guide-complete",
+      "category": "complete inferred documentation change",
+      "requirement": "Update the operator guide for the new dry-run flag.",
+      "rationale": "Implementation and operator documentation both describe the flag.",
+      "baseFiles": {
+        "src/cli/options.ts": "export const flags = [];\n",
+        "docs/operator-guide.md": "# Operator guide\n"
+      },
+      "patch": {
+        "src/cli/options.ts": "export const flags = [\"--dry-run\"];\n",
+        "docs/operator-guide.md": "# Operator guide\n\nUse `--dry-run` to preview changes.\n"
+      },
+      "oracle": [
+        { "type": "file_contains", "path": "docs/operator-guide.md", "value": "--dry-run" }
+      ]
+    },
+    {
+      "id": "payment-symbol-omitted",
+      "category": "explicit symbol omission",
+      "requirement": "Rotate keys through `symbol:src/payments/keys.ts#rotateKey`.",
+      "rationale": "The payment key file changes without touching the named rotation symbol.",
+      "baseFiles": {
+        "src/payments/keys.ts": "export function currentKey() { return \"old\"; }\n"
+      },
+      "patch": {
+        "src/payments/keys.ts": "export function currentKey() { return process.env.KEY; }\n"
+      },
+      "oracle": [
+        { "type": "file_contains", "path": "src/payments/keys.ts", "value": "rotateKey" }
+      ]
+    },
+    {
+      "id": "stale-path-valid-replacement",
+      "category": "stale annotation false positive",
+      "requirement": "Add expiry validation in `change:src/legacy/session.ts`.",
+      "rationale": "The task path is stale, but the replacement module implements the behavior.",
+      "baseFiles": {
+        "src/auth/session.ts": "export function refresh(token: Token) { return token.user; }\n"
+      },
+      "patch": {
+        "src/auth/session.ts": "export function refresh(token: Token) { validateExpiry(token); return token.user; }\n"
+      },
+      "oracle": [
+        { "type": "file_contains", "path": "src/auth/session.ts", "value": "validateExpiry(token)" }
+      ]
+    },
+    {
+      "id": "unconventional-test-location",
+      "category": "layout false positive",
+      "requirement": "Add regression tests for refresh failures.",
+      "rationale": "The repository keeps executable cases under quality rather than a conventional test path.",
+      "baseFiles": {
+        "src/auth/refresh.ts": "export const refresh = () => true;\n"
+      },
+      "patch": {
+        "src/auth/refresh.ts": "export const refresh = () => false;\n",
+        "quality/refresh_cases.ts": "case(\"refresh failure\", () => refresh() === false);\n"
+      },
+      "oracle": [
+        { "type": "file_contains", "path": "quality/refresh_cases.ts", "value": "refresh failure" }
+      ]
+    },
+    {
+      "id": "integration-check-omitted",
+      "category": "explicit check omission",
+      "requirement": "Validate rollback through `check:integration`.",
+      "rationale": "The migration changes without the named integration check or rollback behavior.",
+      "baseFiles": {
+        "src/db/migrate.ts": "export const migrate = () => apply();\n"
+      },
+      "patch": {
+        "src/db/migrate.ts": "export const migrate = () => applyV2();\n"
+      },
+      "checks": [{ "name": "test", "status": "passed" }],
+      "oracle": [
+        { "type": "file_contains", "path": "src/db/migrate.ts", "value": "rollback" }
+      ]
+    },
+    {
+      "id": "integration-check-complete",
+      "category": "complete explicit check",
+      "requirement": "Validate rollback through `check:integration`.",
+      "rationale": "The migration includes rollback behavior and the named check passed.",
+      "baseFiles": {
+        "src/db/migrate.ts": "export const migrate = () => apply();\n"
+      },
+      "patch": {
+        "src/db/migrate.ts": "export const migrate = () => { try { applyV2(); } catch { rollback(); } };\n"
+      },
+      "checks": [{ "name": "integration", "status": "passed" }],
+      "oracle": [
+        { "type": "file_contains", "path": "src/db/migrate.ts", "value": "rollback" }
+      ]
+    },
+    {
+      "id": "documentation-content-omitted",
+      "category": "role-only false negative",
+      "requirement": "Update the deployment guide with the canary flag.",
+      "rationale": "A documentation file changes, but it still omits the required flag.",
+      "baseFiles": {
+        "docs/deployment.md": "# Deployment\n",
+        "src/deploy.ts": "export const deploy = () => stable();\n"
+      },
+      "patch": {
+        "docs/deployment.md": "# Deployment\n\nGeneral cleanup.\n",
+        "src/deploy.ts": "export const deploy = () => canary();\n"
+      },
+      "oracle": [
+        { "type": "file_contains", "path": "docs/deployment.md", "value": "--canary" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+name: AgentShip report
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentship-report-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Evidence report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out trusted verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: verifier
+          persist-credentials: false
+
+      - name: Check out pull request subject
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: subject
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+
+      - name: Build trusted verifier
+        working-directory: verifier
+        run: |
+          npm ci --ignore-scripts
+          npm run build:cli
+
+      - name: Install subject dependencies without lifecycle scripts
+        working-directory: subject
+        run: npm ci --ignore-scripts
+
+      - name: Bind pull request task
+        env:
+          AGENTSHIP_TASK_PATH: ${{ runner.temp }}/agentship-pr-task.md
+        run: node verifier/scripts/extract-pr-task.mjs "$GITHUB_EVENT_PATH" "$AGENTSHIP_TASK_PATH"
+
+      - name: Run trusted AgentShip report
+        working-directory: subject
+        env:
+          AGENTSHIP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          AGENTSHIP_TASK_PATH: ${{ runner.temp }}/agentship-pr-task.md
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+        run: >-
+          node ../verifier/dist/agentship.cjs review
+          --base "$AGENTSHIP_BASE_SHA"
+          --config ../verifier/.agentship.yml
+          --task "$AGENTSHIP_TASK_PATH"
+          --output .agentship/reviews/ci.json
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agentship-evidence-${{ github.event.pull_request.number }}
+          path: subject/.agentship/reviews/ci.*
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Publish job summary
+        if: always()
+        run: |
+          if [ -f subject/.agentship/reviews/ci.md ]; then
+            cat subject/.agentship/reviews/ci.md >> "$GITHUB_STEP_SUMMARY"
+          fi

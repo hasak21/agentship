@@ -1,0 +1,68 @@
+[
+  {
+    "id": "partial-code-and-test",
+    "category": "explicit-path omission",
+    "requirement": "Update `change:src/auth/session.ts` and `change:tests/auth/session.test.ts`.",
+    "changedFiles": ["src/auth/session.ts"],
+    "omissionExpected": true,
+    "rationale": "The independently required regression test is absent."
+  },
+  {
+    "id": "missing-documentation-file",
+    "category": "explicit-path omission",
+    "requirement": "Document the option in `change:docs/configuration.md`.",
+    "changedFiles": ["src/config.ts"],
+    "omissionExpected": true,
+    "rationale": "The required documentation artifact is absent."
+  },
+  {
+    "id": "unconfigured-integration-check",
+    "category": "explicit-check omission",
+    "requirement": "Validate the migration with `check:integration`.",
+    "changedFiles": ["src/db/migrate.ts"],
+    "checks": [{ "name": "test", "status": "passed" }],
+    "omissionExpected": true,
+    "rationale": "The named integration check was never configured or executed."
+  },
+  {
+    "id": "prose-only-security-omission",
+    "category": "semantic omission",
+    "requirement": "Reject expired refresh tokens before issuing a session.",
+    "changedFiles": ["src/auth/session.ts"],
+    "omissionExpected": true,
+    "rationale": "The seeded patch changes session creation but deliberately omits expiry validation."
+  },
+  {
+    "id": "prose-only-doc-omission",
+    "category": "semantic omission",
+    "requirement": "Update the operator guide for the new flag.",
+    "changedFiles": ["src/cli/options.ts"],
+    "omissionExpected": true,
+    "rationale": "The seeded patch adds the flag without documentation and has no explicit annotation."
+  },
+  {
+    "id": "complete-explicit-change",
+    "category": "complete change",
+    "requirement": "Update `change:src/config.ts` and `change:tests/config.test.ts`.",
+    "changedFiles": ["src/config.ts", "tests/config.test.ts"],
+    "omissionExpected": false,
+    "rationale": "Every independently required artifact is present."
+  },
+  {
+    "id": "complete-check-evidence",
+    "category": "complete change",
+    "requirement": "Pass `check:test`.",
+    "changedFiles": ["src/config.ts"],
+    "checks": [{ "name": "test", "status": "passed" }],
+    "omissionExpected": false,
+    "rationale": "The explicitly required check passed."
+  },
+  {
+    "id": "stale-path-alternative-implementation",
+    "category": "stale requirement annotation",
+    "requirement": "Update `change:src/legacy/session.ts`.",
+    "changedFiles": ["src/auth/session.ts"],
+    "omissionExpected": false,
+    "rationale": "The seeded outcome is complete through the replacement module, but the task annotation is stale."
+  }
+]

@@ -34,3 +34,5 @@ policy:
   protectedPaths:
     - pattern: src/app/api/**
       requireManualApproval: true
+    - pattern: src/review/**
+      requireManualApproval: true

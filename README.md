@@ -186,6 +186,19 @@ npm run review -- --task task.md --confirm R1
 ```
 
 The confirmation is recorded evidence, not authenticated approval or a signature.
+Requirements mapped to `.agentship.yml` protected paths with
+`requireManualApproval: true` also require confirmation automatically.
+
+Requirements can bind expected files and configured checks to the report with
+`` `change:path` ``, `` `check:name` ``, and `` `symbol:path#identifier` ``
+annotations. Every annotation must be
+observed; these annotations prove coverage of named evidence, not semantic correctness.
+AgentShip also emits explicitly labeled, non-blocking inferred warnings when prose
+requests tests or documentation but no changed file has that role.
+
+Add `<!-- agentship: strict-change-coverage -->` to a task when every changed
+implementation file must be covered by an explicit `` `change:path` `` annotation.
+Unattributed files then produce a warning, not an unsupported claim that they are unrelated.
 
 Build and verify the standalone Node 20 CLI artifact:
 
@@ -194,7 +207,30 @@ npm run verify:cli
 node dist/agentship.cjs review --task task.md
 ```
 
-The review writes a JSON evidence manifest and Markdown report under `.agentship/reviews/`.
+The review writes JSON, Markdown, and SARIF evidence under `.agentship/reviews/`.
+
+Run the checked-in omission calibration corpus, or supply another compatible corpus:
+
+```bash
+npm run benchmark:intent
+node dist/agentship.cjs benchmark --fixtures fixtures/intent/executable-patch-corpus.json
+```
+
+Benchmark JSON includes the corpus SHA-256, confusion-matrix metrics, and per-case
+results. The primary 12-case corpus applies declarative in-memory patches and evaluates
+safe file oracles; it never executes corpus commands. It remains a synthetic regression
+baseline, not a claim of representative real-world accuracy. The earlier metadata-only
+scenario suite remains available through `npm run benchmark:intent:scenarios`.
+
+### 5. GitHub pull-request report mode
+
+The checked-in `.github/workflows/agentship-report.yml` runs on `pull_request` with
+read-only permissions and no secrets. It builds AgentShip and loads policy from the base
+commit, reviews the subject in a separate checkout, and uploads JSON/Markdown evidence as
+an artifact. It also publishes the Markdown report to the workflow job summary and includes
+SARIF in the artifact. Keep it on GitHub-hosted runners and do not enable write tokens or secrets for
+fork workflows. This initial workflow reports evidence only; it does not comment, publish
+a Check Run, or block merging. See `docs/CI_REPORT_MODE.md` for the trust boundary.
 
 ---
 
