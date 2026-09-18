@@ -13,69 +13,78 @@ import {
 
 export const UNIVERSAL_MODEL_PRESETS: ModelPreset[] = [
   {
-    id: "deepseek-v3",
-    name: "DeepSeek V3 (Chat)",
+    id: "deepseek-v4-flash",
+    name: "DeepSeek V4.1 Flash",
     provider: "deepseek",
-    defaultModel: "deepseek-chat",
-    description: "High-performance SOTA coding and reasoning model at ultra-low cost.",
-    badge: "Fast & Precise",
+    defaultModel: "deepseek-flash",
+    description: "Fast current-generation DeepSeek model with optional thinking mode.",
+    badge: "Fast Reasoning",
     recommended: true,
   },
   {
-    id: "deepseek-r1",
-    name: "DeepSeek R1 (Reasoner)",
+    id: "deepseek-v4-pro",
+    name: "DeepSeek V4 Pro",
     provider: "deepseek",
-    defaultModel: "deepseek-reasoner",
-    description: "Deep chain-of-thought reasoning for complex architectural and algorithmic tasks.",
-    badge: "CoT Reasoning",
+    defaultModel: "deepseek-v4-pro",
+    description: "DeepSeek's higher-capability model for complex review and reasoning work.",
+    badge: "Deep Reasoning",
+  },
+  {
+    id: "claude-opus-5",
+    name: "Claude Opus 5",
+    provider: "anthropic",
+    defaultModel: "claude-opus-5",
+    description: "Anthropic's flagship model for complex agentic coding and enterprise work.",
+    badge: "Flagship",
+  },
+  {
+    id: "claude-sonnet-5",
+    name: "Claude Sonnet 5",
+    provider: "anthropic",
+    defaultModel: "claude-sonnet-5",
+    description: "Balanced current-generation Claude model for coding and agent workflows.",
+    badge: "Balanced",
     recommended: true,
   },
   {
-    id: "claude-3-7-sonnet",
-    name: "Claude 3.7 Sonnet",
+    id: "claude-haiku-4-5",
+    name: "Claude Haiku 4.5",
     provider: "anthropic",
-    defaultModel: "claude-3-7-sonnet-20250219",
-    description: "Anthropic flagship hybrid reasoning model with superior code comprehension.",
-    badge: "Hybrid SOTA",
+    defaultModel: "claude-haiku-4-5-20251001",
+    description: "Anthropic's current fast model for low-latency audits and fan-outs.",
+    badge: "Fast",
   },
   {
-    id: "claude-3-5-haiku",
-    name: "Claude 3.5 Haiku",
-    provider: "anthropic",
-    defaultModel: "claude-3-5-haiku-latest",
-    description: "High speed, lightweight model for instant audits and rapid fan-outs.",
-    badge: "Ultra Fast",
-  },
-  {
-    id: "gpt-4o",
-    name: "OpenAI GPT-4o",
+    id: "gpt-6-astra",
+    name: "OpenAI GPT-6 Astra",
     provider: "openai-compatible",
-    defaultModel: "gpt-4o",
-    description: "Standard OpenAI multi-modal flagship model.",
-    badge: "OpenAI SOTA",
+    defaultModel: "gpt-6-astra",
+    description: "OpenAI's latest flagship for software engineering and multistep workflows.",
+    badge: "Latest Flagship",
+    recommended: true,
   },
   {
-    id: "gpt-4o-mini",
-    name: "OpenAI GPT-4o-mini",
+    id: "gpt-5-6-terra",
+    name: "OpenAI GPT-5.6 Terra",
     provider: "openai-compatible",
-    defaultModel: "gpt-4o-mini",
-    description: "Cost-effective, low-latency baseline for multi-agent workers.",
-    badge: "Efficient",
+    defaultModel: "gpt-5.6-terra",
+    description: "Balanced agentic coding model for everyday audit workloads.",
+    badge: "Balanced Coding",
   },
   {
     id: "ollama-local",
     name: "Ollama (Local / Self-Hosted)",
     provider: "ollama",
-    defaultModel: "qwen2.5-coder:latest",
-    description: "Zero API cost, fully private local LLM running via Ollama / vLLM.",
+    defaultModel: "qwen3-coder:30b",
+    description: "Private local coding model through Ollama; the 30B variant needs capable hardware.",
     badge: "Local / Private",
   },
   {
-    id: "gemini-2.5-flash",
-    name: "Gemini 2.5 Flash",
+    id: "gemini-3-8-flash",
+    name: "Gemini 3.8 Flash",
     provider: "gemini",
-    defaultModel: "gemini-2.5-flash",
-    description: "Google Gemini with live Google Search grounding support.",
+    defaultModel: "gemini-3.8-flash",
+    description: "Google's current stable Flash model with search grounding support.",
     badge: "Web Grounded",
   },
 ];
@@ -126,25 +135,25 @@ export function resolveProviderConfig(options?: LLMRequestOptions): {
     case "deepseek":
       baseUrl = baseUrl || process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1";
       apiKey = apiKey || (allowEnvironmentCredential ? process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || "" : "");
-      model = model || process.env.DEEPSEEK_MODEL || "deepseek-chat";
+      model = model || process.env.DEEPSEEK_MODEL || "deepseek-flash";
       break;
 
     case "anthropic":
       baseUrl = baseUrl || process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
       apiKey = apiKey || (allowEnvironmentCredential ? process.env.ANTHROPIC_API_KEY || "" : "");
-      model = model || process.env.ANTHROPIC_MODEL || "claude-3-7-sonnet-20250219";
+      model = model || process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
       break;
 
     case "ollama":
       baseUrl = baseUrl || process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1";
       apiKey = apiKey || (allowEnvironmentCredential ? process.env.OLLAMA_API_KEY || "ollama" : "");
-      model = model || process.env.OLLAMA_MODEL || "qwen2.5-coder:latest";
+      model = model || process.env.OLLAMA_MODEL || "qwen3-coder:30b";
       break;
 
     case "gemini":
       baseUrl = baseUrl || process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
       apiKey = apiKey || (allowEnvironmentCredential ? process.env.GEMINI_API_KEY || "" : "");
-      model = model || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+      model = model || process.env.GEMINI_MODEL || "gemini-3.8-flash";
       break;
 
     case "openai-compatible":
@@ -156,7 +165,7 @@ export function resolveProviderConfig(options?: LLMRequestOptions): {
         process.env.LLM_BASE_URL ||
         "https://api.openai.com/v1";
       apiKey = apiKey || (allowEnvironmentCredential ? process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || "" : "");
-      model = model || process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-4o-mini";
+      model = model || process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-6-astra";
       break;
   }
 
@@ -239,11 +248,16 @@ async function callOpenAICompatibleChat(
   const payload: Record<string, unknown> = {
     model: options.model,
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
-    temperature: options.temperature ?? 0.7,
   };
 
+  const modernOpenAIModel =
+    new URL(options.baseUrl).hostname === "api.openai.com" &&
+    /^gpt-(?:5|6)(?:[.-]|$)/.test(options.model);
+  if (!modernOpenAIModel) payload.temperature = options.temperature ?? 0.7;
+
   if (options.maxTokens) {
-    payload.max_tokens = options.maxTokens;
+    payload[modernOpenAIModel ? "max_completion_tokens" : "max_tokens"] =
+      options.maxTokens;
   }
 
   if (options.responseFormat === "json_object" && !options.model.includes("reasoner")) {
@@ -487,7 +501,7 @@ export function extractJsonFromResponse<T = Record<string, unknown>>(rawText: st
 
   let cleaned = rawText.trim();
 
-  // Strip <think>...</think> reasoning tags (e.g. DeepSeek R1 / Ollama)
+  // Strip <think>...</think> reasoning tags (e.g. DeepSeek thinking models / Ollama)
   cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 
   // Extract from markdown code fences ```json ... ``` or ``` ... ```

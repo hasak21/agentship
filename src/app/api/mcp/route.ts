@@ -40,7 +40,7 @@ const MCP_TOOLS = [
         },
         model: {
           type: "string",
-          description: "Optional model to perform audit (e.g. 'deepseek-chat', 'claude-3-7-sonnet', 'gpt-4o').",
+          description: "Optional model to perform audit (e.g. 'deepseek-flash', 'claude-sonnet-5', 'gpt-6-astra').",
         },
         provider: {
           type: "string",

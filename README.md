@@ -44,7 +44,7 @@ Terminal coding agents excel at speed and autonomous execution, but present thre
 - **Language Detection**: Automatic syntax coloring for 18+ programming languages.
 
 ### 2. 🛡️ Cross-Model Quality & Security Audit Gate
-- **Independent Cross-Examination**: Sends code changes or diffs to an independent Auditor LLM (e.g. Gemini 2.5 Pro / DeepSeek / Claude).
+- **Independent Cross-Examination**: Sends code changes or diffs to an independent Auditor LLM (e.g. Gemini 3.8 Flash / DeepSeek V4 / Claude 5).
 - **Four-Dimensional Rigorous Rubric**:
   - 🛡️ **Security**: SQL/XSS/Command injection, credential leaks, path traversal, auth flaws.
   - ⚙️ **Correctness**: Null pointer dereferences, unhandled promise rejections, race conditions, edge cases.
@@ -126,21 +126,24 @@ Create a `.env.local` file in the project root with any of your preferred model 
 # --- Option A: DeepSeek (Recommended for high speed & reasoning) ---
 DEEPSEEK_API_KEY=your-deepseek-api-key
 # DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+# DEEPSEEK_MODEL=deepseek-flash
 
 # --- Option B: OpenAI / OpenRouter / Generic OpenAI-Compatible ---
 OPENAI_API_KEY=your-openai-or-openrouter-key
 # OPENAI_BASE_URL=https://openrouter.ai/api/v1
-# OPENAI_MODEL=gpt-4o
+# OPENAI_MODEL=gpt-6-astra
 
 # --- Option C: Anthropic Claude ---
 ANTHROPIC_API_KEY=your-anthropic-api-key
+# ANTHROPIC_MODEL=claude-sonnet-5
 
 # --- Option D: Local / Self-Hosted (Ollama / vLLM) ---
 # OLLAMA_BASE_URL=http://localhost:11434/v1
-# OLLAMA_MODEL=qwen2.5-coder:latest
+# OLLAMA_MODEL=qwen3-coder:30b
 
 # --- Option E: Google Gemini (Optional) ---
 # GEMINI_API_KEY=your-gemini-key
+# GEMINI_MODEL=gemini-3.8-flash
 
 # Optional Proxy
 # HTTPS_PROXY=http://127.0.0.1:7890
@@ -288,7 +291,7 @@ Audits a Git Unified Diff or code change payload across security, correctness, t
 {
   "diff": "diff --git a/file.ts b/file.ts\n...",
   "context": "Feature implementation description",
-  "model": "deepseek-chat",
+  "model": "deepseek-flash",
   "provider": "deepseek"
 }
 ```
@@ -297,7 +300,7 @@ Audits a Git Unified Diff or code change payload across security, correctness, t
 ```json
 {
   "id": "audit-1740870000000-xyz",
-  "auditorModel": "deepseek-chat",
+  "auditorModel": "deepseek-flash",
   "auditorProvider": "deepseek",
   "overallScore": 92,
   "passed": true,
@@ -339,7 +342,7 @@ Executes tasks through multi-agent topologies (Orchestrator, Debate, Router, Sel
   - [x] Telemetry ROI dashboard and session execution log.
   - [x] AgentShip multi-tab mission control UI.
 - [x] **Sprint 2 (Delivered)**:
-  - [x] Universal LLM Provider Engine (DeepSeek V3/R1, Claude 3.7 Sonnet, GPT-4o, Ollama Local, Gemini).
+  - [x] Universal LLM Provider Engine (DeepSeek V4.1/V4 Pro, Claude 5 family, GPT-6 Astra/GPT-5.6 Terra, Qwen3-Coder via Ollama, Gemini 3.8 Flash).
   - [x] Decoupled from any single model vendor; universal OpenAI-compatible + Anthropic protocol support.
   - [x] Standard Model Context Protocol (MCP) Server endpoint (`/api/mcp`) for native Claude Code & Cursor integration.
   - [x] Pi coding agent plugin extension (`extensions/pi-agentship.ts`).
