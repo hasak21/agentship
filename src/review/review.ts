@@ -18,6 +18,7 @@ import {
 import type {
   AgentShipConfig,
   CheckEvidence,
+  FindingSuppressionConfig,
   ReviewCheckConfig,
   ReviewFinding,
   ReviewReport,
@@ -129,7 +130,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
         limits: config.limits,
       }
     : undefined;
-  const findings = buildFindings(
+  const rawFindings = buildFindings(
     checks,
     {
       stable: stableDuringChecks,
@@ -147,6 +148,11 @@ export async function runReview(options: RunReviewOptions): Promise<{
         }
       : undefined,
     budgetExcesses
+  );
+  const findings = applySuppressions(
+    rawFindings,
+    config.policy?.suppressions,
+    new Date(started)
   );
   const verdict = calculateVerdict(findings);
   const finished = Date.now();
@@ -184,6 +190,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
       failed: checks.filter((check) => check.status === "failed").length,
       timedOut: checks.filter((check) => check.status === "timed_out").length,
       skipped: checks.filter((check) => check.status === "skipped").length,
+      suppressed: findings.filter((finding) => finding.suppression).length,
     },
   };
 
@@ -446,9 +453,37 @@ export function findProtectedRequirementIds(
 }
 
 export function calculateVerdict(findings: ReviewFinding[]): ReviewVerdict {
-  if (findings.some((finding) => finding.severity === "blocker")) return "BLOCK";
-  if (findings.length > 0) return "WARN";
+  const activeFindings = findings.filter((finding) => !finding.suppression);
+  if (activeFindings.some((finding) => finding.severity === "blocker")) return "BLOCK";
+  if (activeFindings.length > 0) return "WARN";
   return "PASS";
+}
+
+export function applySuppressions(
+  findings: ReviewFinding[],
+  suppressions: FindingSuppressionConfig[] = [],
+  evaluatedAt = new Date()
+): ReviewFinding[] {
+  const evaluationDate = evaluatedAt.toISOString().slice(0, 10);
+  return findings.map((finding) => {
+    if (finding.severity !== "warning") return finding;
+    const suppression = suppressions.find(
+      (candidate) =>
+        candidate.findingId === finding.id &&
+        candidate.kind === finding.kind &&
+        candidate.expiresAt >= evaluationDate
+    );
+    if (!suppression) return finding;
+    return {
+      ...finding,
+      suppression: {
+        id: suppression.id,
+        owner: suppression.owner,
+        reason: suppression.reason,
+        expiresAt: suppression.expiresAt,
+      },
+    };
+  });
 }
 
 export function renderSarif(report: ReviewReport) {
@@ -504,9 +539,23 @@ export function renderSarif(report: ReviewReport) {
                   ],
                 }
               : {}),
+            ...(finding.suppression
+              ? {
+                  suppressions: [
+                    {
+                      kind: "external",
+                      status: "accepted",
+                      justification: `${finding.suppression.id}: ${finding.suppression.reason}`,
+                    },
+                  ],
+                }
+              : {}),
             properties: {
               findingId: finding.id,
               evidence: finding.evidence,
+              ...(finding.suppression
+                ? { suppression: finding.suppression }
+                : {}),
             },
           };
         }),
@@ -571,7 +620,16 @@ function renderMarkdown(report: ReviewReport): string {
     )
     .join("\n");
   const findings = report.findings.length
-    ? report.findings.map((finding) => `- **${finding.severity.toUpperCase()}**: ${finding.title}`).join("\n")
+    ? report.findings
+        .map(
+          (finding) =>
+            `- **${finding.suppression ? "SUPPRESSED " : ""}${finding.severity.toUpperCase()}**: ${finding.title}${
+              finding.suppression
+                ? ` — \`${finding.suppression.id}\`, owner ${finding.suppression.owner}, expires ${finding.suppression.expiresAt}: ${finding.suppression.reason}`
+                : ""
+            }`
+        )
+        .join("\n")
     : "No blocking or warning findings.";
   const requirements = report.task?.requirements.length
     ? report.task.requirements

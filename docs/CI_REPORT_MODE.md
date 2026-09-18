@@ -17,6 +17,8 @@ All official actions are pinned to full commit SHAs. Dependency lifecycle script
 
 `limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. Every check also has its own timeout and the job has a workflow timeout. These controls do not impose CPU, memory, disk, process-count, or network quotas.
 
+Warning suppressions are also loaded from the base revision. A pull request cannot add a suppression that takes effect in its own report. Matching is exact on finding ID and kind; active owner, reason, and expiry evidence remains visible in every report format. Blocker kinds cannot be configured as suppressible.
+
 ## Required repository settings
 
 - Use GitHub-hosted runners only.

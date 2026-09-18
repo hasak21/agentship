@@ -1,7 +1,19 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parse } from "yaml";
-import type { AgentShipConfig, ReviewCheckConfig } from "./types";
+import type {
+  AgentShipConfig,
+  ReviewCheckConfig,
+  SuppressibleFindingKind,
+} from "./types";
+
+const SUPPRESSIBLE_FINDING_KINDS = new Set<SuppressibleFindingKind>([
+  "optional_check_failed",
+  "explicit_requirement_path_unchanged",
+  "explicit_requirement_evidence_unsatisfied",
+  "inferred_requirement_role_missing",
+  "unattributed_changes",
+]);
 
 function assertCheck(value: unknown, index: number): asserts value is ReviewCheckConfig {
   if (!value || typeof value !== "object") {
@@ -88,25 +100,85 @@ function assertPolicy(value: unknown): void {
   ) {
     throw new Error("policy.blockOn must contain finding names.");
   }
-  if (policy.protectedPaths === undefined) return;
-  if (!Array.isArray(policy.protectedPaths)) {
-    throw new Error("policy.protectedPaths must be an array.");
+  if (policy.protectedPaths !== undefined) {
+    if (!Array.isArray(policy.protectedPaths)) {
+      throw new Error("policy.protectedPaths must be an array.");
+    }
+    policy.protectedPaths.forEach((value, index) => {
+      if (!value || typeof value !== "object") {
+        throw new Error(`policy.protectedPaths[${index}] must be an object.`);
+      }
+      const entry = value as Record<string, unknown>;
+      assertPathPattern(entry.pattern, `policy.protectedPaths[${index}].pattern`);
+      if (
+        entry.requireManualApproval !== undefined &&
+        typeof entry.requireManualApproval !== "boolean"
+      ) {
+        throw new Error(
+          `policy.protectedPaths[${index}].requireManualApproval must be boolean.`
+        );
+      }
+    });
   }
-  policy.protectedPaths.forEach((value, index) => {
+
+  if (policy.suppressions === undefined) return;
+  if (!Array.isArray(policy.suppressions)) {
+    throw new Error("policy.suppressions must be an array.");
+  }
+  const ids = new Set<string>();
+  const targets = new Set<string>();
+  policy.suppressions.forEach((value, index) => {
     if (!value || typeof value !== "object") {
-      throw new Error(`policy.protectedPaths[${index}] must be an object.`);
+      throw new Error(`policy.suppressions[${index}] must be an object.`);
     }
     const entry = value as Record<string, unknown>;
-    assertPathPattern(entry.pattern, `policy.protectedPaths[${index}].pattern`);
-    if (
-      entry.requireManualApproval !== undefined &&
-      typeof entry.requireManualApproval !== "boolean"
-    ) {
+    if (typeof entry.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(entry.id)) {
       throw new Error(
-        `policy.protectedPaths[${index}].requireManualApproval must be boolean.`
+        `policy.suppressions[${index}].id must be a stable identifier up to 64 characters.`
       );
     }
+    if (ids.has(entry.id)) {
+      throw new Error(`policy.suppressions id '${entry.id}' is duplicated.`);
+    }
+    ids.add(entry.id);
+    assertBoundedText(entry.findingId, `policy.suppressions[${index}].findingId`, 128);
+    if (!SUPPRESSIBLE_FINDING_KINDS.has(entry.kind as SuppressibleFindingKind)) {
+      throw new Error(
+        `policy.suppressions[${index}].kind must name a suppressible warning finding.`
+      );
+    }
+    assertBoundedText(entry.owner, `policy.suppressions[${index}].owner`, 128);
+    assertBoundedText(entry.reason, `policy.suppressions[${index}].reason`, 512);
+    if (typeof entry.expiresAt !== "string" || !isValidDate(entry.expiresAt)) {
+      throw new Error(
+        `policy.suppressions[${index}].expiresAt must be a valid YYYY-MM-DD date.`
+      );
+    }
+    const target = `${entry.findingId}\0${entry.kind}`;
+    if (targets.has(target)) {
+      throw new Error(
+        `policy.suppressions target '${entry.findingId}' and '${entry.kind}' is duplicated.`
+      );
+    }
+    targets.add(target);
   });
+}
+
+function assertBoundedText(value: unknown, field: string, maxLength: number): void {
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value.length > maxLength ||
+    value.includes("\0")
+  ) {
+    throw new Error(`${field} must be non-empty and at most ${maxLength} characters.`);
+  }
+}
+
+function isValidDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
 export async function loadConfig(

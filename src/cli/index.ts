@@ -103,6 +103,7 @@ async function main() {
   const { report } = result;
   console.log(`\nAgentShip review: ${report.verdict}`);
   console.log(`Checks: ${report.summary.passed} passed, ${report.summary.failed} failed, ${report.summary.timedOut} timed out, ${report.summary.skipped} skipped`);
+  console.log(`Findings: ${report.findings.length - report.summary.suppressed} active, ${report.summary.suppressed} suppressed`);
   console.log(`Changed files: ${report.repository.changedFiles.length}`);
   console.log(`Evidence: ${path.relative(process.cwd(), result.jsonPath)}`);
   console.log(`Report: ${path.relative(process.cwd(), result.markdownPath)}`);

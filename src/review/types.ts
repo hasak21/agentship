@@ -17,6 +17,22 @@ export interface ProtectedPathPolicy {
   requireManualApproval?: boolean;
 }
 
+export type SuppressibleFindingKind =
+  | "optional_check_failed"
+  | "explicit_requirement_path_unchanged"
+  | "explicit_requirement_evidence_unsatisfied"
+  | "inferred_requirement_role_missing"
+  | "unattributed_changes";
+
+export interface FindingSuppressionConfig {
+  id: string;
+  findingId: string;
+  kind: SuppressibleFindingKind;
+  owner: string;
+  reason: string;
+  expiresAt: string;
+}
+
 export interface AgentShipConfig {
   version: 1;
   mode: ReviewMode;
@@ -28,6 +44,7 @@ export interface AgentShipConfig {
   policy?: {
     blockOn?: string[];
     protectedPaths?: ProtectedPathPolicy[];
+    suppressions?: FindingSuppressionConfig[];
   };
 }
 
@@ -92,6 +109,12 @@ export interface ReviewFinding {
     budget?: "changed_files" | "diff_bytes";
     observed?: number;
     limit?: number;
+  };
+  suppression?: {
+    id: string;
+    owner: string;
+    reason: string;
+    expiresAt: string;
   };
 }
 
@@ -192,5 +215,6 @@ export interface ReviewReport {
     failed: number;
     timedOut: number;
     skipped: number;
+    suppressed: number;
   };
 }

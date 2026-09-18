@@ -88,6 +88,10 @@ The subject's configured checks still execute hostile repository code with netwo
 
 Base-owned `whenChanged` patterns select checks using only exact repository paths and trailing `/**` directory patterns. A non-applicable check is recorded as `skipped`, never as passing; a task that explicitly requires that check remains unsatisfied. Base-owned changed-file and diff-byte limits produce a blocker and skip repository commands before an oversized review executes. Per-check and workflow wall-clock timeouts are also enforced, but there are no CPU, memory, disk, process-count, or network quotas yet.
 
+Repository-owned suppressions match an exact finding ID and warning kind. Each entry has a stable suppression ID, owner, reason, and calendar-date expiry. An active suppression is attached to—not removed from—the finding, is represented as an accepted external SARIF suppression, and removes only that warning's verdict impact. Expired entries are ignored. The schema rejects blocker kinds, duplicate identities, duplicate targets, invalid dates, and unbounded ownership/reason text.
+
+In the fork workflow, suppressions come from the separately checked-out base policy, so a pull request cannot suppress itself. In local working-tree mode, `.agentship.yml` may change in the same diff and remains developer-trusted; suppression there is not immutable approval, authenticated identity, or an override attestation. Policy immutability and signed actor-bound overrides remain M5 work.
+
 Protected-path confirmation currently applies to requirements with observed protected file or symbol mappings. A task that omits those mappings can evade requirement-level confirmation unless strict change coverage catches the unattributed file. Global protected-file enforcement from immutable base policy remains M5 work.
 
 ## Repository-state integrity

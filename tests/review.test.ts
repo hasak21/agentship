@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
+  applySuppressions,
   buildFindings,
   calculateVerdict,
   evaluateReviewBudgets,
@@ -69,7 +70,7 @@ function reportWithFindings(
     configuration: { path: ".agentship.yml", sha256: "config-hash" },
     checks: [],
     findings,
-    summary: { passed: 0, failed: 0, timedOut: 0, skipped: 0 },
+    summary: { passed: 0, failed: 0, timedOut: 0, skipped: 0, suppressed: 0 },
   };
 }
 
@@ -91,6 +92,80 @@ test("all passing checks produce a pass verdict", () => {
   const findings = buildFindings([check()]);
   assert.deepEqual(findings, []);
   assert.equal(calculateVerdict(findings), "PASS");
+});
+
+test("active owned suppressions retain warning evidence but remove verdict impact", () => {
+  const warning = buildFindings([
+    check({ required: false, status: "failed", exitCode: 1 }),
+  ])[0];
+  assert.ok(warning);
+
+  const suppressed = applySuppressions(
+    [warning],
+    [
+      {
+        id: "known-optional-failure",
+        findingId: warning.id,
+        kind: "optional_check_failed",
+        owner: "quality-team",
+        reason: "Replacement lands in issue 123.",
+        expiresAt: "2026-12-31",
+      },
+    ],
+    new Date("2026-09-18T00:00:00.000Z")
+  );
+
+  assert.deepEqual(suppressed[0]?.suppression, {
+    id: "known-optional-failure",
+    owner: "quality-team",
+    reason: "Replacement lands in issue 123.",
+    expiresAt: "2026-12-31",
+  });
+  assert.equal(calculateVerdict(suppressed), "PASS");
+});
+
+test("expired suppressions and blocker findings remain active", () => {
+  const warning = buildFindings([
+    check({ required: false, status: "failed", exitCode: 1 }),
+  ])[0];
+  assert.ok(warning);
+  const expired = applySuppressions(
+    [warning],
+    [
+      {
+        id: "expired",
+        findingId: warning.id,
+        kind: "optional_check_failed",
+        owner: "quality-team",
+        reason: "The deadline passed.",
+        expiresAt: "2026-09-17",
+      },
+    ],
+    new Date("2026-09-18T00:00:00.000Z")
+  );
+  assert.equal(expired[0]?.suppression, undefined);
+  assert.equal(calculateVerdict(expired), "WARN");
+
+  const blocker = buildFindings([
+    check({ required: true, status: "failed", exitCode: 1 }),
+  ])[0];
+  assert.ok(blocker);
+  const unchanged = applySuppressions(
+    [{ ...blocker, kind: "optional_check_failed" }],
+    [
+      {
+        id: "cannot-hide-blocker",
+        findingId: blocker.id,
+        kind: "optional_check_failed",
+        owner: "quality-team",
+        reason: "Severity still prevents suppression.",
+        expiresAt: "2026-12-31",
+      },
+    ],
+    new Date("2026-09-18T00:00:00.000Z")
+  );
+  assert.equal(unchanged[0]?.suppression, undefined);
+  assert.equal(calculateVerdict(unchanged), "BLOCK");
 });
 
 test("path-filtered checks select exact and directory changes", () => {
@@ -365,6 +440,12 @@ test("SARIF maps findings to rules, levels, and safe repository-relative locatio
         kind: "explicit_requirement_path_unchanged",
         title: "R1 path is unchanged",
         evidence: { expectedPaths: ["src/auth session.ts"] },
+        suppression: {
+          id: "known-gap",
+          owner: "quality-team",
+          reason: "Tracked in issue 123.",
+          expiresAt: "2026-12-31",
+        },
       },
       {
         id: "requirement-R2",
@@ -383,6 +464,22 @@ test("SARIF maps findings to rules, levels, and safe repository-relative locatio
   assert.equal(
     sarif.runs[0]?.results[1]?.locations?.[0]?.physicalLocation.artifactLocation.uri,
     "src/auth%20session.ts"
+  );
+  assert.deepEqual(sarif.runs[0]?.results[1]?.suppressions, [
+    {
+      kind: "external",
+      status: "accepted",
+      justification: "known-gap: Tracked in issue 123.",
+    },
+  ]);
+  assert.deepEqual(
+    sarif.runs[0]?.results[1]?.properties.suppression,
+    {
+      id: "known-gap",
+      owner: "quality-team",
+      reason: "Tracked in issue 123.",
+      expiresAt: "2026-12-31",
+    }
   );
   assert.equal("locations" in (sarif.runs[0]?.results[2] ?? {}), false);
   assert.deepEqual(sarif.runs[0]?.invocations[0]?.properties, {

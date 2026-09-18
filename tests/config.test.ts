@@ -134,3 +134,101 @@ checks:
     }
   );
 });
+
+test("configuration accepts owned, reasoned, expiring warning suppressions", async () => {
+  await withConfig(
+    `version: 1
+mode: report
+checks:
+  - name: test
+    run: npm test
+policy:
+  suppressions:
+    - id: legacy-doc-gap
+      findingId: requirement-R3
+      kind: inferred_requirement_role_missing
+      owner: docs-team
+      reason: Migration guide is tracked in issue 123.
+      expiresAt: 2026-12-31
+`,
+    async (directory) => {
+      const { config } = await loadConfig(directory);
+      assert.deepEqual(config.policy?.suppressions?.[0], {
+        id: "legacy-doc-gap",
+        findingId: "requirement-R3",
+        kind: "inferred_requirement_role_missing",
+        owner: "docs-team",
+        reason: "Migration guide is tracked in issue 123.",
+        expiresAt: "2026-12-31",
+      });
+    }
+  );
+});
+
+test("configuration rejects blocker, invalid-date, and duplicate suppressions", async () => {
+  await withConfig(
+    `version: 1
+mode: report
+checks:
+  - name: test
+    run: npm test
+policy:
+  suppressions:
+    - id: hide-tests
+      findingId: check-1
+      kind: required_check_failed
+      owner: nobody
+      reason: Do not allow this.
+      expiresAt: 2026-12-31
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /suppressible warning finding/);
+    }
+  );
+
+  await withConfig(
+    `version: 1
+mode: report
+checks:
+  - name: test
+    run: npm test
+policy:
+  suppressions:
+    - id: invalid-date
+      findingId: requirement-R1
+      kind: inferred_requirement_role_missing
+      owner: docs-team
+      reason: Invalid calendar date.
+      expiresAt: 2026-02-31
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /valid YYYY-MM-DD date/);
+    }
+  );
+
+  await withConfig(
+    `version: 1
+mode: report
+checks:
+  - name: test
+    run: npm test
+policy:
+  suppressions:
+    - id: first
+      findingId: requirement-R1
+      kind: inferred_requirement_role_missing
+      owner: docs-team
+      reason: First entry.
+      expiresAt: 2026-12-31
+    - id: second
+      findingId: requirement-R1
+      kind: inferred_requirement_role_missing
+      owner: docs-team
+      reason: Duplicate target.
+      expiresAt: 2026-12-31
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /target .* is duplicated/);
+    }
+  );
+});

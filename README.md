@@ -217,6 +217,12 @@ execution and emit blockers before an oversized review runs. Per-check timeouts 
 workflow timeout provide wall-clock bounds; CPU, memory, process, and network isolation
 remain future maintainer-mode controls.
 
+Known warning findings can be suppressed by an exact finding ID and kind under
+`policy.suppressions`. Every suppression requires a stable suppression ID, owner, reason,
+and `YYYY-MM-DD` expiry. Suppressions cannot target blocker kinds, never delete evidence,
+and are emitted in JSON, Markdown, and SARIF. In fork CI the policy comes from the trusted
+base revision; a local policy edited in the reviewed patch is not an immutable approval.
+
 Run the checked-in omission calibration corpus, or supply another compatible corpus:
 
 ```bash
