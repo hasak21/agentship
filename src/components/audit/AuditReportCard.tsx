@@ -49,7 +49,7 @@ export function AuditReportCard({ report, onApplyFix }: AuditReportCardProps) {
             <div>
               <div className="flex items-center gap-2.5">
                 <h3 className="text-lg font-bold text-slate-100">
-                  Cross-Model Quality & Security Gate
+                  Advisory code review
                 </h3>
                 <span
                   className={`rounded-full px-3 py-0.5 text-xs font-bold tracking-wide ${
@@ -58,7 +58,7 @@ export function AuditReportCard({ report, onApplyFix }: AuditReportCardProps) {
                       : "border border-rose-500/40 bg-rose-500/20 text-rose-300"
                   }`}
                 >
-                  {passed ? "✓ PASSED" : "✕ BLOCKED"}
+                  {passed ? "NO BLOCKERS FOUND" : "REVIEW NEEDED"}
                 </span>
               </div>
               <p className="mt-1 text-xs text-slate-400">

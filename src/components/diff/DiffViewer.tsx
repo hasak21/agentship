@@ -31,7 +31,7 @@ export function DiffViewer({
         <span className="text-4xl mb-3">🔍</span>
         <h3 className="text-base font-semibold text-slate-100">No Diff Available</h3>
         <p className="mt-1.5 text-sm text-slate-300 max-w-md leading-relaxed">
-          Run an Agent task or paste a Git Unified Diff in the box above to inspect file changes and trigger a multi-model quality & security audit.
+          Paste a Git unified diff above to inspect the actual file changes. You can then request an advisory model review or run deterministic checks in the CLI.
         </p>
       </div>
     );
@@ -112,7 +112,7 @@ export function DiffViewer({
               ) : (
                 <>
                   <span>🛡️</span>
-                  <span>Request Evidence Review</span>
+                  <span>Run Advisory Review</span>
                 </>
               )}
             </button>

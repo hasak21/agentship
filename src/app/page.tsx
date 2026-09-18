@@ -148,7 +148,9 @@ const ROLE_ICON: Record<string, string> = {
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"orchestration" | "diff" | "audit" | "telemetry">("diff");
-  const [task, setTask] = useState("");
+  const [task, setTask] = useState(
+    "Add a rate limiter that blocks requests over the configured limit and include regression tests."
+  );
   const [pattern, setPattern] = useState<Pattern>("orchestrator");
   const [critic, setCritic] = useState(false);
   const [web, setWeb] = useState(false);
@@ -162,9 +164,10 @@ export default function Home() {
   const [verdictError, setVerdictError] = useState("");
 
   // Universal Model & MCP Integration state
-  const [selectedModelId, setSelectedModelId] = useState<string>("deepseek-v3");
+  const [selectedModelId, setSelectedModelId] = useState<string>("deepseek-v4-flash");
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
+  const [copiedCli, setCopiedCli] = useState(false);
 
   // Diff & Audit state
   const [rawDiff, setRawDiff] = useState<string>(SAMPLE_DIFF);
@@ -181,6 +184,19 @@ export default function Home() {
   const activeModelPreset =
     UNIVERSAL_MODEL_PRESETS.find((p) => p.id === selectedModelId) ??
     UNIVERSAL_MODEL_PRESETS[0];
+  const preflightState = auditReport
+    ? auditReport.passed
+      ? "reviewed"
+      : "attention"
+    : parsedDiff.fileCount > 0
+      ? "ready"
+      : "waiting";
+
+  function copyCliCommand() {
+    navigator.clipboard.writeText("npm run review -- --task task.md --staged");
+    setCopiedCli(true);
+    setTimeout(() => setCopiedCli(false), 2000);
+  }
 
   const handleDiffChange = (newDiff: string) => {
     setRawDiff(newDiff);
@@ -430,7 +446,7 @@ export default function Home() {
   }
 
   return (
-    <main className="relative min-h-screen bg-[#0a0d14] text-slate-100 px-4 py-8 sm:py-10">
+    <main className="relative min-h-screen bg-[#0a0d14] text-slate-100 px-4 pb-16 pt-5 sm:px-6">
       {/* Background ambient lighting */}
       <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="animate-glow absolute left-1/2 top-[-10%] h-[480px] w-[720px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-indigo-600/15 via-violet-600/10 to-sky-600/15 blur-[120px]" />
@@ -438,45 +454,55 @@ export default function Home() {
       </div>
 
       <div className="mx-auto w-full max-w-6xl">
-        {/* Header Branding & Status Bar */}
-        <header className="flex flex-col items-center justify-center text-center">
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-[#121622] px-4 py-1.5 text-xs font-semibold text-indigo-300 shadow-md">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            AgentShip Verify · Independent Evidence, Not Agent Claims
+        {/* Product header */}
+        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800/90 pb-5">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-xl border border-emerald-400/30 bg-emerald-400/10 text-lg font-black text-emerald-300">
+              A
+            </span>
+            <div>
+              <h1 className="text-base font-bold tracking-tight text-white">AgentShip Verify</h1>
+              <p className="text-xs text-slate-400">Preflight evidence for agent-written code</p>
+            </div>
           </div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-white sm:text-5xl font-mono">
-            ✦ AgentShip Verify
-          </h1>
-          <p className="mx-auto mt-2 max-w-2xl text-sm text-slate-300 leading-relaxed">
-            Evidence-based preflight for agent-written code. Run the checks yourself, inspect the change, and decide whether it is ready to ship.
-          </p>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="hidden items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-slate-300 sm:flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Local companion online
+            </span>
+            <button
+              onClick={() => setShowMcpModal(true)}
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-semibold text-slate-200 transition hover:border-slate-500 hover:text-white"
+            >
+              Connect tools
+            </button>
+          </div>
         </header>
 
+        <section className="pb-2 pt-10">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-400">Pre-boarding check</p>
+          <h2 className="mt-3 max-w-3xl text-3xl font-semibold tracking-[-0.035em] text-white sm:text-5xl">
+            Is this agent change ready to ship?
+          </h2>
+          <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
+            Bind the task to the actual diff, inspect what changed, and run checks yourself. Agent claims are context—not evidence.
+          </p>
+        </section>
+
         {/* Global Navigation & Engine Toolbar */}
-        <div className="mx-auto mt-7 flex max-w-4xl flex-wrap items-center justify-between gap-3">
+        <div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/90">
           {/* Segment Tabs */}
-          <nav className="inline-flex rounded-2xl border border-slate-700/80 bg-[#121622] p-1.5 shadow-xl backdrop-blur">
+          <nav className="flex overflow-x-auto" aria-label="AgentShip workspace">
             <button
               onClick={() => setActiveTab("orchestration")}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                activeTab === "orchestration"
-                  ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/30"
-                  : "text-slate-300 hover:text-white hover:bg-slate-800/40"
-              }`}
+              className={`order-4 border-b-2 px-4 py-3 text-xs font-semibold transition ${activeTab === "orchestration" ? "border-slate-300 text-white" : "border-transparent text-slate-500 hover:text-slate-300"}`}
             >
-              <span>🧭</span>
-              <span>Model Lab</span>
+              Experimental lab
             </button>
             <button
               onClick={() => setActiveTab("diff")}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                activeTab === "diff"
-                  ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/30"
-                  : "text-slate-300 hover:text-white hover:bg-slate-800/40"
-              }`}
+              className={`order-1 flex items-center gap-2 border-b-2 px-4 py-3 text-xs font-semibold transition ${activeTab === "diff" ? "border-emerald-400 text-white" : "border-transparent text-slate-400 hover:text-white"}`}
             >
-              <span>🔍</span>
-              <span>Preflight Diff</span>
+              <span>Review change</span>
               {parsedDiff.fileCount > 0 && (
                 <span className="rounded-full bg-indigo-950 px-2 py-0.5 text-[11px] font-mono border border-indigo-400/40 text-indigo-300">
                   {parsedDiff.fileCount}
@@ -485,14 +511,9 @@ export default function Home() {
             </button>
             <button
               onClick={() => setActiveTab("audit")}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                activeTab === "audit"
-                  ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/30"
-                  : "text-slate-300 hover:text-white hover:bg-slate-800/40"
-              }`}
+              className={`order-2 flex items-center gap-2 border-b-2 px-4 py-3 text-xs font-semibold transition ${activeTab === "audit" ? "border-emerald-400 text-white" : "border-transparent text-slate-400 hover:text-white"}`}
             >
-              <span>🛡️</span>
-              <span>Evidence Review</span>
+              <span>Advisory findings</span>
               {auditReport && (
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-mono font-bold ${auditReport.passed ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40' : 'bg-rose-500/25 text-rose-300 border border-rose-500/40'}`}>
                   {auditReport.passed ? "PASS" : "BLOCK"}
@@ -501,21 +522,16 @@ export default function Home() {
             </button>
             <button
               onClick={() => setActiveTab("telemetry")}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                activeTab === "telemetry"
-                  ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/30"
-                  : "text-slate-300 hover:text-white hover:bg-slate-800/40"
-              }`}
+              className={`order-3 border-b-2 px-4 py-3 text-xs font-semibold transition ${activeTab === "telemetry" ? "border-emerald-400 text-white" : "border-transparent text-slate-400 hover:text-white"}`}
             >
-              <span>📊</span>
-              <span>Run History</span>
+              Run history
             </button>
           </nav>
 
           {/* Model Selector & MCP Launch Button */}
-          <div className="flex items-center gap-2.5">
+          <div className="mb-2 flex items-center gap-2.5">
             <div className="flex items-center gap-2 rounded-xl border border-slate-700/80 bg-[#121622] px-3.5 py-2 shadow-md">
-              <span className="text-xs font-semibold text-slate-400">Engine:</span>
+              <span className="text-xs font-semibold text-slate-400">Advisory model:</span>
               <select
                 value={selectedModelId}
                 onChange={(e) => setSelectedModelId(e.target.value)}
@@ -530,13 +546,6 @@ export default function Home() {
               </select>
             </div>
 
-            <button
-              onClick={() => setShowMcpModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-500/40 bg-indigo-500/15 px-3.5 py-2 text-xs font-bold text-indigo-200 transition hover:bg-indigo-500/25 active:scale-[0.98] shadow-md"
-            >
-              <span>🔌</span>
-              <span>CLI & MCP</span>
-            </button>
           </div>
         </div>
 
@@ -700,26 +709,82 @@ export default function Home() {
         {/* Tab 2: Visual Diff Review */}
         {activeTab === "diff" && (
           <section className="mt-8 space-y-6 max-w-5xl mx-auto">
-            {/* Diff Input / Edit area */}
-            <div className="rounded-2xl border border-slate-700/80 bg-[#121622] p-4.5 shadow-xl">
-              <div className="flex items-center justify-between mb-2.5">
-                <span className="text-xs font-bold text-slate-200">
-                  📥 Ingest Git Unified Diff (from CLI Agent or Git):
-                </span>
-                <button
-                  onClick={() => handleDiffChange(SAMPLE_DIFF)}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold transition"
-                >
-                  Load Sample PR Diff
-                </button>
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,.75fr)]">
+              <div className="rounded-2xl border border-slate-700/80 bg-[#111722] p-5 shadow-xl sm:p-6">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">1 · Intent</p>
+                    <h3 className="mt-1 text-base font-semibold text-white">What was the agent asked to do?</h3>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setTask("Add a rate limiter that blocks requests over the configured limit and include regression tests.");
+                      handleDiffChange(SAMPLE_DIFF);
+                    }}
+                    className="text-xs font-semibold text-emerald-400 hover:text-emerald-300"
+                  >
+                    Reset sample
+                  </button>
+                </div>
+                <textarea
+                  value={task}
+                  onChange={(e) => setTask(e.target.value)}
+                  placeholder="Paste the task, issue, or acceptance criteria…"
+                  rows={3}
+                  className="mt-4 w-full resize-y rounded-xl border border-slate-700 bg-[#0a0f17] px-4 py-3 text-sm leading-6 text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-emerald-500/70 focus:ring-2 focus:ring-emerald-500/10"
+                />
+
+                <div className="mt-6 flex items-end justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">2 · Change</p>
+                    <h3 className="mt-1 text-base font-semibold text-white">Paste the Git diff</h3>
+                  </div>
+                  <span className="text-xs text-slate-500">Try <code className="text-slate-300">git diff --staged</code></span>
+                </div>
+                <textarea
+                  value={rawDiff}
+                  onChange={(e) => handleDiffChange(e.target.value)}
+                  placeholder="diff --git a/... b/..."
+                  rows={6}
+                  className="mt-4 w-full resize-y rounded-xl border border-slate-700 bg-[#070b11] p-4 font-mono text-xs leading-5 text-slate-200 outline-none transition placeholder:text-slate-700 focus:border-emerald-500/70 focus:ring-2 focus:ring-emerald-500/10"
+                />
               </div>
-              <textarea
-                value={rawDiff}
-                onChange={(e) => handleDiffChange(e.target.value)}
-                placeholder="Paste unified git diff here (diff --git a/... b/...)..."
-                rows={3}
-                className="w-full rounded-xl border border-slate-700 bg-[#0b0e17] p-3 font-mono text-xs text-slate-200 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-y"
-              />
+
+              <aside className={`rounded-2xl border p-5 shadow-xl ${preflightState === "attention" ? "border-rose-500/40 bg-rose-950/15" : preflightState === "reviewed" ? "border-emerald-500/40 bg-emerald-950/15" : "border-slate-700/80 bg-[#111722]"}`}>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Preflight status</p>
+                <div className="mt-4 flex items-center gap-3">
+                  <span className={`grid h-11 w-11 place-items-center rounded-full border text-lg ${preflightState === "attention" ? "border-rose-400/40 bg-rose-400/10 text-rose-300" : preflightState === "reviewed" ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300" : "border-amber-400/30 bg-amber-400/10 text-amber-200"}`}>
+                    {preflightState === "attention" ? "!" : preflightState === "reviewed" ? "✓" : "…"}
+                  </span>
+                  <div>
+                    <h3 className="font-semibold text-white">{preflightState === "attention" ? "Needs attention" : preflightState === "reviewed" ? "Advisory review complete" : preflightState === "ready" ? "Ready for checks" : "Waiting for a diff"}</h3>
+                    <p className="mt-0.5 text-xs text-slate-400">{parsedDiff.fileCount} files · +{parsedDiff.totalAdditions} · -{parsedDiff.totalDeletions}</p>
+                  </div>
+                </div>
+
+                <ol className="mt-6 space-y-3 text-sm">
+                  <StatusRow done={Boolean(task.trim())} label="Task intent captured" />
+                  <StatusRow done={parsedDiff.fileCount > 0} label="Change parsed" />
+                  <StatusRow done={false} label="Deterministic checks" note="Run in CLI" />
+                  <StatusRow done={Boolean(auditReport)} label="Advisory model review" />
+                </ol>
+
+                <button
+                  onClick={() => triggerAudit()}
+                  disabled={isAuditing || !rawDiff.trim()}
+                  className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-bold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {isAuditing ? <span className="spinner h-4 w-4 rounded-full border-2 border-slate-900/30 border-t-slate-900" /> : null}
+                  {isAuditing ? "Reviewing change…" : "Run advisory review"}
+                </button>
+                <button
+                  onClick={copyCliCommand}
+                  className="mt-2 w-full rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500 hover:text-white"
+                >
+                  {copiedCli ? "Copied verification command" : "Copy deterministic CLI command"}
+                </button>
+                <p className="mt-3 text-[11px] leading-4 text-slate-500">Model findings are advisory. Only locally executed checks become verification evidence.</p>
+              </aside>
             </div>
 
             {/* Interactive Visual Diff Viewer */}
@@ -731,16 +796,16 @@ export default function Home() {
           </section>
         )}
 
-        {/* Tab 3: Cross-Audit Gate */}
+        {/* Tab 3: Advisory model findings */}
         {activeTab === "audit" && (
           <section className="mt-8 max-w-5xl mx-auto space-y-6">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-bold text-slate-100">
-                  Multi-Model Code Quality & Security Audit Gate
+                  Advisory findings
                 </h3>
                 <p className="text-xs text-slate-300">
-                  Cross-examine agent generated code with independent Auditor LLMs to eliminate blind spots.
+                  A second opinion from an independent model. These findings are not executed evidence.
                 </p>
               </div>
               <button
@@ -942,6 +1007,32 @@ export default function Home() {
 }
 
 // ---------- Sub Components ----------
+
+function StatusRow({
+  done,
+  label,
+  note,
+}: {
+  done: boolean;
+  label: string;
+  note?: string;
+}) {
+  return (
+    <li className="flex items-center gap-3">
+      <span
+        className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[10px] font-bold ${
+          done
+            ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+            : "border-slate-600 bg-slate-800/70 text-slate-500"
+        }`}
+      >
+        {done ? "✓" : ""}
+      </span>
+      <span className={done ? "text-slate-200" : "text-slate-400"}>{label}</span>
+      {note ? <span className="ml-auto text-[11px] text-slate-500">{note}</span> : null}
+    </li>
+  );
+}
 
 function Toggle({
   label,
