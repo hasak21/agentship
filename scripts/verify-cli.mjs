@@ -15,7 +15,11 @@ try {
     cwd: temporaryDirectory,
     encoding: "utf8",
   });
-  if (!stdout.includes("AgentShip Verify") || !stdout.includes("--task <path>")) {
+  if (
+    !stdout.includes("AgentShip Verify") ||
+    !stdout.includes("--task <path>") ||
+    !stdout.includes("--baseline <path>")
+  ) {
     throw new Error("Bundled CLI help output is incomplete.");
   }
   const benchmark = await execFileAsync(

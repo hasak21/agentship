@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { compareWithBaseline, loadBaseline } from "./baseline";
 import { loadConfig } from "./config";
 import { collectGitEvidence, getHead, resolveRepositoryRoot } from "./git";
 import { runCheck } from "./runner";
@@ -39,6 +40,7 @@ export interface RunReviewOptions {
   staged?: boolean;
   outputPath?: string;
   confirmedRequirementIds?: string[];
+  baselinePath?: string;
 }
 
 export async function runReview(options: RunReviewOptions): Promise<{
@@ -154,6 +156,12 @@ export async function runReview(options: RunReviewOptions): Promise<{
     config.policy?.suppressions,
     new Date(started)
   );
+  const baseline = options.baselinePath
+    ? compareWithBaseline(
+        findings,
+        await loadBaseline(repositoryRoot, options.baselinePath)
+      )
+    : undefined;
   const verdict = calculateVerdict(findings);
   const finished = Date.now();
   const runId = randomUUID();
@@ -184,6 +192,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
     },
     checks,
     budget,
+    baseline,
     findings,
     summary: {
       passed: checks.filter((check) => check.status === "passed").length,
@@ -693,6 +702,26 @@ function renderMarkdown(report: ReviewReport): string {
         }`,
       ].join("\n")
     : "No review input budgets were configured.";
+  const baseline = report.baseline
+    ? [
+        `- Report: \`${report.baseline.path}\``,
+        `- Run: \`${report.baseline.runId}\``,
+        `- Commit: \`${report.baseline.head}\``,
+        `- SHA-256: \`${report.baseline.sha256}\``,
+        `- New findings: ${report.baseline.newFindings.length}`,
+        ...report.baseline.newFindings.map(
+          (finding) => `  - \`${finding.id}\` (${finding.kind}, ${finding.severity})`
+        ),
+        `- Existing findings: ${report.baseline.existingFindings.length}`,
+        ...report.baseline.existingFindings.map(
+          (finding) => `  - \`${finding.id}\` (${finding.kind}, ${finding.severity})`
+        ),
+        `- Resolved findings: ${report.baseline.resolvedFindings.length}`,
+        ...report.baseline.resolvedFindings.map(
+          (finding) => `  - \`${finding.id}\` (${finding.kind}, ${finding.severity})`
+        ),
+      ].join("\n")
+    : "No baseline report was supplied.";
 
-  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
+  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
 }

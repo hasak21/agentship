@@ -9,6 +9,7 @@ interface CliOptions {
   base?: string;
   staged: boolean;
   outputPath?: string;
+  baselinePath?: string;
   confirmedRequirementIds: string[];
 }
 
@@ -21,12 +22,13 @@ function parseArgs(args: string[]): CliOptions {
       options.staged = true;
       continue;
     }
-    if (["--task", "--config", "--base", "--output", "--confirm"].includes(arg)) {
+    if (["--task", "--config", "--base", "--baseline", "--output", "--confirm"].includes(arg)) {
       const value = args[++index];
       if (!value) throw new Error(`${arg} requires a value.`);
       if (arg === "--task") options.taskPath = value;
       if (arg === "--config") options.configPath = value;
       if (arg === "--base") options.base = value;
+      if (arg === "--baseline") options.baselinePath = value;
       if (arg === "--output") options.outputPath = value;
       if (arg === "--confirm") {
         options.confirmedRequirementIds.push(
@@ -57,6 +59,7 @@ Options:
   --base <ref>     Review committed changes since the merge base with <ref>
   --staged         Review staged changes instead of the working tree
   --config <path>  Configuration path (default: .agentship.yml)
+  --baseline <path> Prior AgentShip JSON report for finding comparison
   --output <path>  JSON report path
   --confirm <ids>  Confirm comma-separated requirements marked [confirm]
   -h, --help       Show this help`);
@@ -97,6 +100,7 @@ async function main() {
     base: options.base,
     staged: options.staged,
     outputPath: options.outputPath,
+    baselinePath: options.baselinePath,
     confirmedRequirementIds: options.confirmedRequirementIds,
   });
 
@@ -104,6 +108,9 @@ async function main() {
   console.log(`\nAgentShip review: ${report.verdict}`);
   console.log(`Checks: ${report.summary.passed} passed, ${report.summary.failed} failed, ${report.summary.timedOut} timed out, ${report.summary.skipped} skipped`);
   console.log(`Findings: ${report.findings.length - report.summary.suppressed} active, ${report.summary.suppressed} suppressed`);
+  if (report.baseline) {
+    console.log(`Baseline: ${report.baseline.newFindings.length} new, ${report.baseline.existingFindings.length} existing, ${report.baseline.resolvedFindings.length} resolved`);
+  }
   console.log(`Changed files: ${report.repository.changedFiles.length}`);
   console.log(`Evidence: ${path.relative(process.cwd(), result.jsonPath)}`);
   console.log(`Report: ${path.relative(process.cwd(), result.markdownPath)}`);

@@ -209,6 +209,17 @@ node dist/agentship.cjs review --task task.md
 
 The review writes JSON, Markdown, and SARIF evidence under `.agentship/reviews/`.
 
+Compare a review with a previous AgentShip JSON report:
+
+```bash
+npm run review -- --task task.md --baseline .agentship/baselines/main.json
+```
+
+The report classifies exact finding ID/kind pairs as new, existing, or resolved and
+binds the comparison to the baseline SHA-256, run ID, and commit. Baselines are bounded,
+parsed as data, and never change the current verdict. Selecting and retaining the right
+baseline remains an operator or CI responsibility.
+
 Checks may declare `whenChanged` with exact repository paths or trailing `/**`
 directory patterns. A check with no matching changed path is recorded as `skipped`;
 an explicit `` `check:name` `` requirement still treats that status as unsatisfied.

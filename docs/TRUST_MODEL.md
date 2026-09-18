@@ -92,6 +92,8 @@ Repository-owned suppressions match an exact finding ID and warning kind. Each e
 
 In the fork workflow, suppressions come from the separately checked-out base policy, so a pull request cannot suppress itself. In local working-tree mode, `.agentship.yml` may change in the same diff and remains developer-trusted; suppression there is not immutable approval, authenticated identity, or an override attestation. Policy immutability and signed actor-bound overrides remain M5 work.
 
+A baseline is an optional prior AgentShip JSON report supplied through `--baseline`. AgentShip reads it as bounded data with a 5 MiB file limit, a 10,000-finding limit, required schema/run/commit metadata, bounded identity fields, and duplicate rejection. It binds results to the baseline SHA-256 and compares exact finding ID/kind pairs. The comparison labels findings new, existing, or resolved but does not suppress findings or affect the current verdict. Baseline selection, provenance, and retention are not yet automated or attested.
+
 Protected-path confirmation currently applies to requirements with observed protected file or symbol mappings. A task that omits those mappings can evade requirement-level confirmation unless strict change coverage catches the unattributed file. Global protected-file enforcement from immutable base policy remains M5 work.
 
 ## Repository-state integrity

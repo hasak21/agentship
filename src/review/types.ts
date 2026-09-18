@@ -118,6 +118,22 @@ export interface ReviewFinding {
   };
 }
 
+export interface FindingIdentity {
+  id: string;
+  kind: string;
+  severity: "blocker" | "warning";
+}
+
+export interface BaselineComparison {
+  path: string;
+  sha256: string;
+  runId: string;
+  head: string;
+  newFindings: FindingIdentity[];
+  existingFindings: FindingIdentity[];
+  resolvedFindings: FindingIdentity[];
+}
+
 export interface ReviewReport {
   schemaVersion: 1;
   runId: string;
@@ -209,6 +225,7 @@ export interface ReviewReport {
       maxDiffBytes?: number;
     };
   };
+  baseline?: BaselineComparison;
   findings: ReviewFinding[];
   summary: {
     passed: number;

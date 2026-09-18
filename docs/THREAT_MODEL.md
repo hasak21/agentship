@@ -53,6 +53,7 @@ This model covers the local review CLI, public Next.js endpoints, provider clien
 | T15 | In-memory or app-level rate limits fail across replicas | No distributed limiter is claimed | Host/control-plane limiter required |
 | T16 | Oversized pull-request input consumes excessive check time | Base-owned changed-file/diff-byte limits block before checks; check and workflow wall-clock timeouts bound duration | CPU, memory, disk, process-count, and network quotas remain open |
 | T17 | Contributor suppresses a finding in the same pull request | Fork CI loads exact-match, warning-only suppressions from the trusted base policy and retains suppression evidence | Local working-tree policy is developer-trusted; immutable policy and signed overrides remain open |
+| T18 | Malformed or misleading baseline hides a regression | Baselines are size/count/schema bounded, hash-bound, exact-match only, and cannot affect verdicts | Baseline selection/provenance and durable retention remain operator-owned |
 
 ## Preconditions for privileged hostile-pull-request enforcement
 
