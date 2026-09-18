@@ -4,8 +4,22 @@ import { parse } from "yaml";
 import type {
   AgentShipConfig,
   ReviewCheckConfig,
+  ReviewFindingKind,
   SuppressibleFindingKind,
 } from "./types";
+
+export const REVIEW_FINDING_KINDS = new Set<ReviewFindingKind>([
+  "required_check_failed",
+  "required_check_timed_out",
+  "optional_check_failed",
+  "repository_changed_during_review",
+  "explicit_requirement_path_unchanged",
+  "explicit_requirement_evidence_unsatisfied",
+  "inferred_requirement_role_missing",
+  "unattributed_changes",
+  "review_budget_exceeded",
+  "requirement_confirmation_missing",
+]);
 
 const SUPPRESSIBLE_FINDING_KINDS = new Set<SuppressibleFindingKind>([
   "optional_check_failed",
@@ -96,9 +110,17 @@ function assertPolicy(value: unknown): void {
   if (
     policy.blockOn !== undefined &&
     (!Array.isArray(policy.blockOn) ||
-      policy.blockOn.some((kind) => typeof kind !== "string" || !kind.trim()))
+      policy.blockOn.some(
+        (kind) => typeof kind !== "string" || !REVIEW_FINDING_KINDS.has(kind as ReviewFindingKind)
+      ))
   ) {
-    throw new Error("policy.blockOn must contain finding names.");
+    throw new Error("policy.blockOn must contain supported finding kinds.");
+  }
+  if (
+    Array.isArray(policy.blockOn) &&
+    new Set(policy.blockOn).size !== policy.blockOn.length
+  ) {
+    throw new Error("policy.blockOn must not contain duplicate finding kinds.");
   }
   if (policy.protectedPaths !== undefined) {
     if (!Array.isArray(policy.protectedPaths)) {

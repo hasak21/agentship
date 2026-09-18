@@ -47,6 +47,8 @@ policy:
   blockOn:
     - required_check_failed
     - required_check_timed_out
+    - explicit_requirement_path_unchanged
+    - explicit_requirement_evidence_unsatisfied
   protectedPaths:
     - pattern: src/app/api/**
       requireManualApproval: true

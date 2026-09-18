@@ -2,6 +2,18 @@ export type ReviewMode = "report" | "gate";
 export type ReviewVerdict = "PASS" | "WARN" | "BLOCK";
 export type CheckStatus = "passed" | "failed" | "timed_out" | "skipped";
 
+export type ReviewFindingKind =
+  | "required_check_failed"
+  | "required_check_timed_out"
+  | "optional_check_failed"
+  | "repository_changed_during_review"
+  | "explicit_requirement_path_unchanged"
+  | "explicit_requirement_evidence_unsatisfied"
+  | "inferred_requirement_role_missing"
+  | "unattributed_changes"
+  | "review_budget_exceeded"
+  | "requirement_confirmation_missing";
+
 export interface ReviewCheckConfig {
   name: string;
   run: string;
@@ -42,7 +54,7 @@ export interface AgentShipConfig {
     maxDiffBytes?: number;
   };
   policy?: {
-    blockOn?: string[];
+    blockOn?: ReviewFindingKind[];
     protectedPaths?: ProtectedPathPolicy[];
     suppressions?: FindingSuppressionConfig[];
   };
@@ -73,17 +85,7 @@ export interface CheckEvidence {
 export interface ReviewFinding {
   id: string;
   severity: "blocker" | "warning";
-  kind:
-    | "required_check_failed"
-    | "required_check_timed_out"
-    | "optional_check_failed"
-    | "repository_changed_during_review"
-    | "explicit_requirement_path_unchanged"
-    | "explicit_requirement_evidence_unsatisfied"
-    | "inferred_requirement_role_missing"
-    | "unattributed_changes"
-    | "review_budget_exceeded"
-    | "requirement_confirmation_missing";
+  kind: ReviewFindingKind;
   title: string;
   evidence: {
     check?: string;
@@ -215,6 +217,9 @@ export interface ReviewReport {
   configuration: {
     path: string;
     sha256: string;
+    blockingPolicy: {
+      configuredKinds: ReviewFindingKind[];
+    };
   };
   checks: CheckEvidence[];
   budget?: {

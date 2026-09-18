@@ -135,6 +135,61 @@ checks:
   );
 });
 
+test("configuration accepts supported blocking finding kinds", async () => {
+  await withConfig(
+    `version: 1
+mode: report
+checks:
+  - name: test
+    run: npm test
+policy:
+  blockOn:
+    - optional_check_failed
+    - explicit_requirement_evidence_unsatisfied
+`,
+    async (directory) => {
+      const { config } = await loadConfig(directory);
+      assert.deepEqual(config.policy?.blockOn, [
+        "optional_check_failed",
+        "explicit_requirement_evidence_unsatisfied",
+      ]);
+    }
+  );
+});
+
+test("configuration rejects unknown and duplicate blocking finding kinds", async () => {
+  await withConfig(
+    `version: 1
+mode: report
+checks:
+  - name: test
+    run: npm test
+policy:
+  blockOn:
+    - made_up_finding
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /supported finding kinds/);
+    }
+  );
+
+  await withConfig(
+    `version: 1
+mode: report
+checks:
+  - name: test
+    run: npm test
+policy:
+  blockOn:
+    - optional_check_failed
+    - optional_check_failed
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /duplicate finding kinds/);
+    }
+  );
+});
+
 test("configuration accepts owned, reasoned, expiring warning suppressions", async () => {
   await withConfig(
     `version: 1

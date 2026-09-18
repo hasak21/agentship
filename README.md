@@ -237,6 +237,22 @@ and `YYYY-MM-DD` expiry. Suppressions cannot target blocker kinds, never delete 
 and are emitted in JSON, Markdown, and SARIF. In fork CI the policy comes from the trusted
 base revision; a local policy edited in the reviewed patch is not an immutable approval.
 
+Repository policy can promote supported finding kinds to blockers with `policy.blockOn`:
+
+```yaml
+policy:
+  blockOn:
+    - explicit_requirement_path_unchanged
+    - explicit_requirement_evidence_unsatisfied
+```
+
+Unknown and duplicate kinds are rejected. Promotion happens before suppressions, so a
+configured blocker cannot be hidden by a warning suppression. Required-check failures,
+repository mutation, exceeded review budgets, and missing required confirmation remain
+core integrity blockers even when they are omitted from `blockOn`. The JSON and Markdown
+reports record the configured promotion list. In report mode, `BLOCK` is evidence but does
+not make the process exit nonzero; gate mode enforces it.
+
 Run the checked-in omission calibration corpus, or supply another compatible corpus:
 
 ```bash

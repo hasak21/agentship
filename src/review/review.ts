@@ -22,6 +22,7 @@ import type {
   FindingSuppressionConfig,
   ReviewCheckConfig,
   ReviewFinding,
+  ReviewFindingKind,
   ReviewReport,
   ReviewVerdict,
 } from "./types";
@@ -152,7 +153,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
     budgetExcesses
   );
   const findings = applySuppressions(
-    rawFindings,
+    applyBlockingPolicy(rawFindings, config.policy?.blockOn),
     config.policy?.suppressions,
     new Date(started)
   );
@@ -189,6 +190,9 @@ export async function runReview(options: RunReviewOptions): Promise<{
     configuration: {
       path: path.relative(repositoryRoot, configPath),
       sha256: sha256(configSource),
+      blockingPolicy: {
+        configuredKinds: config.policy?.blockOn ?? [],
+      },
     },
     checks,
     budget,
@@ -468,6 +472,18 @@ export function calculateVerdict(findings: ReviewFinding[]): ReviewVerdict {
   return "PASS";
 }
 
+export function applyBlockingPolicy(
+  findings: ReviewFinding[],
+  blockOn: ReviewFindingKind[] = []
+): ReviewFinding[] {
+  const configuredKinds = new Set(blockOn);
+  return findings.map((finding) =>
+    configuredKinds.has(finding.kind)
+      ? { ...finding, severity: "blocker" as const }
+      : finding
+  );
+}
+
 export function applySuppressions(
   findings: ReviewFinding[],
   suppressions: FindingSuppressionConfig[] = [],
@@ -722,6 +738,11 @@ function renderMarkdown(report: ReviewReport): string {
         ),
       ].join("\n")
     : "No baseline report was supplied.";
+  const blockingPolicy = report.configuration.blockingPolicy.configuredKinds.length
+    ? report.configuration.blockingPolicy.configuredKinds
+        .map((kind) => `- \`${kind}\``)
+        .join("\n")
+    : "No additional finding kinds are promoted to blockers.";
 
-  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
+  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
 }

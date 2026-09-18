@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
+  applyBlockingPolicy,
   applySuppressions,
   buildFindings,
   calculateVerdict,
@@ -67,7 +68,11 @@ function reportWithFindings(
       stableDuringChecks: true,
       changedFiles: [],
     },
-    configuration: { path: ".agentship.yml", sha256: "config-hash" },
+    configuration: {
+      path: ".agentship.yml",
+      sha256: "config-hash",
+      blockingPolicy: { configuredKinds: [] },
+    },
     checks: [],
     findings,
     summary: { passed: 0, failed: 0, timedOut: 0, skipped: 0, suppressed: 0 },
@@ -86,6 +91,43 @@ test("optional failed checks produce a warning verdict", () => {
   ]);
   assert.equal(findings[0]?.kind, "optional_check_failed");
   assert.equal(calculateVerdict(findings), "WARN");
+});
+
+test("repository policy promotes configured warning kinds to blockers", () => {
+  const warning = buildFindings([
+    check({ required: false, status: "failed", exitCode: 1 }),
+  ]);
+  const promoted = applyBlockingPolicy(warning, ["optional_check_failed"]);
+
+  assert.equal(promoted[0]?.severity, "blocker");
+  assert.equal(calculateVerdict(promoted), "BLOCK");
+  assert.equal(warning[0]?.severity, "warning");
+});
+
+test("promoted blockers cannot be hidden by warning suppressions", () => {
+  const warning = buildFindings([
+    check({ required: false, status: "failed", exitCode: 1 }),
+  ]);
+  const [promoted] = applyBlockingPolicy(warning, ["optional_check_failed"]);
+  assert.ok(promoted);
+
+  const result = applySuppressions(
+    [promoted],
+    [
+      {
+        id: "optional-check-exception",
+        findingId: promoted.id,
+        kind: "optional_check_failed",
+        owner: "quality-team",
+        reason: "This suppression must not demote policy.",
+        expiresAt: "2026-12-31",
+      },
+    ],
+    new Date("2026-09-18T00:00:00.000Z")
+  );
+
+  assert.equal(result[0]?.suppression, undefined);
+  assert.equal(calculateVerdict(result), "BLOCK");
 });
 
 test("all passing checks produce a pass verdict", () => {
