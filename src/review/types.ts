@@ -37,6 +37,11 @@ export type SuppressibleFindingKind =
   | "inferred_requirement_role_missing"
   | "unattributed_changes";
 
+export type OverrideableFindingKind =
+  | "required_check_failed"
+  | "required_check_timed_out"
+  | SuppressibleFindingKind;
+
 export interface FindingSuppressionConfig {
   id: string;
   findingId: string;
@@ -119,6 +124,13 @@ export interface ReviewFinding {
     owner: string;
     reason: string;
     expiresAt: string;
+  };
+  override?: {
+    id: string;
+    actor: string;
+    reason: string;
+    expiresAt: string;
+    reportSha256: string;
   };
 }
 
@@ -238,6 +250,23 @@ export interface ReviewReport {
     };
   };
   baseline?: BaselineComparison;
+  override?: {
+    path: string;
+    sha256: string;
+    id: string;
+    actor: string;
+    reason: string;
+    expiresAt: string;
+    sourceReport: {
+      path: string;
+      sha256: string;
+      runId: string;
+    };
+    findings: Array<{
+      id: string;
+      kind: OverrideableFindingKind;
+    }>;
+  };
   findings: ReviewFinding[];
   summary: {
     passed: number;
@@ -245,5 +274,6 @@ export interface ReviewReport {
     timedOut: number;
     skipped: number;
     suppressed: number;
+    overridden: number;
   };
 }

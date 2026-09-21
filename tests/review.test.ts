@@ -77,7 +77,14 @@ function reportWithFindings(
     },
     checks: [],
     findings,
-    summary: { passed: 0, failed: 0, timedOut: 0, skipped: 0, suppressed: 0 },
+    summary: {
+      passed: 0,
+      failed: 0,
+      timedOut: 0,
+      skipped: 0,
+      suppressed: 0,
+      overridden: 0,
+    },
   };
 }
 

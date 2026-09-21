@@ -266,6 +266,37 @@ core integrity blockers even when they are omitted from `blockOn`. The JSON and 
 reports record the configured promotion list. In report mode, `BLOCK` is evidence but does
 not make the process exit nonzero; gate mode enforces it.
 
+Exceptional human decisions use a separate, hash-bound override record. First produce the
+unmodified report, then create a bounded JSON record that references its exact SHA-256:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "release-exception-42",
+  "actor": "release-manager@example.com",
+  "reason": "Known upstream outage; rollback owner is on call.",
+  "expiresAt": "2026-10-01",
+  "report": {
+    "path": ".agentship/reviews/pre-override.json",
+    "sha256": "<64 lowercase hex characters>"
+  },
+  "findings": [
+    { "id": "check-1", "kind": "required_check_failed" }
+  ]
+}
+```
+
+```bash
+sha256sum .agentship/reviews/pre-override.json
+npm run review -- --task task.md --override .agentship/overrides/release-42.json
+```
+
+The referenced report must match the current head, diff, configuration, and task hashes,
+and each target must exist in both reviews. Actor, reason, expiry, record hash, source
+report hash, and targets are retained in JSON, Markdown, and SARIF. Actor identity is not
+authenticated yet. See `docs/OVERRIDES.md` for the threat boundary and non-overrideable
+integrity findings.
+
 Run the checked-in omission calibration corpus, or supply another compatible corpus:
 
 ```bash

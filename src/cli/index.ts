@@ -12,6 +12,7 @@ interface CliOptions {
   baselinePath?: string;
   confirmedRequirementIds: string[];
   approvedProtectedPathPatterns: string[];
+  overridePath?: string;
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -27,13 +28,14 @@ function parseArgs(args: string[]): CliOptions {
       options.staged = true;
       continue;
     }
-    if (["--task", "--config", "--base", "--baseline", "--output", "--confirm", "--approve-path"].includes(arg)) {
+    if (["--task", "--config", "--base", "--baseline", "--override", "--output", "--confirm", "--approve-path"].includes(arg)) {
       const value = args[++index];
       if (!value) throw new Error(`${arg} requires a value.`);
       if (arg === "--task") options.taskPath = value;
       if (arg === "--config") options.configPath = value;
       if (arg === "--base") options.base = value;
       if (arg === "--baseline") options.baselinePath = value;
+      if (arg === "--override") options.overridePath = value;
       if (arg === "--output") options.outputPath = value;
       if (arg === "--confirm") {
         options.confirmedRequirementIds.push(
@@ -68,6 +70,7 @@ Options:
   --staged         Review staged changes instead of the working tree
   --config <path>  Configuration path (default: .agentship.yml)
   --baseline <path> Prior AgentShip JSON report for finding comparison
+  --override <path> Bounded override record referencing a prior report hash
   --output <path>  JSON report path
   --confirm <ids>  Confirm comma-separated requirements marked [confirm]
   --approve-path <pattern> Confirm one configured protected-path policy (repeatable)
@@ -112,12 +115,13 @@ async function main() {
     baselinePath: options.baselinePath,
     confirmedRequirementIds: options.confirmedRequirementIds,
     approvedProtectedPathPatterns: options.approvedProtectedPathPatterns,
+    overridePath: options.overridePath,
   });
 
   const { report } = result;
   console.log(`\nAgentShip review: ${report.verdict}`);
   console.log(`Checks: ${report.summary.passed} passed, ${report.summary.failed} failed, ${report.summary.timedOut} timed out, ${report.summary.skipped} skipped`);
-  console.log(`Findings: ${report.findings.length - report.summary.suppressed} active, ${report.summary.suppressed} suppressed`);
+  console.log(`Findings: ${report.findings.length - report.summary.suppressed - report.summary.overridden} active, ${report.summary.suppressed} suppressed, ${report.summary.overridden} overridden`);
   if (report.baseline) {
     console.log(`Baseline: ${report.baseline.newFindings.length} new, ${report.baseline.existingFindings.length} existing, ${report.baseline.resolvedFindings.length} resolved`);
   }

@@ -5,6 +5,7 @@ import { compareWithBaseline, loadBaseline } from "./baseline";
 import { loadConfig } from "./config";
 import { collectGitEvidence, getHead, resolveRepositoryRoot } from "./git";
 import { runCheck } from "./runner";
+import { applyOverride, loadOverride } from "./override";
 import {
   applyRequirementConfirmations,
   parseTaskOptions,
@@ -44,6 +45,7 @@ export interface RunReviewOptions {
   confirmedRequirementIds?: string[];
   baselinePath?: string;
   approvedProtectedPathPatterns?: string[];
+  overridePath?: string;
 }
 
 export interface ProtectedPathEvidence {
@@ -70,6 +72,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
   });
   const head = await getHead(repositoryRoot);
   const diffSha256 = sha256(gitEvidence.diff);
+  const configurationSha256 = sha256(configSource);
   const budgetExcesses = evaluateReviewBudgets(
     config,
     gitEvidence.changedFiles,
@@ -166,11 +169,27 @@ export async function runReview(options: RunReviewOptions): Promise<{
     budgetExcesses,
     protectedPaths
   );
-  const findings = applySuppressions(
+  const policyFindings = applySuppressions(
     applyBlockingPolicy(rawFindings, config.policy?.blockOn),
     config.policy?.suppressions,
     new Date(started)
   );
+  const override = options.overridePath
+    ? await loadOverride(
+        repositoryRoot,
+        options.overridePath,
+        {
+          head,
+          diffSha256,
+          configurationSha256,
+          taskSha256: task?.sha256,
+        },
+        new Date(started)
+      )
+    : undefined;
+  const findings = override
+    ? applyOverride(policyFindings, override)
+    : policyFindings;
   const baseline = options.baselinePath
     ? compareWithBaseline(
         findings,
@@ -203,7 +222,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
     task,
     configuration: {
       path: path.relative(repositoryRoot, configPath),
-      sha256: sha256(configSource),
+      sha256: configurationSha256,
       blockingPolicy: {
         configuredKinds: config.policy?.blockOn ?? [],
       },
@@ -212,6 +231,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
     checks,
     budget,
     baseline,
+    override,
     findings,
     summary: {
       passed: checks.filter((check) => check.status === "passed").length,
@@ -219,6 +239,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
       timedOut: checks.filter((check) => check.status === "timed_out").length,
       skipped: checks.filter((check) => check.status === "skipped").length,
       suppressed: findings.filter((finding) => finding.suppression).length,
+      overridden: findings.filter((finding) => finding.override).length,
     },
   };
 
@@ -528,7 +549,9 @@ export function findProtectedRequirementIds(
 }
 
 export function calculateVerdict(findings: ReviewFinding[]): ReviewVerdict {
-  const activeFindings = findings.filter((finding) => !finding.suppression);
+  const activeFindings = findings.filter(
+    (finding) => !finding.suppression && !finding.override
+  );
   if (activeFindings.some((finding) => finding.severity === "blocker")) return "BLOCK";
   if (activeFindings.length > 0) return "WARN";
   return "PASS";
@@ -626,13 +649,15 @@ export function renderSarif(report: ReviewReport) {
                   ],
                 }
               : {}),
-            ...(finding.suppression
+            ...(finding.suppression || finding.override
               ? {
                   suppressions: [
                     {
                       kind: "external",
                       status: "accepted",
-                      justification: `${finding.suppression.id}: ${finding.suppression.reason}`,
+                      justification: finding.override
+                        ? `${finding.override.id}: ${finding.override.reason}`
+                        : `${finding.suppression?.id}: ${finding.suppression?.reason}`,
                     },
                   ],
                 }
@@ -643,6 +668,7 @@ export function renderSarif(report: ReviewReport) {
               ...(finding.suppression
                 ? { suppression: finding.suppression }
                 : {}),
+              ...(finding.override ? { override: finding.override } : {}),
             },
           };
         }),
@@ -710,9 +736,11 @@ function renderMarkdown(report: ReviewReport): string {
     ? report.findings
         .map(
           (finding) =>
-            `- **${finding.suppression ? "SUPPRESSED " : ""}${finding.severity.toUpperCase()}**: ${finding.title}${
+            `- **${finding.override ? "OVERRIDDEN " : finding.suppression ? "SUPPRESSED " : ""}${finding.severity.toUpperCase()}**: ${finding.title}${
               finding.suppression
                 ? ` — \`${finding.suppression.id}\`, owner ${finding.suppression.owner}, expires ${finding.suppression.expiresAt}: ${finding.suppression.reason}`
+                : finding.override
+                  ? ` — \`${finding.override.id}\`, actor ${finding.override.actor}, expires ${finding.override.expiresAt}, source report SHA-256 \`${finding.override.reportSha256}\`: ${finding.override.reason}`
                 : ""
             }`
         )
@@ -813,6 +841,18 @@ function renderMarkdown(report: ReviewReport): string {
         )
         .join("\n")
     : "No configured protected paths matched this change.";
+  const override = report.override
+    ? [
+        `- Record: \`${report.override.path}\``,
+        `- Override ID: \`${report.override.id}\``,
+        `- Actor: ${report.override.actor}`,
+        `- Reason: ${report.override.reason}`,
+        `- Expires: ${report.override.expiresAt}`,
+        `- Source report: \`${report.override.sourceReport.path}\``,
+        `- Source report SHA-256: \`${report.override.sourceReport.sha256}\``,
+        `- Overridden findings: ${report.override.findings.length}`,
+      ].join("\n")
+    : "No override record was supplied.";
 
-  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
+  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Override record\n\n${override}\n\nOverride actors are recorded claims until authenticated signing is implemented.\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
 }
