@@ -192,6 +192,19 @@ The confirmation is recorded evidence, not authenticated approval or a signature
 Requirements mapped to `.agentship.yml` protected paths with
 `requireManualApproval: true` also require confirmation automatically.
 
+Protected-path policy also evaluates the complete observed changed-file set, even when a
+task omits path annotations. Approve each matching configured pattern explicitly:
+
+```bash
+npm run review -- --task task.md --approve-path 'src/payments/**'
+```
+
+`--approve-path` is repeatable and must exactly match a configured pattern whose
+`requireManualApproval` value is true. Unknown approvals are rejected. The report records
+the pattern, every matching file, the approval state, and the reviewed diff hash. This is
+a local operator assertion rather than authenticated identity; task-level confirmation is
+still separately required when an explicit requirement maps to the protected path.
+
 Requirements can bind expected files and configured checks to the report with
 `` `change:path` ``, `` `check:name` ``, and `` `symbol:path#identifier` ``
 annotations. Every annotation must be

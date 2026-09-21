@@ -72,6 +72,8 @@ A requirement prefixed with `[confirm]` blocks gate-mode review until its stable
 
 Requirements with observed file or symbol evidence under a configured `protectedPaths` entry whose `requireManualApproval` flag is true also require `--confirm`. The report records `protected_path` as the basis. Version 1 accepts only exact repository-relative paths and trailing `/**` directory patterns. This makes high-impact classification deterministic, but the local assertion is still unauthenticated and the repository-owned policy can be changed in the same patch. Immutable policy loading and signed approvals remain policy-gate work.
 
+Independently of task mapping, every observed changed file is matched against repository `protectedPaths`. A matching entry with `requireManualApproval: true` produces a blocker until the operator supplies the exact configured pattern through repeatable `--approve-path` arguments. Unknown patterns and duplicate policy identities are rejected. JSON and Markdown evidence retain the pattern, matching files, approval state, configuration hash, and reviewed diff hash. This closes the task-annotation bypass but remains a local unauthenticated assertion; explicit mapped requirements retain their separate `--confirm` decision.
+
 Metrics from the explicit-evidence fixture corpus describe only deterministic annotation handling. They must not be presented as semantic missed-requirement recall; that requires a separate real or seeded defect corpus with independently known outcomes.
 
 The initial seeded omission corpus is a deliberately small, synthetic calibration set with independently labeled outcomes. Its eight cases currently produce 0.80 precision, 0.80 recall, and one-third false-positive rate for omission detection. These values expose current blind spots; they are regression baselines, not publishable product-performance claims. In particular, behavior-only semantic omissions remain undetected and stale explicit annotations can create false positives. A representative external corpus is still required.
@@ -96,7 +98,7 @@ In the fork workflow, suppressions come from the separately checked-out base pol
 
 A baseline is an optional prior AgentShip JSON report supplied through `--baseline`. AgentShip reads it as bounded data with a 5 MiB file limit, a 10,000-finding limit, required schema/run/commit metadata, bounded identity fields, and duplicate rejection. It binds results to the baseline SHA-256 and compares exact finding ID/kind pairs. The comparison labels findings new, existing, or resolved but does not suppress findings or affect the current verdict. Baseline selection, provenance, and retention are not yet automated or attested.
 
-Protected-path confirmation currently applies to requirements with observed protected file or symbol mappings. A task that omits those mappings can evade requirement-level confirmation unless strict change coverage catches the unattributed file. Global protected-file enforcement from immutable base policy remains M5 work.
+The fork workflow loads protected-path policy from the trusted base checkout, so pull-request changes cannot weaken the effective policy used for that run. Local working-tree reviews still trust the mutable checkout policy. Authenticated approvals and signed override records remain M5 work.
 
 ## Repository-state integrity
 

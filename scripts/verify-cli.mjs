@@ -18,7 +18,8 @@ try {
   if (
     !stdout.includes("AgentShip Verify") ||
     !stdout.includes("--task <path>") ||
-    !stdout.includes("--baseline <path>")
+    !stdout.includes("--baseline <path>") ||
+    !stdout.includes("--approve-path <pattern>")
   ) {
     throw new Error("Bundled CLI help output is incomplete.");
   }

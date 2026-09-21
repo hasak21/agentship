@@ -75,6 +75,26 @@ policy:
   );
 });
 
+test("configuration rejects duplicate protected path identities", async () => {
+  await withConfig(
+    `version: 1
+mode: report
+checks:
+  - name: test
+    run: npm test
+policy:
+  protectedPaths:
+    - pattern: src/payments/**
+      requireManualApproval: true
+    - pattern: src/payments/**
+      requireManualApproval: false
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /pattern .* is duplicated/);
+    }
+  );
+});
+
 test("configuration accepts path-aware checks and review input budgets", async () => {
   await withConfig(
     `version: 1

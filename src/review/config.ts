@@ -19,6 +19,7 @@ export const REVIEW_FINDING_KINDS = new Set<ReviewFindingKind>([
   "unattributed_changes",
   "review_budget_exceeded",
   "requirement_confirmation_missing",
+  "protected_path_approval_missing",
 ]);
 
 const SUPPRESSIBLE_FINDING_KINDS = new Set<SuppressibleFindingKind>([
@@ -126,12 +127,19 @@ function assertPolicy(value: unknown): void {
     if (!Array.isArray(policy.protectedPaths)) {
       throw new Error("policy.protectedPaths must be an array.");
     }
+    const protectedPatterns = new Set<string>();
     policy.protectedPaths.forEach((value, index) => {
       if (!value || typeof value !== "object") {
         throw new Error(`policy.protectedPaths[${index}] must be an object.`);
       }
       const entry = value as Record<string, unknown>;
       assertPathPattern(entry.pattern, `policy.protectedPaths[${index}].pattern`);
+      if (protectedPatterns.has(entry.pattern)) {
+        throw new Error(
+          `policy.protectedPaths pattern '${entry.pattern}' is duplicated.`
+        );
+      }
+      protectedPatterns.add(entry.pattern);
       if (
         entry.requireManualApproval !== undefined &&
         typeof entry.requireManualApproval !== "boolean"

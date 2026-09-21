@@ -10,6 +10,7 @@ import {
   applySuppressions,
   buildFindings,
   calculateVerdict,
+  evaluateProtectedPaths,
   evaluateReviewBudgets,
   findProtectedRequirementIds,
   renderSarif,
@@ -72,6 +73,7 @@ function reportWithFindings(
       path: ".agentship.yml",
       sha256: "config-hash",
       blockingPolicy: { configuredKinds: [] },
+      protectedPaths: [],
     },
     checks: [],
     findings,
@@ -303,6 +305,61 @@ checks:
       "review_budget_exceeded"
     );
     await assert.rejects(access(path.join(directory, "command-ran")));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("review blocks protected changes without relying on task annotations", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-protected-"));
+  try {
+    await execFileAsync("git", ["init", "-q"], { cwd: directory });
+    await execFileAsync("git", ["config", "user.email", "test@example.com"], {
+      cwd: directory,
+    });
+    await execFileAsync("git", ["config", "user.name", "AgentShip Test"], {
+      cwd: directory,
+    });
+    await writeFile(path.join(directory, "payment.ts"), "export const amount = 1;\n", "utf8");
+    await writeFile(
+      path.join(directory, ".agentship.yml"),
+      `version: 1
+mode: report
+checks:
+  - name: test
+    run: node -e "process.exit(0)"
+policy:
+  protectedPaths:
+    - pattern: payment.ts
+      requireManualApproval: true
+`,
+      "utf8"
+    );
+    await execFileAsync("git", ["add", "."], { cwd: directory });
+    await execFileAsync("git", ["commit", "-qm", "fixture"], { cwd: directory });
+    await writeFile(path.join(directory, "payment.ts"), "export const amount = 2;\n", "utf8");
+
+    const pending = await runReview({
+      cwd: directory,
+      outputPath: ".agentship/reviews/pending.json",
+    });
+    assert.equal(pending.report.verdict, "BLOCK");
+    assert.equal(
+      pending.report.findings[0]?.kind,
+      "protected_path_approval_missing"
+    );
+    assert.equal(
+      pending.report.configuration.protectedPaths[0]?.approval,
+      "required"
+    );
+
+    const approved = await runReview({
+      cwd: directory,
+      outputPath: ".agentship/reviews/approved.json",
+      approvedProtectedPathPatterns: ["payment.ts"],
+    });
+    assert.equal(approved.report.verdict, "PASS");
+    assert.equal(approved.report.configuration.protectedPaths[0]?.approval, "confirmed");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -576,6 +633,65 @@ test("protected path policies select requirements with observed file or symbol e
   );
 });
 
+test("protected path policies evaluate every observed changed file", () => {
+  const pending = evaluateProtectedPaths(
+    ["src/payments/charge.ts", "README.md"],
+    [
+      { pattern: "src/payments/**", requireManualApproval: true },
+      { pattern: "README.md" },
+      { pattern: "src/admin/**", requireManualApproval: true },
+    ]
+  );
+
+  assert.deepEqual(pending, [
+    {
+      pattern: "src/payments/**",
+      matchedFiles: ["src/payments/charge.ts"],
+      approval: "required",
+    },
+    {
+      pattern: "README.md",
+      matchedFiles: ["README.md"],
+      approval: "not_required",
+    },
+  ]);
+  const findings = buildFindings(
+    [check()],
+    undefined,
+    [],
+    [],
+    undefined,
+    [],
+    pending
+  );
+  assert.equal(findings[0]?.kind, "protected_path_approval_missing");
+  assert.equal(findings[0]?.severity, "blocker");
+  assert.deepEqual(findings[0]?.evidence.expectedPaths, [
+    "src/payments/charge.ts",
+  ]);
+});
+
+test("protected path approval must exactly match configured policy", () => {
+  assert.throws(
+    () =>
+      evaluateProtectedPaths(
+        ["src/payments/charge.ts"],
+        [{ pattern: "src/payments/**", requireManualApproval: true }],
+        ["src/**"]
+      ),
+    /does not match a configured approval policy/
+  );
+
+  assert.deepEqual(
+    evaluateProtectedPaths(
+      ["src/payments/charge.ts"],
+      [{ pattern: "src/payments/**", requireManualApproval: true }],
+      ["src/payments/**"]
+    )[0]?.approval,
+    "confirmed"
+  );
+});
+
 test("check environments are allowlisted and secrets are redacted", async () => {
   const previousSecret = process.env.AGENTSHIP_TEST_SECRET;
   const previousIgnored = process.env.AGENTSHIP_TEST_IGNORED;
@@ -594,7 +710,10 @@ test("check environments are allowlisted and secrets are redacted", async () => 
     const evidence = await runCheck(
       {
         name: "redaction",
-        run: `node -e "process.stdout.write(process.env.AGENTSHIP_TEST_SECRET)"`,
+        run:
+          process.platform === "win32"
+            ? `node -e "process.stdout.write(process.env.AGENTSHIP_TEST_SECRET)"`
+            : `printf %s "$AGENTSHIP_TEST_SECRET"`,
         environment: ["AGENTSHIP_TEST_SECRET"],
       },
       process.cwd()

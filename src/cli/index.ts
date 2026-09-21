@@ -11,10 +11,15 @@ interface CliOptions {
   outputPath?: string;
   baselinePath?: string;
   confirmedRequirementIds: string[];
+  approvedProtectedPathPatterns: string[];
 }
 
 function parseArgs(args: string[]): CliOptions {
-  const options: CliOptions = { staged: false, confirmedRequirementIds: [] };
+  const options: CliOptions = {
+    staged: false,
+    confirmedRequirementIds: [],
+    approvedProtectedPathPatterns: [],
+  };
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (index === 0 && arg === "review") continue;
@@ -22,7 +27,7 @@ function parseArgs(args: string[]): CliOptions {
       options.staged = true;
       continue;
     }
-    if (["--task", "--config", "--base", "--baseline", "--output", "--confirm"].includes(arg)) {
+    if (["--task", "--config", "--base", "--baseline", "--output", "--confirm", "--approve-path"].includes(arg)) {
       const value = args[++index];
       if (!value) throw new Error(`${arg} requires a value.`);
       if (arg === "--task") options.taskPath = value;
@@ -34,6 +39,9 @@ function parseArgs(args: string[]): CliOptions {
         options.confirmedRequirementIds.push(
           ...value.split(",").map((id) => id.trim()).filter(Boolean)
         );
+      }
+      if (arg === "--approve-path") {
+        options.approvedProtectedPathPatterns.push(value);
       }
       continue;
     }
@@ -62,6 +70,7 @@ Options:
   --baseline <path> Prior AgentShip JSON report for finding comparison
   --output <path>  JSON report path
   --confirm <ids>  Confirm comma-separated requirements marked [confirm]
+  --approve-path <pattern> Confirm one configured protected-path policy (repeatable)
   -h, --help       Show this help`);
 }
 
@@ -102,6 +111,7 @@ async function main() {
     outputPath: options.outputPath,
     baselinePath: options.baselinePath,
     confirmedRequirementIds: options.confirmedRequirementIds,
+    approvedProtectedPathPatterns: options.approvedProtectedPathPatterns,
   });
 
   const { report } = result;
@@ -110,6 +120,14 @@ async function main() {
   console.log(`Findings: ${report.findings.length - report.summary.suppressed} active, ${report.summary.suppressed} suppressed`);
   if (report.baseline) {
     console.log(`Baseline: ${report.baseline.newFindings.length} new, ${report.baseline.existingFindings.length} existing, ${report.baseline.resolvedFindings.length} resolved`);
+  }
+  const pendingProtectedPaths = report.configuration.protectedPaths.filter(
+    ({ approval }) => approval === "required"
+  );
+  if (pendingProtectedPaths.length > 0) {
+    console.log(
+      `Protected paths awaiting approval: ${pendingProtectedPaths.map(({ pattern }) => pattern).join(", ")}`
+    );
   }
   console.log(`Changed files: ${report.repository.changedFiles.length}`);
   console.log(`Evidence: ${path.relative(process.cwd(), result.jsonPath)}`);

@@ -68,7 +68,7 @@ Exit criterion: a team can install AgentShip without granting merge-blocking aut
 ## M5 — Policy gate
 
 - [x] Make blocking rules explicit and repository-owned.
-- [ ] Add protected-path and manual-approval policies.
+- [x] Add protected-path and manual-approval policies.
 - [ ] Record overrides with actor, reason, report hash, and expiry.
 - [ ] Prevent untrusted changes from weakening the effective policy.
 

@@ -12,7 +12,8 @@ export type ReviewFindingKind =
   | "inferred_requirement_role_missing"
   | "unattributed_changes"
   | "review_budget_exceeded"
-  | "requirement_confirmation_missing";
+  | "requirement_confirmation_missing"
+  | "protected_path_approval_missing";
 
 export interface ReviewCheckConfig {
   name: string;
@@ -111,6 +112,7 @@ export interface ReviewFinding {
     budget?: "changed_files" | "diff_bytes";
     observed?: number;
     limit?: number;
+    protectedPathPattern?: string;
   };
   suppression?: {
     id: string;
@@ -220,6 +222,11 @@ export interface ReviewReport {
     blockingPolicy: {
       configuredKinds: ReviewFindingKind[];
     };
+    protectedPaths: Array<{
+      pattern: string;
+      matchedFiles: string[];
+      approval: "not_required" | "required" | "confirmed";
+    }>;
   };
   checks: CheckEvidence[];
   budget?: {

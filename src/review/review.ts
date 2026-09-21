@@ -20,6 +20,7 @@ import type {
   AgentShipConfig,
   CheckEvidence,
   FindingSuppressionConfig,
+  ProtectedPathPolicy,
   ReviewCheckConfig,
   ReviewFinding,
   ReviewFindingKind,
@@ -42,6 +43,13 @@ export interface RunReviewOptions {
   outputPath?: string;
   confirmedRequirementIds?: string[];
   baselinePath?: string;
+  approvedProtectedPathPatterns?: string[];
+}
+
+export interface ProtectedPathEvidence {
+  pattern: string;
+  matchedFiles: string[];
+  approval: "not_required" | "required" | "confirmed";
 }
 
 export async function runReview(options: RunReviewOptions): Promise<{
@@ -66,6 +74,11 @@ export async function runReview(options: RunReviewOptions): Promise<{
     config,
     gitEvidence.changedFiles,
     gitEvidence.diff
+  );
+  const protectedPaths = evaluateProtectedPaths(
+    gitEvidence.changedFiles,
+    config.policy?.protectedPaths,
+    options.approvedProtectedPathPatterns
   );
 
   const task = options.taskPath
@@ -150,7 +163,8 @@ export async function runReview(options: RunReviewOptions): Promise<{
           unattributedFiles: task.changeCoverage.unattributedFiles,
         }
       : undefined,
-    budgetExcesses
+    budgetExcesses,
+    protectedPaths
   );
   const findings = applySuppressions(
     applyBlockingPolicy(rawFindings, config.policy?.blockOn),
@@ -193,6 +207,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
       blockingPolicy: {
         configuredKinds: config.policy?.blockOn ?? [],
       },
+      protectedPaths,
     },
     checks,
     budget,
@@ -262,7 +277,8 @@ export function buildFindings(
     strict: boolean;
     unattributedFiles: string[];
   },
-  budgetExcesses: BudgetExcess[] = []
+  budgetExcesses: BudgetExcess[] = [],
+  protectedPaths: ProtectedPathEvidence[] = []
 ): ReviewFinding[] {
   const findings = checks.flatMap((check, index): ReviewFinding[] => {
     if (check.status === "passed" || check.status === "skipped") return [];
@@ -370,7 +386,53 @@ export function buildFindings(
     });
   }
 
+  for (const protectedPath of protectedPaths) {
+    if (protectedPath.approval !== "required") continue;
+    findings.push({
+      id: `protected-path-${sha256(protectedPath.pattern).slice(0, 12)}`,
+      severity: "blocker",
+      kind: "protected_path_approval_missing",
+      title: `Protected path '${protectedPath.pattern}' requires manual approval`,
+      evidence: {
+        protectedPathPattern: protectedPath.pattern,
+        expectedPaths: protectedPath.matchedFiles,
+      },
+    });
+  }
+
   return findings;
+}
+
+export function evaluateProtectedPaths(
+  changedFiles: string[],
+  policies: ProtectedPathPolicy[] = [],
+  approvedPatterns: string[] = []
+): ProtectedPathEvidence[] {
+  const configuredPolicies = policies ?? [];
+  const approvalPatterns = new Set(
+    configuredPolicies
+      .filter(({ requireManualApproval }) => requireManualApproval)
+      .map(({ pattern }) => pattern)
+  );
+  for (const pattern of approvedPatterns) {
+    if (!approvalPatterns.has(pattern)) {
+      throw new Error(
+        `Protected-path approval '${pattern}' does not match a configured approval policy.`
+      );
+    }
+  }
+  const approved = new Set(approvedPatterns);
+  return configuredPolicies
+    .map(({ pattern, requireManualApproval }) => {
+      const matchedFiles = changedFiles.filter((file) => pathMatches(pattern, file));
+      const approval = !requireManualApproval
+        ? "not_required" as const
+        : approved.has(pattern)
+          ? "confirmed" as const
+          : "required" as const;
+      return { pattern, matchedFiles, approval };
+    })
+    .filter(({ matchedFiles }) => matchedFiles.length > 0);
 }
 
 export function selectChangedFiles(
@@ -743,6 +805,14 @@ function renderMarkdown(report: ReviewReport): string {
         .map((kind) => `- \`${kind}\``)
         .join("\n")
     : "No additional finding kinds are promoted to blockers.";
+  const protectedPaths = report.configuration.protectedPaths.length
+    ? report.configuration.protectedPaths
+        .map(
+          ({ pattern, matchedFiles, approval }) =>
+            `- \`${pattern}\`: ${approval} — ${matchedFiles.map((file) => `\`${file}\``).join(", ")}`
+        )
+        .join("\n")
+    : "No configured protected paths matched this change.";
 
-  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
+  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
 }
