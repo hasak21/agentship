@@ -13,6 +13,7 @@ interface CliOptions {
   confirmedRequirementIds: string[];
   approvedProtectedPathPatterns: string[];
   overridePath?: string;
+  historyDirectory?: string;
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -28,7 +29,7 @@ function parseArgs(args: string[]): CliOptions {
       options.staged = true;
       continue;
     }
-    if (["--task", "--config", "--base", "--baseline", "--override", "--output", "--confirm", "--approve-path"].includes(arg)) {
+    if (["--task", "--config", "--base", "--baseline", "--override", "--history", "--output", "--confirm", "--approve-path"].includes(arg)) {
       const value = args[++index];
       if (!value) throw new Error(`${arg} requires a value.`);
       if (arg === "--task") options.taskPath = value;
@@ -36,6 +37,7 @@ function parseArgs(args: string[]): CliOptions {
       if (arg === "--base") options.base = value;
       if (arg === "--baseline") options.baselinePath = value;
       if (arg === "--override") options.overridePath = value;
+      if (arg === "--history") options.historyDirectory = value;
       if (arg === "--output") options.outputPath = value;
       if (arg === "--confirm") {
         options.confirmedRequirementIds.push(
@@ -71,6 +73,7 @@ Options:
   --config <path>  Configuration path (default: .agentship.yml)
   --baseline <path> Prior AgentShip JSON report for finding comparison
   --override <path> Bounded override record referencing a prior report hash
+  --history <dir>  Record history and select the latest compatible baseline
   --output <path>  JSON report path
   --confirm <ids>  Confirm comma-separated requirements marked [confirm]
   --approve-path <pattern> Confirm one configured protected-path policy (repeatable)
@@ -116,6 +119,7 @@ async function main() {
     confirmedRequirementIds: options.confirmedRequirementIds,
     approvedProtectedPathPatterns: options.approvedProtectedPathPatterns,
     overridePath: options.overridePath,
+    historyDirectory: options.historyDirectory,
   });
 
   const { report } = result;
@@ -137,6 +141,9 @@ async function main() {
   console.log(`Evidence: ${path.relative(process.cwd(), result.jsonPath)}`);
   console.log(`Report: ${path.relative(process.cwd(), result.markdownPath)}`);
   console.log(`SARIF: ${path.relative(process.cwd(), result.sarifPath)}`);
+  if (result.historyJsonPath) {
+    console.log(`History: ${path.relative(process.cwd(), result.historyJsonPath)}`);
+  }
 
   if (report.mode === "gate" && report.verdict === "BLOCK") {
     process.exitCode = 1;

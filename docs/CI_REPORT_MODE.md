@@ -28,7 +28,7 @@ proves the external trusted policy still emits the required-check and protected-
 blockers. Trusted maintainers may add an override workflow later, but it must load the
 record from a trusted revision rather than the pull-request subject.
 
-The CLI can compare a run with a prior JSON report through `--baseline`. It validates bounded report metadata and finding identities, records the baseline hash/run/commit, and classifies exact ID/kind pairs as new, existing, or resolved. Comparison is informational and cannot change the current verdict. The initial workflow does not yet fetch or select a historical artifact automatically.
+The CLI can compare a run with a prior JSON report through `--baseline`. It validates bounded report metadata and finding identities, records the baseline hash/run/commit, and classifies exact ID/kind pairs as new, existing, or resolved. Comparison is informational and cannot change the current verdict. Local `--history` mode durably records all report formats and automatically selects the newest report with the same configuration/task hashes, scope, and base. The initial workflow does not yet fetch or restore that history from a prior CI artifact.
 
 ## Required repository settings
 

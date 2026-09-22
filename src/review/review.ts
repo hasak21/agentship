@@ -7,6 +7,10 @@ import { collectGitEvidence, getHead, resolveRepositoryRoot } from "./git";
 import { runCheck } from "./runner";
 import { applyOverride, loadOverride } from "./override";
 import {
+  findLatestCompatibleHistory,
+  resolveHistoryDirectory,
+} from "./history";
+import {
   applyRequirementConfirmations,
   parseTaskOptions,
   parseTaskRequirements,
@@ -46,6 +50,7 @@ export interface RunReviewOptions {
   baselinePath?: string;
   approvedProtectedPathPatterns?: string[];
   overridePath?: string;
+  historyDirectory?: string;
 }
 
 export interface ProtectedPathEvidence {
@@ -59,6 +64,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
   jsonPath: string;
   markdownPath: string;
   sarifPath: string;
+  historyJsonPath?: string;
 }> {
   const started = Date.now();
   const repositoryRoot = await resolveRepositoryRoot(options.cwd);
@@ -190,15 +196,37 @@ export async function runReview(options: RunReviewOptions): Promise<{
   const findings = override
     ? applyOverride(policyFindings, override)
     : policyFindings;
-  const baseline = options.baselinePath
+  const automaticBaselinePath =
+    options.historyDirectory && !options.baselinePath
+      ? await findLatestCompatibleHistory(
+          repositoryRoot,
+          options.historyDirectory,
+          {
+            configurationSha256,
+            taskSha256: task?.sha256,
+            reviewScope: gitEvidence.scope,
+            base: options.base,
+          }
+        )
+      : undefined;
+  const effectiveBaselinePath = options.baselinePath ?? automaticBaselinePath;
+  const baseline = effectiveBaselinePath
     ? compareWithBaseline(
         findings,
-        await loadBaseline(repositoryRoot, options.baselinePath)
+        await loadBaseline(repositoryRoot, effectiveBaselinePath)
       )
     : undefined;
   const verdict = calculateVerdict(findings);
   const finished = Date.now();
   const runId = randomUUID();
+  const historyTarget = options.historyDirectory
+    ? buildHistoryTarget(
+        repositoryRoot,
+        options.historyDirectory,
+        new Date(finished),
+        runId
+      )
+    : undefined;
   const report: ReviewReport = {
     schemaVersion: 1,
     runId,
@@ -232,6 +260,17 @@ export async function runReview(options: RunReviewOptions): Promise<{
     budget,
     baseline,
     override,
+    history: historyTarget
+      ? {
+          directory: historyTarget.directory,
+          selection: options.baselinePath
+            ? "explicit"
+            : automaticBaselinePath
+              ? "automatic_compatible"
+              : "none_found",
+          recordedReport: historyTarget.relativeJsonPath,
+        }
+      : undefined,
     findings,
     summary: {
       passed: checks.filter((check) => check.status === "passed").length,
@@ -250,14 +289,53 @@ export async function runReview(options: RunReviewOptions): Promise<{
   const outputBase = jsonPath.replace(/\.json$/i, "");
   const markdownPath = `${outputBase}.md`;
   const sarifPath = `${outputBase}.sarif`;
+  const jsonSource = `${JSON.stringify(report, null, 2)}\n`;
+  const markdownSource = renderMarkdown(report);
+  const sarifSource = `${JSON.stringify(renderSarif(report), null, 2)}\n`;
   await mkdir(path.dirname(jsonPath), { recursive: true });
+  if (historyTarget) {
+    await mkdir(historyTarget.absoluteDirectory, { recursive: true });
+  }
   await Promise.all([
-    writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`, "utf8"),
-    writeFile(markdownPath, renderMarkdown(report), "utf8"),
-    writeFile(sarifPath, `${JSON.stringify(renderSarif(report), null, 2)}\n`, "utf8"),
+    writeFile(jsonPath, jsonSource, "utf8"),
+    writeFile(markdownPath, markdownSource, "utf8"),
+    writeFile(sarifPath, sarifSource, "utf8"),
+    ...(historyTarget
+      ? [
+          writeFile(historyTarget.absoluteJsonPath, jsonSource, "utf8"),
+          writeFile(historyTarget.absoluteMarkdownPath, markdownSource, "utf8"),
+          writeFile(historyTarget.absoluteSarifPath, sarifSource, "utf8"),
+        ]
+      : []),
   ]);
 
-  return { report, jsonPath, markdownPath, sarifPath };
+  return {
+    report,
+    jsonPath,
+    markdownPath,
+    sarifPath,
+    historyJsonPath: historyTarget?.absoluteJsonPath,
+  };
+}
+
+function buildHistoryTarget(
+  repositoryRoot: string,
+  historyDirectory: string,
+  finishedAt: Date,
+  runId: string
+) {
+  const directory = resolveHistoryDirectory(repositoryRoot, historyDirectory);
+  const timestamp = finishedAt.toISOString().replaceAll(":", "-");
+  const baseName = `${timestamp}-${runId}`;
+  const absoluteBase = path.join(directory.absolutePath, baseName);
+  return {
+    directory: directory.relativePath,
+    absoluteDirectory: directory.absolutePath,
+    absoluteJsonPath: `${absoluteBase}.json`,
+    absoluteMarkdownPath: `${absoluteBase}.md`,
+    absoluteSarifPath: `${absoluteBase}.sarif`,
+    relativeJsonPath: path.relative(repositoryRoot, `${absoluteBase}.json`),
+  };
 }
 
 export function buildFindings(
@@ -853,6 +931,13 @@ function renderMarkdown(report: ReviewReport): string {
         `- Overridden findings: ${report.override.findings.length}`,
       ].join("\n")
     : "No override record was supplied.";
+  const history = report.history
+    ? [
+        `- Directory: \`${report.history.directory}\``,
+        `- Baseline selection: ${report.history.selection}`,
+        `- Recorded report: \`${report.history.recordedReport}\``,
+      ].join("\n")
+    : "History recording was not enabled.";
 
-  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Override record\n\n${override}\n\nOverride actors are recorded claims until authenticated signing is implemented.\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
+  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Override record\n\n${override}\n\nOverride actors are recorded claims until authenticated signing is implemented.\n\n## Report history\n\n${history}\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
 }

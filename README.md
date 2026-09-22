@@ -234,7 +234,22 @@ npm run review -- --task task.md --baseline .agentship/baselines/main.json
 The report classifies exact finding ID/kind pairs as new, existing, or resolved and
 binds the comparison to the baseline SHA-256, run ID, and commit. Baselines are bounded,
 parsed as data, and never change the current verdict. Selecting and retaining the right
-baseline remains an operator or CI responsibility.
+explicit baseline—or restoring trusted history in CI—remains an operator responsibility.
+
+For repeated local reviews of the same task and policy, enable durable history:
+
+```bash
+npm run review -- --task task.md --history .agentship/history
+```
+
+Each run records JSON, Markdown, and SARIF under the ignored history directory. Before
+the new report is written, AgentShip automatically selects the newest compatible JSON
+report as its baseline. Compatibility requires the same configuration SHA-256, task
+SHA-256 (including both having no task), review scope, and base reference. Newer reports
+from other tasks or policies are skipped. History is limited to 1,000 directory entries,
+individual reports retain the 5 MiB bound, malformed history fails closed, and the
+selected baseline remains informational—it cannot change the current verdict. An explicit
+`--baseline` takes precedence while the run is still recorded to history.
 
 Checks may declare `whenChanged` with exact repository paths or trailing `/**`
 directory patterns. A check with no matching changed path is recorded as `skipped`;

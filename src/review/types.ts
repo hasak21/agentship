@@ -267,6 +267,11 @@ export interface ReviewReport {
       kind: OverrideableFindingKind;
     }>;
   };
+  history?: {
+    directory: string;
+    selection: "none_found" | "automatic_compatible" | "explicit";
+    recordedReport: string;
+  };
   findings: ReviewFinding[];
   summary: {
     passed: number;
