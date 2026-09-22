@@ -100,7 +100,9 @@ Overrides are supplied as bounded JSON records after an initial unmodified revie
 
 A baseline is an optional prior AgentShip JSON report supplied through `--baseline`. AgentShip reads it as bounded data with a 5 MiB file limit, a 10,000-finding limit, required schema/run/commit metadata, bounded identity fields, and duplicate rejection. It binds results to the baseline SHA-256 and compares exact finding ID/kind pairs. The comparison labels findings new, existing, or resolved but does not suppress findings or affect the current verdict. Baseline selection, provenance, and retention are not yet automated or attested.
 
-The fork workflow loads protected-path policy from the trusted base checkout, so pull-request changes cannot weaken the effective policy used for that run. Local working-tree reviews still trust the mutable checkout policy. Authenticated approvals and signed override records remain M5 work.
+The fork workflow loads protected-path policy from the trusted base checkout, so pull-request changes cannot weaken the effective policy used for that run. Local working-tree reviews still trust the mutable checkout policy. Authenticated approvals and signed override records remain later provenance work.
+
+The trusted-policy boundary is covered by an executable regression: a subject modifies its own `.agentship.yml` from gate mode to permissive report mode, removes protected paths, and substitutes a passing check, while AgentShip loads an external base-owned configuration. The resulting report retains gate mode and emits both the trusted required-check failure and protected-path blocker. The official workflow separately asserts that it never passes subject-controlled `--approve-path` or `--override` inputs. This proves precedence for the checked-in workflow structure; GitHub settings and live fork behavior remain external deployment assumptions.
 
 ## Repository-state integrity
 

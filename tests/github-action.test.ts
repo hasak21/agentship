@@ -35,6 +35,8 @@ test("CI report uses immutable actions and separate trusted and subject checkout
   assert.equal((source.match(/persist-credentials: false/g) ?? []).length, 2);
   assert.match(source, /node \.\.\/verifier\/dist\/agentship\.cjs review/);
   assert.match(source, /--config \.\.\/verifier\/\.agentship\.yml/);
+  assert.doesNotMatch(source, /--approve-path/);
+  assert.doesNotMatch(source, /--override/);
   assert.match(source, /subject\/\.agentship\/reviews\/ci\.\*/);
   assert.match(source, /GITHUB_STEP_SUMMARY/);
   assert.match(source, /subject\/\.agentship\/reviews\/ci\.md/);

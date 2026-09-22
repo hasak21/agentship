@@ -19,6 +19,15 @@ All official actions are pinned to full commit SHAs. Dependency lifecycle script
 
 Warning suppressions are also loaded from the base revision. A pull request cannot add a suppression that takes effect in its own report. Matching is exact on finding ID and kind; active owner, reason, and expiry evidence remains visible in every report format. Blocker kinds cannot be configured as suppressible.
 
+The same boundary applies to blocking rules and protected paths: the workflow passes
+`--config ../verifier/.agentship.yml` and never supplies `--approve-path` or
+`--override`. A pull request can edit its own `.agentship.yml` or add approval-shaped
+files, but neither becomes effective policy for that run. An executable regression
+reviews a subject that replaces gate policy with a permissive report configuration and
+proves the external trusted policy still emits the required-check and protected-path
+blockers. Trusted maintainers may add an override workflow later, but it must load the
+record from a trusted revision rather than the pull-request subject.
+
 The CLI can compare a run with a prior JSON report through `--baseline`. It validates bounded report metadata and finding identities, records the baseline hash/run/commit, and classifies exact ID/kind pairs as new, existing, or resolved. Comparison is informational and cannot change the current verdict. The initial workflow does not yet fetch or select a historical artifact automatically.
 
 ## Required repository settings
