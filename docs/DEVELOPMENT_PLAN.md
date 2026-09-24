@@ -86,7 +86,7 @@ Exit criterion: a malicious pull request cannot escape the runner, obtain secret
 ## M7 — Calibration and public benchmark
 
 - [x] Build a seeded-defect patch corpus with 12 declarative before/after patches, independently executed file oracles, and a standalone runner.
-- [ ] Track accepted, rejected, fixed, and overridden findings.
+- [x] Track accepted, rejected, fixed, and overridden findings with immutable, report-hash-bound outcome events and explicit evidence semantics.
 - [ ] Measure evidence-backed precision, recall, false blocks, and triage time.
 - [ ] Publish a reproducible coding-agent trust leaderboard.
 

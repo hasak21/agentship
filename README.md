@@ -312,6 +312,25 @@ report hash, and targets are retained in JSON, Markdown, and SARIF. Actor identi
 authenticated yet. See `docs/OVERRIDES.md` for the threat boundary and non-overrideable
 integrity findings.
 
+Record the later disposition of an exact finding for calibration:
+
+```bash
+node dist/agentship.cjs outcome \
+  --report .agentship/reviews/review.json \
+  --finding-id check-1 \
+  --finding-kind required_check_failed \
+  --status accepted \
+  --actor maintainer@example.com \
+  --reason "Reproduced locally."
+```
+
+Supported outcomes are `accepted`, `rejected`, `fixed`, and `overridden`. Fixed outcomes
+also require `--resolution-report` and prove that a compatible, newer changed-state report
+no longer contains the exact finding identity. Overridden outcomes require retained override
+evidence. Records are hash-bound, bounded, exclusively created under the ignored
+`.agentship/outcomes` directory, and retain triage duration. Actor identity remains an
+unauthenticated claim. See `docs/OUTCOMES.md` for evidence semantics and storage limits.
+
 Run the checked-in omission calibration corpus, or supply another compatible corpus:
 
 ```bash

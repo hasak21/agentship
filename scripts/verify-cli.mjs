@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -21,6 +21,7 @@ try {
     !stdout.includes("--baseline <path>") ||
     !stdout.includes("--override <path>") ||
     !stdout.includes("--history <dir>") ||
+    !stdout.includes("agentship outcome") ||
     !stdout.includes("--approve-path <pattern>")
   ) {
     throw new Error("Bundled CLI help output is incomplete.");
@@ -38,7 +39,57 @@ try {
   ) {
     throw new Error("Bundled CLI benchmark output is incomplete.");
   }
-  console.log("Bundled CLI review and benchmark commands run outside the repository without node_modules.");
+  const sourceReport = {
+    schemaVersion: 1,
+    runId: "standalone-run",
+    finishedAt: "2026-09-24T00:00:00.000Z",
+    repository: {
+      head: "standalone-head",
+      diffSha256: "a".repeat(64),
+      reviewScope: "working-tree",
+    },
+    configuration: { sha256: "b".repeat(64) },
+    findings: [{
+      id: "standalone-finding",
+      kind: "required_check_failed",
+      severity: "blocker",
+      title: "Required check failed",
+    }],
+  };
+  await writeFile(
+    path.join(temporaryDirectory, "report.json"),
+    `${JSON.stringify(sourceReport)}\n`,
+    "utf8"
+  );
+  const outcome = await execFileAsync(
+    process.execPath,
+    [
+      isolatedCli,
+      "outcome",
+      "--report",
+      "report.json",
+      "--finding-id",
+      "standalone-finding",
+      "--finding-kind",
+      "required_check_failed",
+      "--status",
+      "accepted",
+      "--actor",
+      "cli-verifier",
+      "--reason",
+      "Standalone verification.",
+    ],
+    { cwd: temporaryDirectory, encoding: "utf8" }
+  );
+  const recordPath = outcome.stdout.match(/^Record: (.+)$/m)?.[1];
+  if (!recordPath) throw new Error("Bundled CLI outcome output is incomplete.");
+  const record = JSON.parse(
+    await readFile(path.join(temporaryDirectory, recordPath), "utf8")
+  );
+  if (record.status !== "accepted" || record.finding.id !== "standalone-finding") {
+    throw new Error("Bundled CLI outcome record is incomplete.");
+  }
+  console.log("Bundled CLI review, benchmark, and outcome commands run outside the repository without node_modules.");
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
 }

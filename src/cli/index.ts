@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import path from "node:path";
 import { runIntentBenchmark } from "../review/intent-benchmark";
+import {
+  recordFindingOutcome,
+  type FindingOutcomeStatus,
+} from "../review/outcome";
 import { runReview } from "../review/review";
 
 interface CliOptions {
@@ -64,6 +68,7 @@ function printHelp() {
 Usage:
   agentship review [options]
   agentship benchmark --fixtures <path>
+  agentship outcome --report <path> --finding-id <id> --finding-kind <kind> --status <status> --actor <actor> --reason <reason>
   npm run review -- [options]
 
 Options:
@@ -78,6 +83,62 @@ Options:
   --confirm <ids>  Confirm comma-separated requirements marked [confirm]
   --approve-path <pattern> Confirm one configured protected-path policy (repeatable)
   -h, --help       Show this help`);
+}
+
+interface OutcomeCliOptions {
+  reportPath: string;
+  findingId: string;
+  findingKind: string;
+  status: FindingOutcomeStatus;
+  actor: string;
+  reason: string;
+  outputDirectory?: string;
+  resolutionReportPath?: string;
+}
+
+function parseOutcomeArgs(args: string[]): OutcomeCliOptions {
+  const values = new Map<string, string>();
+  const supported = new Set([
+    "--report",
+    "--finding-id",
+    "--finding-kind",
+    "--status",
+    "--actor",
+    "--reason",
+    "--output-dir",
+    "--resolution-report",
+  ]);
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--help" || arg === "-h") {
+      printHelp();
+      process.exit(0);
+    }
+    if (!supported.has(arg)) throw new Error(`Unknown outcome argument: ${arg}`);
+    const value = args[++index];
+    if (!value) throw new Error(`${arg} requires a value.`);
+    if (values.has(arg)) throw new Error(`${arg} may only be provided once.`);
+    values.set(arg, value);
+  }
+  const required = (flag: string) => {
+    const value = values.get(flag);
+    if (!value) throw new Error(`outcome requires ${flag} <value>.`);
+    return value;
+  };
+  const status = required("--status");
+  if (!["accepted", "rejected", "fixed", "overridden"].includes(status)) {
+    throw new Error("--status must be accepted, rejected, fixed, or overridden.");
+  }
+  return {
+    reportPath: required("--report"),
+    findingId: required("--finding-id"),
+    findingKind: required("--finding-kind"),
+    status: status as FindingOutcomeStatus,
+    actor: required("--actor"),
+    reason: required("--reason"),
+    outputDirectory: values.get("--output-dir"),
+    resolutionReportPath: values.get("--resolution-report"),
+  };
 }
 
 function parseBenchmarkArgs(args: string[]): string {
@@ -105,6 +166,18 @@ async function main() {
     const fixturePath = path.resolve(process.cwd(), parseBenchmarkArgs(args.slice(1)));
     const benchmark = await runIntentBenchmark(fixturePath);
     console.log(JSON.stringify(benchmark, null, 2));
+    return;
+  }
+  if (args[0] === "outcome") {
+    const options = parseOutcomeArgs(args.slice(1));
+    const result = await recordFindingOutcome({
+      repositoryRoot: process.cwd(),
+      ...options,
+    });
+    console.log(`AgentShip outcome: ${result.outcome.status}`);
+    console.log(`Finding: ${result.outcome.finding.id} (${result.outcome.finding.kind})`);
+    console.log(`Evidence: ${result.outcome.evidence}`);
+    console.log(`Record: ${result.outputPath}`);
     return;
   }
   const options = parseArgs(args);
