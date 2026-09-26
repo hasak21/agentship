@@ -22,6 +22,7 @@ try {
     !stdout.includes("--override <path>") ||
     !stdout.includes("--history <dir>") ||
     !stdout.includes("agentship outcome") ||
+    !stdout.includes("agentship metrics") ||
     !stdout.includes("--approve-path <pattern>")
   ) {
     throw new Error("Bundled CLI help output is incomplete.");
@@ -89,7 +90,16 @@ try {
   if (record.status !== "accepted" || record.finding.id !== "standalone-finding") {
     throw new Error("Bundled CLI outcome record is incomplete.");
   }
-  console.log("Bundled CLI review, benchmark, and outcome commands run outside the repository without node_modules.");
+  const measured = await execFileAsync(
+    process.execPath,
+    [isolatedCli, "metrics", "--outcomes", ".agentship/outcomes"],
+    { cwd: temporaryDirectory, encoding: "utf8" }
+  );
+  const metrics = JSON.parse(measured.stdout);
+  if (metrics.outcomes !== 1 || metrics.dispositions.precision !== 1) {
+    throw new Error("Bundled CLI metrics output is incomplete.");
+  }
+  console.log("Bundled CLI review, benchmark, outcome, and metrics commands run outside the repository without node_modules.");
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
 }

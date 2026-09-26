@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { recordFindingOutcome } from "../src/review/outcome";
+import { measureFindingOutcomes, recordFindingOutcome } from "../src/review/outcome";
 
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
@@ -232,4 +232,135 @@ test("outcome inputs and outputs must stay inside the repository", async () => {
       /within the repository/
     );
   });
+});
+
+test("outcome metrics aggregate dispositions, blockers, and triage duration", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentship-metrics-"));
+  try {
+    const directory = path.join(root, ".agentship", "outcomes");
+    await mkdir(directory, { recursive: true });
+    const event = (
+      id: string,
+      status: "accepted" | "rejected" | "fixed" | "overridden",
+      severity: "blocker" | "warning",
+      triageDurationMs: number
+    ) => ({
+      schemaVersion: 1,
+      id,
+      status,
+      actor: "maintainer@example.com",
+      reason: "Calibration fixture.",
+      recordedAt: "2026-09-24T02:00:00.000Z",
+      triageDurationMs,
+      finding: { ...target, id: `finding-${id}`, severity },
+      sourceReport: {
+        path: `.agentship/reviews/${id}.json`,
+        sha256: createHash("sha256").update(id).digest("hex"),
+        runId: `run-${id}`,
+        finishedAt: "2026-09-24T00:00:00.000Z",
+        repository: {
+          head: `head-${id}`,
+          diffSha256: SHA_B,
+          reviewScope: "working-tree",
+        },
+        configurationSha256: SHA_A,
+      },
+      ...(status === "fixed"
+        ? {
+            resolutionReport: {
+              path: `.agentship/reviews/${id}-fixed.json`,
+              sha256: createHash("sha256").update(`${id}-fixed`).digest("hex"),
+              runId: `run-${id}-fixed`,
+              finishedAt: "2026-09-24T01:00:00.000Z",
+              repository: {
+                head: `head-${id}-fixed`,
+                diffSha256: SHA_A,
+                reviewScope: "working-tree",
+              },
+              configurationSha256: SHA_A,
+            },
+          }
+        : {}),
+      evidence:
+        status === "fixed"
+          ? "finding_absent"
+          : status === "overridden"
+            ? "retained_override"
+            : "human_disposition",
+    });
+    const events = [
+      event("accepted", "accepted", "blocker", 10),
+      event("fixed", "fixed", "warning", 20),
+      event("rejected", "rejected", "blocker", 30),
+      event("overridden", "overridden", "blocker", 40),
+    ];
+    await Promise.all(
+      events.map((value, index) =>
+        writeFile(path.join(directory, `${index}.json`), JSON.stringify(value), "utf8")
+      )
+    );
+
+    const metrics = await measureFindingOutcomes(root);
+    assert.equal(metrics.outcomes, 4);
+    assert.deepEqual(metrics.byStatus, {
+      accepted: 1,
+      rejected: 1,
+      fixed: 1,
+      overridden: 1,
+    });
+    assert.equal(metrics.dispositions.precision, 2 / 3);
+    assert.equal(metrics.dispositions.coverage, 3 / 4);
+    assert.equal(metrics.blockers.falseBlockRate, 1 / 3);
+    assert.deepEqual(metrics.triageDurationMs, { median: 20, p90: 40 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("outcome metrics handle empty input and reject duplicate dispositions", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentship-metrics-empty-"));
+  try {
+    const directory = path.join(root, ".agentship", "outcomes");
+    await mkdir(directory, { recursive: true });
+    const empty = await measureFindingOutcomes(root);
+    assert.equal(empty.dispositions.precision, null);
+    assert.equal(empty.blockers.falseBlockRate, null);
+    assert.equal(empty.triageDurationMs.median, null);
+
+    const malformedDirectory = path.join(root, ".agentship", "malformed");
+    await mkdir(malformedDirectory, { recursive: true });
+    await writeFile(
+      path.join(malformedDirectory, "invalid.json"),
+      JSON.stringify({ schemaVersion: 1, status: "accepted" }),
+      "utf8"
+    );
+    await assert.rejects(
+      measureFindingOutcomes(root, ".agentship/malformed"),
+      /finding must be an object/
+    );
+
+    await withFixture(async ({ root: fixtureRoot, sourcePath }) => {
+      const first = await recordFindingOutcome(
+        {
+          repositoryRoot: fixtureRoot,
+          reportPath: sourcePath,
+          findingId: target.id,
+          findingKind: target.kind,
+          status: "accepted",
+          actor: "maintainer@example.com",
+          reason: "First disposition.",
+        },
+        new Date("2026-09-24T02:00:00.000Z"),
+        "first"
+      );
+      await writeFile(
+        path.join(fixtureRoot, ".agentship", "outcomes", "duplicate.json"),
+        JSON.stringify({ ...first.outcome, id: "duplicate" }),
+        "utf8"
+      );
+      await assert.rejects(measureFindingOutcomes(fixtureRoot), /duplicates a source finding/);
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

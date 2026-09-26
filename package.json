@@ -19,6 +19,7 @@
     "review": "node --import tsx src/cli/index.ts",
     "benchmark:intent": "node --import tsx src/cli/index.ts benchmark --fixtures fixtures/intent/executable-patch-corpus.json",
     "benchmark:intent:scenarios": "node --import tsx src/cli/index.ts benchmark --fixtures fixtures/intent/seeded-omission-cases.json",
+    "metrics": "node --import tsx src/cli/index.ts metrics",
     "build:cli": "esbuild src/cli/index.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/agentship.cjs",
     "verify:cli": "npm run build:cli && node scripts/verify-cli.mjs"
   },

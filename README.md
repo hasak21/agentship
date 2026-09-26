@@ -331,6 +331,16 @@ evidence. Records are hash-bound, bounded, exclusively created under the ignored
 `.agentship/outcomes` directory, and retain triage duration. Actor identity remains an
 unauthenticated claim. See `docs/OUTCOMES.md` for evidence semantics and storage limits.
 
+Aggregate the retained outcomes into machine-readable calibration metrics:
+
+```bash
+npm run metrics -- --outcomes .agentship/outcomes
+```
+
+The output includes disposition precision and coverage, rejected blocker share, and
+median/p90 triage duration. It explicitly does not claim missed-finding recall or false
+blocks per 100 reviews because outcome events alone provide neither denominator.
+
 Run the checked-in omission calibration corpus, or supply another compatible corpus:
 
 ```bash

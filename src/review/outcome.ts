@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, realpath } from "node:fs/promises";
+import { mkdir, open, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 
 const MAX_REPORT_BYTES = 5 * 1024 * 1024;
 const MAX_REPORT_FINDINGS = 10_000;
+const MAX_OUTCOME_FILES = 10_000;
+const MAX_OUTCOME_BYTES = 256 * 1024;
 
 export type FindingOutcomeStatus =
   | "accepted"
@@ -28,6 +30,29 @@ export interface FindingOutcome {
   sourceReport: ReportBinding;
   resolutionReport?: ReportBinding;
   evidence: "human_disposition" | "finding_absent" | "retained_override";
+}
+
+export interface OutcomeMetrics {
+  schemaVersion: 1;
+  directory: string;
+  outcomes: number;
+  byStatus: Record<FindingOutcomeStatus, number>;
+  dispositions: {
+    valid: number;
+    rejected: number;
+    precision: number | null;
+    coverage: number;
+  };
+  blockers: {
+    outcomes: number;
+    rejected: number;
+    falseBlockRate: number | null;
+  };
+  triageDurationMs: {
+    median: number | null;
+    p90: number | null;
+  };
+  limitations: string[];
 }
 
 interface ReportBinding {
@@ -176,6 +201,172 @@ export async function recordFindingOutcome(
     outcome,
     outputPath: path.relative(repositoryRoot, absoluteOutputPath),
   };
+}
+
+export async function measureFindingOutcomes(
+  repositoryRootInput: string,
+  directoryInput = ".agentship/outcomes"
+): Promise<OutcomeMetrics> {
+  const repositoryRoot = await realpath(repositoryRootInput);
+  const directory = repositoryRelativePath(directoryInput, "Outcome metrics directory");
+  const absoluteDirectory = path.resolve(repositoryRoot, directory);
+  assertInsideRepository(repositoryRoot, absoluteDirectory, "Outcome metrics directory");
+  const resolvedDirectory = await realpath(absoluteDirectory);
+  assertInsideRepository(repositoryRoot, resolvedDirectory, "Outcome metrics directory");
+  const entries = await readdir(resolvedDirectory, { withFileTypes: true });
+  const jsonFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json"));
+  if (jsonFiles.length > MAX_OUTCOME_FILES) {
+    throw new Error(`Outcome metrics directory exceeds ${MAX_OUTCOME_FILES} JSON files.`);
+  }
+
+  const outcomes: FindingOutcome[] = [];
+  const targets = new Set<string>();
+  for (const entry of jsonFiles.sort((left, right) => left.name.localeCompare(right.name))) {
+    const filePath = path.join(resolvedDirectory, entry.name);
+    const handle = await open(filePath, "r");
+    try {
+      const stats = await handle.stat();
+      if (stats.size > MAX_OUTCOME_BYTES) {
+        throw new Error(`Outcome file '${entry.name}' exceeds ${MAX_OUTCOME_BYTES} bytes.`);
+      }
+      const source = await handle.readFile();
+      if (source.length > MAX_OUTCOME_BYTES) {
+        throw new Error(`Outcome file '${entry.name}' exceeds ${MAX_OUTCOME_BYTES} bytes.`);
+      }
+      const outcome = parseOutcome(
+        parseJsonObject(source.toString("utf8"), `Outcome file '${entry.name}'`),
+        `Outcome file '${entry.name}'`
+      );
+      const target = `${outcome.sourceReport.sha256}\0${outcome.finding.id}\0${outcome.finding.kind}`;
+      if (targets.has(target)) {
+        throw new Error(`Outcome file '${entry.name}' duplicates a source finding disposition.`);
+      }
+      targets.add(target);
+      outcomes.push(outcome);
+    } finally {
+      await handle.close();
+    }
+  }
+
+  const byStatus: Record<FindingOutcomeStatus, number> = {
+    accepted: 0,
+    rejected: 0,
+    fixed: 0,
+    overridden: 0,
+  };
+  for (const outcome of outcomes) byStatus[outcome.status]++;
+  const valid = byStatus.accepted + byStatus.fixed;
+  const dispositionCount = valid + byStatus.rejected;
+  const blockers = outcomes.filter(({ finding }) => finding.severity === "blocker");
+  const rejectedBlockers = blockers.filter(({ status }) => status === "rejected").length;
+  const durations = outcomes.map(({ triageDurationMs }) => triageDurationMs).sort((a, b) => a - b);
+
+  return {
+    schemaVersion: 1,
+    directory,
+    outcomes: outcomes.length,
+    byStatus,
+    dispositions: {
+      valid,
+      rejected: byStatus.rejected,
+      precision: dispositionCount === 0 ? null : valid / dispositionCount,
+      coverage: outcomes.length === 0 ? 0 : dispositionCount / outcomes.length,
+    },
+    blockers: {
+      outcomes: blockers.length,
+      rejected: rejectedBlockers,
+      falseBlockRate: blockers.length === 0 ? null : rejectedBlockers / blockers.length,
+    },
+    triageDurationMs: {
+      median: percentile(durations, 0.5),
+      p90: percentile(durations, 0.9),
+    },
+    limitations: [
+      "Precision uses accepted and fixed outcomes as valid dispositions, rejected outcomes as false positives, and excludes overrides.",
+      "False-block rate is the share of blocker outcomes marked rejected, not blockers per 100 reviews.",
+      "Outcome records cannot measure missed findings or recall because they contain only emitted findings.",
+      "Actor identity and local outcome provenance are not authenticated in schema version 1.",
+    ],
+  };
+}
+
+function parseOutcome(value: Record<string, unknown>, label: string): FindingOutcome {
+  if (value.schemaVersion !== 1) throw new Error(`${label} must declare schemaVersion: 1.`);
+  const status = value.status;
+  if (status !== "accepted" && status !== "rejected" && status !== "fixed" && status !== "overridden") {
+    throw new Error(`${label} status is invalid.`);
+  }
+  const finding = objectField(value.finding, `${label} finding`);
+  const severity = finding.severity;
+  if (severity !== "blocker" && severity !== "warning") {
+    throw new Error(`${label} finding.severity is invalid.`);
+  }
+  const sourceReport = parseOutcomeBinding(value.sourceReport, `${label} sourceReport`);
+  const triageDurationMs = value.triageDurationMs;
+  if (!Number.isSafeInteger(triageDurationMs) || (triageDurationMs as number) < 0) {
+    throw new Error(`${label} triageDurationMs must be a non-negative safe integer.`);
+  }
+  const evidence = value.evidence;
+  if (evidence !== "human_disposition" && evidence !== "finding_absent" && evidence !== "retained_override") {
+    throw new Error(`${label} evidence is invalid.`);
+  }
+  if ((status === "fixed") !== (evidence === "finding_absent")) {
+    throw new Error(`${label} fixed status and evidence are inconsistent.`);
+  }
+  if ((status === "overridden") !== (evidence === "retained_override")) {
+    throw new Error(`${label} overridden status and evidence are inconsistent.`);
+  }
+  if ((status === "fixed") !== (value.resolutionReport !== undefined)) {
+    throw new Error(`${label} fixed status and resolution report are inconsistent.`);
+  }
+  return {
+    schemaVersion: 1,
+    id: stableId(value.id, `${label} id`),
+    status,
+    actor: boundedString(value.actor, `${label} actor`, 128),
+    reason: boundedString(value.reason, `${label} reason`, 1024),
+    recordedAt: isoDate(value.recordedAt, `${label} recordedAt`),
+    triageDurationMs: triageDurationMs as number,
+    finding: {
+      id: boundedString(finding.id, `${label} finding.id`, 128),
+      kind: boundedString(finding.kind, `${label} finding.kind`, 128),
+      severity,
+      title: boundedString(finding.title, `${label} finding.title`, 512),
+    },
+    sourceReport,
+    ...(value.resolutionReport === undefined
+      ? {}
+      : { resolutionReport: parseOutcomeBinding(value.resolutionReport, `${label} resolutionReport`) }),
+    evidence,
+  };
+}
+
+function parseOutcomeBinding(value: unknown, label: string): ReportBinding {
+  const binding = objectField(value, label);
+  const repository = objectField(binding.repository, `${label} repository`);
+  const reviewScope = repository.reviewScope;
+  if (reviewScope !== "working-tree" && reviewScope !== "staged" && reviewScope !== "base") {
+    throw new Error(`${label} repository.reviewScope is invalid.`);
+  }
+  return {
+    path: repositoryRelativePath(binding.path, `${label} path`),
+    sha256: sha256String(binding.sha256, `${label} sha256`),
+    runId: boundedString(binding.runId, `${label} runId`, 128),
+    finishedAt: isoDate(binding.finishedAt, `${label} finishedAt`),
+    repository: {
+      head: boundedString(repository.head, `${label} repository.head`, 256),
+      diffSha256: sha256String(repository.diffSha256, `${label} repository.diffSha256`),
+      reviewScope,
+      ...(repository.base === undefined ? {} : { base: boundedString(repository.base, `${label} repository.base`, 256) }),
+    },
+    configurationSha256: sha256String(binding.configurationSha256, `${label} configurationSha256`),
+    ...(binding.taskSha256 === undefined ? {} : { taskSha256: sha256String(binding.taskSha256, `${label} taskSha256`) }),
+  };
+}
+
+function percentile(sorted: number[], fraction: number): number | null {
+  if (sorted.length === 0) return null;
+  return sorted[Math.ceil(sorted.length * fraction) - 1];
 }
 
 async function loadReport(

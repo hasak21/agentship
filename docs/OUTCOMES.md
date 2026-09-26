@@ -38,3 +38,20 @@ event proves only that a compatible later review did not emit the same identity;
 not prove semantic correctness. Keep outcome directories in a trusted artifact store if
 they are used for organizational metrics, because local records have no provenance
 signature yet.
+
+## Aggregate metrics
+
+Aggregate a repository-relative outcome directory as JSON:
+
+```bash
+npm run metrics -- --outcomes .agentship/outcomes
+```
+
+The result reports accepted/fixed versus rejected disposition precision, disposition
+coverage, the rejected share of blocker outcomes, and median/p90 triage duration. An
+override is excluded from precision because it is an exception, not a validity judgment.
+
+These metrics deliberately do not report recall: outcome records describe emitted
+findings and contain no independently labeled missed findings. The rejected blocker rate
+also is not “false blocks per 100 reviews,” because the directory has no complete review
+denominator. Duplicate dispositions for the same source-report finding fail closed.

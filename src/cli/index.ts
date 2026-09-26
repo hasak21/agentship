@@ -2,6 +2,7 @@
 import path from "node:path";
 import { runIntentBenchmark } from "../review/intent-benchmark";
 import {
+  measureFindingOutcomes,
   recordFindingOutcome,
   type FindingOutcomeStatus,
 } from "../review/outcome";
@@ -69,6 +70,7 @@ Usage:
   agentship review [options]
   agentship benchmark --fixtures <path>
   agentship outcome --report <path> --finding-id <id> --finding-kind <kind> --status <status> --actor <actor> --reason <reason>
+  agentship metrics [--outcomes <directory>]
   npm run review -- [options]
 
 Options:
@@ -162,6 +164,17 @@ function parseBenchmarkArgs(args: string[]): string {
 
 async function main() {
   const args = process.argv.slice(2);
+  if (args[0] === "metrics") {
+    if (args.length > 3 || (args.length > 1 && args[1] !== "--outcomes")) {
+      throw new Error("Usage: agentship metrics [--outcomes <directory>].");
+    }
+    if (args[1] === "--outcomes" && !args[2]) {
+      throw new Error("--outcomes requires a value.");
+    }
+    const metrics = await measureFindingOutcomes(process.cwd(), args[2]);
+    console.log(JSON.stringify(metrics, null, 2));
+    return;
+  }
   if (args[0] === "benchmark") {
     const fixturePath = path.resolve(process.cwd(), parseBenchmarkArgs(args.slice(1)));
     const benchmark = await runIntentBenchmark(fixturePath);
