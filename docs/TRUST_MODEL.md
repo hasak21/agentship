@@ -84,9 +84,22 @@ The `benchmark --fixtures` command validates corpus paths, size bounds, schema, 
 
 ## CI report boundary
 
-The initial GitHub workflow uses the unprivileged `pull_request` event with `contents: read`, no repository secrets, blank CLI token variables, a GitHub-hosted disposable runner, and full-commit-SHA-pinned official actions. It checks out the base revision and pull-request subject separately. The AgentShip executable, task extractor, and `.agentship.yml` policy are built or loaded from the trusted base checkout; pull-request changes cannot replace them for that run. The PR title/body is passed as data through the GitHub event file, never interpolated into a shell program. JSON, Markdown, and SARIF reports are uploaded as artifacts, and the Markdown is copied into the workflow job summary. The workflow does not write a Check Run, comment, label, code-scanning result, or merge status.
+The subject GitHub workflow uses the unprivileged `pull_request` event with `contents: read`, no repository secrets, blank CLI token variables, a GitHub-hosted disposable runner, and full-commit-SHA-pinned official actions. It checks out the base revision and pull-request subject separately. The AgentShip executable, task extractor, and `.agentship.yml` policy are built or loaded from the trusted base checkout; pull-request changes cannot replace them for that run. The PR title/body is passed as data through the GitHub event file, never interpolated into a shell program. JSON, Markdown, and SARIF reports are uploaded as artifacts, and the Markdown is copied into the workflow job summary.
 
-The subject's configured checks still execute hostile repository code with network access inside the hosted runner. This mode is suitable only for secretless, read-only reporting on GitHub-hosted disposable runners. It is not safe for self-hosted runners, privileged triggers, write tokens, secrets, cloud metadata access, or merge gating. GitHub repository settings can also opt into write tokens or secrets for fork workflows; operators must leave those options disabled. Live fork-PR validation remains required before the workflow is marked fully delivered.
+A separate default-branch `workflow_run` publisher holds `checks: write`. It checks out
+only trusted publisher code, downloads the named artifact from the exact triggering run,
+and treats every artifact byte as untrusted data. The parser bounds both event and report,
+requires one event-associated pull request, verifies repository and base bindings, and
+selects the Check Run head exclusively from the trusted workflow event. The result is
+always `neutral`, including for a BLOCK report, so it cannot serve as a policy gate. The
+publisher does not execute artifact contents or write comments, labels, source, releases,
+deployments, code-scanning results, or merge status.
+
+Repository policy treats `.github/workflows/**` as a protected path requiring explicit
+local approval. Operators must not configure the neutral publisher Check Run as a
+required branch-protection check; doing so would confuse report delivery with approval.
+
+The subject's configured checks still execute hostile repository code with network access inside the hosted runner. This mode is suitable only for secretless, read-only reporting on GitHub-hosted disposable runners. It is not safe for self-hosted runners, privileged subject triggers, subject write tokens, secrets, cloud metadata access, or merge gating. GitHub repository settings can also opt into write tokens or secrets for fork workflows; operators must leave those options disabled. The unsigned artifact may be attacker-influenced despite the trusted verifier, which is why the privileged publisher emits only a bounded neutral summary. Live fork-PR validation remains required before the workflow is marked fully delivered.
 
 Base-owned `whenChanged` patterns select checks using only exact repository paths and trailing `/**` directory patterns. A non-applicable check is recorded as `skipped`, never as passing; a task that explicitly requires that check remains unsatisfied. Base-owned changed-file and diff-byte limits produce a blocker and skip repository commands before an oversized review executes. Per-check and workflow wall-clock timeouts are also enforced, but there are no CPU, memory, disk, process-count, or network quotas yet.
 

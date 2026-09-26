@@ -59,7 +59,7 @@ Exit criterion: omitted requirements are detected with measured, publishable acc
 ## M4 — CI report mode
 
 - [~] Build a fork-safe GitHub Action (trusted-base, read-only, artifact-only report workflow delivered; live fork-PR validation pending).
-- [~] Publish Check Run, Markdown, JSON, and SARIF outputs (Markdown/JSON/SARIF artifacts and a job summary are delivered; Check Run publication remains pending).
+- [~] Publish Check Run, Markdown, JSON, and SARIF outputs (artifact/job-summary outputs and a separate bounded, always-neutral `workflow_run` Check Run publisher are delivered; live fork-PR validation remains pending).
 - [~] Add changed-path filtering and execution budgets (deterministic check selection, pre-execution changed-file/diff limits, and wall-clock timeouts delivered; isolated CPU/memory/process quotas remain pending).
 - [~] Add baselines, suppressions with ownership, and report history (bounded hash-bound comparison, exact owned suppressions, and opt-in compatible local history delivered; trusted CI history restoration pending).
 

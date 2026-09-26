@@ -364,9 +364,13 @@ The checked-in `.github/workflows/agentship-report.yml` runs on `pull_request` w
 read-only permissions and no secrets. It builds AgentShip and loads policy from the base
 commit, reviews the subject in a separate checkout, and uploads JSON/Markdown evidence as
 an artifact. It also publishes the Markdown report to the workflow job summary and includes
-SARIF in the artifact. Keep it on GitHub-hosted runners and do not enable write tokens or secrets for
-fork workflows. This initial workflow reports evidence only; it does not comment, publish
-a Check Run, or block merging. See `docs/CI_REPORT_MODE.md` for the trust boundary.
+SARIF in the artifact. A separate trusted `workflow_run` publisher downloads that artifact
+as untrusted data, validates the bounded report and event bindings, and creates an
+always-neutral Check Run on the pull-request head. Keep the subject workflow on
+GitHub-hosted runners and do not enable write tokens or secrets for fork workflows. The
+publisher never executes artifact contents and does not comment, label, or block merging.
+Do not configure the neutral `AgentShip evidence report` Check Run as a required check.
+See `docs/CI_REPORT_MODE.md` for the trust boundary.
 
 ---
 

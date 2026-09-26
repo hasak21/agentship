@@ -50,6 +50,8 @@ policy:
     - explicit_requirement_path_unchanged
     - explicit_requirement_evidence_unsatisfied
   protectedPaths:
+    - pattern: .github/workflows/**
+      requireManualApproval: true
     - pattern: src/app/api/**
       requireManualApproval: true
     - pattern: src/review/**

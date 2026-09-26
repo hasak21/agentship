@@ -1,6 +1,8 @@
 # GitHub CI report mode
 
-AgentShip's initial CI workflow is intentionally artifact-only. It is designed to gather evidence from pull requests, including forks, before a repository grants AgentShip any merge authority.
+AgentShip uses a two-stage report workflow. The first stage is intentionally secretless
+and read-only while it executes pull-request code. A separate trusted publisher turns the
+artifact into an always-neutral Check Run without granting merge authority.
 
 ## Architecture
 
@@ -12,8 +14,11 @@ AgentShip's initial CI workflow is intentionally artifact-only. It is designed t
 6. The trusted executable enforces base-owned changed-file/diff limits, selects checks through base-owned `whenChanged` patterns, runs applicable checks against `subject/`, and records skipped checks explicitly.
 7. JSON, Markdown, and SARIF reports are uploaded as workflow artifacts even when verification blocks.
 8. The fixed Markdown report is appended to the workflow job summary without granting write permission to the repository.
+9. A `workflow_run` job starts only after the named report workflow completes and GitHub associates exactly one pull request with it.
+10. The publisher checks out only the default branch, downloads the named artifact from the exact triggering run, and parses event/report JSON under byte and finding-count bounds. Artifact contents are never executed.
+11. The publisher binds the report base to the event's PR base and creates a Check Run on the event's PR head with `conclusion: neutral`, regardless of PASS, WARN, or BLOCK.
 
-All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review.
+All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review. The publisher has only `actions: read`, `contents: read`, and `checks: write`; the subject workflow retains only `contents: read`.
 
 `limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. Every check also has its own timeout and the job has a workflow timeout. These controls do not impose CPU, memory, disk, process-count, or network quotas.
 
@@ -35,12 +40,14 @@ The CLI can compare a run with a prior JSON report through `--baseline`. It vali
 - Use GitHub-hosted runners only.
 - Do not send Actions secrets to fork pull-request workflows.
 - Do not send write tokens to fork pull-request workflows.
+- Keep Check Run publication in the separate `workflow_run` publisher; never move its write permission into the subject workflow.
+- Do not configure `AgentShip evidence report` as a required check; its neutral conclusion communicates report availability, not policy approval.
 - Do not replace `pull_request` with `pull_request_target`.
 - Require maintainer approval for first-time contributors if desired.
 
 ## Residual risk
 
-Untrusted checks can use the hosted runner's network and inspect files or ephemeral Actions runtime state available to their process. The workflow blanks common GitHub CLI token variables, but this is not OS-level network or credential isolation. Artifacts are unsigned, and SARIF remains an artifact rather than a code-scanning upload. A live fork pull request has not yet validated the workflow end to end. Do not reuse this workflow on a self-hosted runner or add secrets, deployments, package publishing, comments, labels, write permissions, or merge gating.
+Untrusted checks can use the hosted runner's network and inspect files or ephemeral Actions runtime state available to their process. The workflow blanks common GitHub CLI token variables, but this is not OS-level network or credential isolation. Artifacts are unsigned and may be attacker-influenced, so the privileged publisher exposes only bounded summary fields, never executes artifact content, and always reports a neutral conclusion. SARIF remains an artifact rather than a code-scanning upload. A live fork pull request has not yet validated the two-stage workflow end to end. Do not reuse the subject workflow on a self-hosted runner or add secrets, deployments, package publishing, comments, labels, write permissions, or merge gating.
 
 ## Pull-request task format
 

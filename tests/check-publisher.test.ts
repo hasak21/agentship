@@ -1,0 +1,124 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { parse } from "yaml";
+import { buildCheckRunPayload } from "../scripts/build-check-run.mjs";
+
+const HEAD_SHA = "a".repeat(40);
+const BASE_SHA = "b".repeat(40);
+const MERGE_SHA = "c".repeat(40);
+
+function workflowEvent() {
+  return {
+    action: "completed",
+    repository: {
+      name: "agentship",
+      full_name: "example/agentship",
+      owner: { login: "example" },
+    },
+    workflow_run: {
+      id: 1234,
+      name: "AgentShip report",
+      event: "pull_request",
+      status: "completed",
+      html_url: "https://github.com/example/agentship/actions/runs/1234",
+      pull_requests: [{
+        number: 42,
+        head: { sha: HEAD_SHA },
+        base: { sha: BASE_SHA },
+      }],
+    },
+  };
+}
+
+function report() {
+  return {
+    schemaVersion: 1,
+    runId: "report-run",
+    verdict: "BLOCK",
+    repository: { head: MERGE_SHA, base: BASE_SHA },
+    findings: [{ id: "finding-1" }],
+  };
+}
+
+async function withPayloadFixture(
+  run: (fixture: { root: string; eventPath: string; reportPath: string }) => Promise<void>
+) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentship-check-publisher-"));
+  try {
+    const eventPath = path.join(root, "event.json");
+    const reportPath = path.join(root, "report.json");
+    await writeFile(eventPath, JSON.stringify(workflowEvent()), "utf8");
+    await writeFile(reportPath, JSON.stringify(report()), "utf8");
+    await run({ root, eventPath, reportPath });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("Check Run payload is bound to the PR head and always neutral", async () => {
+  await withPayloadFixture(async ({ root, eventPath, reportPath }) => {
+    const payload = await buildCheckRunPayload({
+      eventPath,
+      reportPath,
+      artifactRoot: root,
+      expectedRepository: "example/agentship",
+    });
+    assert.equal(payload.head_sha, HEAD_SHA);
+    assert.equal(payload.conclusion, "neutral");
+    assert.equal(payload.output.title, "AgentShip report: BLOCK");
+    assert.match(payload.output.summary, /not a merge gate/);
+    assert.equal(payload.details_url, "https://github.com/example/agentship/actions/runs/1234");
+  });
+});
+
+test("Check Run payload rejects mismatched context and report bindings", async () => {
+  await withPayloadFixture(async ({ root, eventPath, reportPath }) => {
+    await assert.rejects(
+      buildCheckRunPayload({
+        eventPath,
+        reportPath,
+        artifactRoot: root,
+        expectedRepository: "attacker/repository",
+      }),
+      /does not match GITHUB_REPOSITORY/
+    );
+    await writeFile(
+      reportPath,
+      JSON.stringify({ ...report(), repository: { head: MERGE_SHA, base: HEAD_SHA } }),
+      "utf8"
+    );
+    await assert.rejects(
+      buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
+      /base does not match/
+    );
+  });
+});
+
+test("privileged publisher uses only trusted code and immutable actions", async () => {
+  const workflowPath = new URL(
+    "../.github/workflows/agentship-publish-check.yml",
+    import.meta.url
+  );
+  const source = await readFile(workflowPath, "utf8");
+  const workflow = parse(source) as Record<string, unknown>;
+  assert.ok(workflow.on && typeof workflow.on === "object");
+  assert.ok("workflow_run" in (workflow.on as Record<string, unknown>));
+  assert.deepEqual(workflow.permissions, {
+    actions: "read",
+    checks: "write",
+    contents: "read",
+  });
+  const uses = [...source.matchAll(/^\s*uses:\s*([^\s#]+)/gm)].map((match) => match[1]);
+  assert.equal(uses.length, 3);
+  for (const action of uses) assert.match(action, /^[^@]+@[a-f0-9]{40}$/);
+  assert.match(source, /github\.event\.repository\.default_branch/);
+  assert.match(source, /persist-credentials: false/);
+  assert.match(source, /github\.event\.workflow_run\.pull_requests\[0\]\.number/);
+  assert.match(source, /github\.event\.workflow_run\.id/);
+  assert.match(source, /scripts\/build-check-run\.mjs/);
+  assert.doesNotMatch(source, /pull_request_target/);
+  assert.doesNotMatch(source, /checkout[^\n]*head_sha/);
+});
