@@ -87,7 +87,7 @@ Exit criterion: a malicious pull request cannot escape the runner, obtain secret
 
 - [x] Build a seeded-defect patch corpus with 12 declarative before/after patches, independently executed file oracles, and a standalone runner.
 - [x] Track accepted, rejected, fixed, and overridden findings with immutable, report-hash-bound outcome events and explicit evidence semantics.
-- [~] Measure evidence-backed precision, recall, false blocks, and triage time (bounded outcome aggregation now reports disposition precision/coverage, rejected blocker share, and median/p90 triage time; representative missed-finding labels and a complete review denominator remain pending).
+- [~] Measure evidence-backed precision, recall, false blocks, and triage time (bounded outcome aggregation now reports disposition precision/coverage, median/p90 triage time, and false-blocked reviews per 100 hash-verified reports; representative missed-finding labels remain pending).
 - [ ] Publish a reproducible coding-agent trust leaderboard.
 
 Exit criterion: product and model-comparison claims are supported by reproducible measurements.

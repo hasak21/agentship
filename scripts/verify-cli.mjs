@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -57,8 +57,9 @@ try {
       title: "Required check failed",
     }],
   };
+  await mkdir(path.join(temporaryDirectory, ".agentship", "reviews"), { recursive: true });
   await writeFile(
-    path.join(temporaryDirectory, "report.json"),
+    path.join(temporaryDirectory, ".agentship", "reviews", "report.json"),
     `${JSON.stringify(sourceReport)}\n`,
     "utf8"
   );
@@ -68,7 +69,7 @@ try {
       isolatedCli,
       "outcome",
       "--report",
-      "report.json",
+      ".agentship/reviews/report.json",
       "--finding-id",
       "standalone-finding",
       "--finding-kind",
@@ -92,11 +93,22 @@ try {
   }
   const measured = await execFileAsync(
     process.execPath,
-    [isolatedCli, "metrics", "--outcomes", ".agentship/outcomes"],
+    [
+      isolatedCli,
+      "metrics",
+      "--outcomes",
+      ".agentship/outcomes",
+      "--reports",
+      ".agentship/reviews",
+    ],
     { cwd: temporaryDirectory, encoding: "utf8" }
   );
   const metrics = JSON.parse(measured.stdout);
-  if (metrics.outcomes !== 1 || metrics.dispositions.precision !== 1) {
+  if (
+    metrics.outcomes !== 1 ||
+    metrics.dispositions.precision !== 1 ||
+    metrics.reviewCorpus.falseBlocksPer100Reviews !== 0
+  ) {
     throw new Error("Bundled CLI metrics output is incomplete.");
   }
   console.log("Bundled CLI review, benchmark, outcome, and metrics commands run outside the repository without node_modules.");

@@ -48,6 +48,13 @@ export interface OutcomeMetrics {
     rejected: number;
     falseBlockRate: number | null;
   };
+  reviewCorpus?: {
+    directory: string;
+    reports: number;
+    reportsWithOutcomes: number;
+    falseBlockedReviews: number;
+    falseBlocksPer100Reviews: number;
+  };
   triageDurationMs: {
     median: number | null;
     p90: number | null;
@@ -205,7 +212,8 @@ export async function recordFindingOutcome(
 
 export async function measureFindingOutcomes(
   repositoryRootInput: string,
-  directoryInput = ".agentship/outcomes"
+  directoryInput = ".agentship/outcomes",
+  reportsDirectoryInput?: string
 ): Promise<OutcomeMetrics> {
   const repositoryRoot = await realpath(repositoryRootInput);
   const directory = repositoryRelativePath(directoryInput, "Outcome metrics directory");
@@ -260,6 +268,9 @@ export async function measureFindingOutcomes(
   const blockers = outcomes.filter(({ finding }) => finding.severity === "blocker");
   const rejectedBlockers = blockers.filter(({ status }) => status === "rejected").length;
   const durations = outcomes.map(({ triageDurationMs }) => triageDurationMs).sort((a, b) => a - b);
+  const reviewCorpus = reportsDirectoryInput
+    ? await measureReviewCorpus(repositoryRoot, reportsDirectoryInput, outcomes)
+    : undefined;
 
   return {
     schemaVersion: 1,
@@ -277,16 +288,67 @@ export async function measureFindingOutcomes(
       rejected: rejectedBlockers,
       falseBlockRate: blockers.length === 0 ? null : rejectedBlockers / blockers.length,
     },
+    ...(reviewCorpus ? { reviewCorpus } : {}),
     triageDurationMs: {
       median: percentile(durations, 0.5),
       p90: percentile(durations, 0.9),
     },
     limitations: [
       "Precision uses accepted and fixed outcomes as valid dispositions, rejected outcomes as false positives, and excludes overrides.",
-      "False-block rate is the share of blocker outcomes marked rejected, not blockers per 100 reviews.",
+      ...(reviewCorpus
+        ? ["False blocks per 100 reviews counts distinct corpus reports with at least one rejected blocker outcome."]
+        : ["False-block rate is the share of blocker outcomes marked rejected; provide a review corpus to measure false blocks per 100 reviews."]),
       "Outcome records cannot measure missed findings or recall because they contain only emitted findings.",
       "Actor identity and local outcome provenance are not authenticated in schema version 1.",
     ],
+  };
+}
+
+async function measureReviewCorpus(
+  repositoryRoot: string,
+  directoryInput: string,
+  outcomes: FindingOutcome[]
+): Promise<NonNullable<OutcomeMetrics["reviewCorpus"]>> {
+  const directory = repositoryRelativePath(directoryInput, "Review metrics directory");
+  const absoluteDirectory = path.resolve(repositoryRoot, directory);
+  assertInsideRepository(repositoryRoot, absoluteDirectory, "Review metrics directory");
+  const resolvedDirectory = await realpath(absoluteDirectory);
+  assertInsideRepository(repositoryRoot, resolvedDirectory, "Review metrics directory");
+  const entries = await readdir(resolvedDirectory, { withFileTypes: true });
+  const jsonFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json"));
+  if (jsonFiles.length > MAX_OUTCOME_FILES) {
+    throw new Error(`Review metrics directory exceeds ${MAX_OUTCOME_FILES} JSON files.`);
+  }
+
+  const reportHashes = new Set<string>();
+  for (const entry of jsonFiles.sort((left, right) => left.name.localeCompare(right.name))) {
+    const relativePath = path.posix.join(directory, entry.name);
+    const report = await loadReport(repositoryRoot, relativePath, `Review corpus file '${entry.name}'`);
+    if (reportHashes.has(report.binding.sha256)) {
+      throw new Error(`Review corpus file '${entry.name}' duplicates report bytes.`);
+    }
+    reportHashes.add(report.binding.sha256);
+  }
+
+  const outcomeReportHashes = new Set(outcomes.map(({ sourceReport }) => sourceReport.sha256));
+  const missing = [...outcomeReportHashes].filter((hash) => !reportHashes.has(hash));
+  if (missing.length > 0) {
+    throw new Error(
+      `Review corpus is missing ${missing.length} source report${missing.length === 1 ? "" : "s"} referenced by outcomes.`
+    );
+  }
+  const falseBlockedReports = new Set(
+    outcomes
+      .filter(({ status, finding }) => status === "rejected" && finding.severity === "blocker")
+      .map(({ sourceReport }) => sourceReport.sha256)
+  );
+  return {
+    directory,
+    reports: reportHashes.size,
+    reportsWithOutcomes: outcomeReportHashes.size,
+    falseBlockedReviews: falseBlockedReports.size,
+    falseBlocksPer100Reviews:
+      reportHashes.size === 0 ? 0 : (falseBlockedReports.size / reportHashes.size) * 100,
   };
 }
 

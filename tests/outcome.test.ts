@@ -364,3 +364,52 @@ test("outcome metrics handle empty input and reject duplicate dispositions", asy
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("outcome metrics use hash-verified reports for false blocks per 100 reviews", async () => {
+  await withFixture(async ({ root, sourcePath }) => {
+    await recordFindingOutcome(
+      {
+        repositoryRoot: root,
+        reportPath: sourcePath,
+        findingId: target.id,
+        findingKind: target.kind,
+        status: "rejected",
+        actor: "maintainer@example.com",
+        reason: "The blocker did not reproduce.",
+      },
+      new Date("2026-09-24T02:00:00.000Z"),
+      "false-block"
+    );
+    const metrics = await measureFindingOutcomes(
+      root,
+      ".agentship/outcomes",
+      ".agentship/reviews"
+    );
+    assert.deepEqual(metrics.reviewCorpus, {
+      directory: ".agentship/reviews",
+      reports: 2,
+      reportsWithOutcomes: 1,
+      falseBlockedReviews: 1,
+      falseBlocksPer100Reviews: 50,
+    });
+
+    const incompleteDirectory = path.join(root, ".agentship", "incomplete-reviews");
+    await mkdir(incompleteDirectory, { recursive: true });
+    await writeFile(
+      path.join(incompleteDirectory, "unrelated.json"),
+      JSON.stringify(
+        report({
+          runId: "unrelated",
+          finishedAt: "2026-09-24T04:00:00.000Z",
+          head: "unrelated-head",
+          findings: [],
+        })
+      ),
+      "utf8"
+    );
+    await assert.rejects(
+      measureFindingOutcomes(root, ".agentship/outcomes", ".agentship/incomplete-reviews"),
+      /missing 1 source report/
+    );
+  });
+});

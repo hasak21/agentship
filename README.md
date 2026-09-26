@@ -334,12 +334,16 @@ unauthenticated claim. See `docs/OUTCOMES.md` for evidence semantics and storage
 Aggregate the retained outcomes into machine-readable calibration metrics:
 
 ```bash
-npm run metrics -- --outcomes .agentship/outcomes
+npm run metrics -- \
+  --outcomes .agentship/outcomes \
+  --reports .agentship/history
 ```
 
 The output includes disposition precision and coverage, rejected blocker share, and
-median/p90 triage duration. It explicitly does not claim missed-finding recall or false
-blocks per 100 reviews because outcome events alone provide neither denominator.
+median/p90 triage duration. With a bounded, hash-verified review corpus it also reports
+distinct false-blocked reviews per 100 reports. It still does not claim missed-finding
+recall because outcome events contain no independent labels for findings that were never
+emitted. The per-100 result is representative only if the supplied corpus is complete.
 
 Run the checked-in omission calibration corpus, or supply another compatible corpus:
 

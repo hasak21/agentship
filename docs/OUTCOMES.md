@@ -44,14 +44,19 @@ signature yet.
 Aggregate a repository-relative outcome directory as JSON:
 
 ```bash
-npm run metrics -- --outcomes .agentship/outcomes
+npm run metrics -- \
+  --outcomes .agentship/outcomes \
+  --reports .agentship/history
 ```
 
 The result reports accepted/fixed versus rejected disposition precision, disposition
-coverage, the rejected share of blocker outcomes, and median/p90 triage duration. An
-override is excluded from precision because it is an exception, not a validity judgment.
+coverage, the rejected share of blocker outcomes, median/p90 triage duration, and
+false-blocked reviews per 100 review reports. An override is excluded from precision
+because it is an exception, not a validity judgment. Review files are parsed with the
+same bounds as source reports, deduplicated by SHA-256, and must include every report
+referenced by an outcome before the per-100 metric is emitted.
 
 These metrics deliberately do not report recall: outcome records describe emitted
-findings and contain no independently labeled missed findings. The rejected blocker rate
-also is not “false blocks per 100 reviews,” because the directory has no complete review
-denominator. Duplicate dispositions for the same source-report finding fail closed.
+findings and contain no independently labeled missed findings. The per-100 result is only
+representative when `--reports` points to a complete review population for the period
+being measured. Duplicate dispositions for the same source-report finding fail closed.

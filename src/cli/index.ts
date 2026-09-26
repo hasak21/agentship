@@ -70,7 +70,7 @@ Usage:
   agentship review [options]
   agentship benchmark --fixtures <path>
   agentship outcome --report <path> --finding-id <id> --finding-kind <kind> --status <status> --actor <actor> --reason <reason>
-  agentship metrics [--outcomes <directory>]
+  agentship metrics [--outcomes <directory>] [--reports <directory>]
   npm run review -- [options]
 
 Options:
@@ -165,13 +165,22 @@ function parseBenchmarkArgs(args: string[]): string {
 async function main() {
   const args = process.argv.slice(2);
   if (args[0] === "metrics") {
-    if (args.length > 3 || (args.length > 1 && args[1] !== "--outcomes")) {
-      throw new Error("Usage: agentship metrics [--outcomes <directory>].");
+    const values = new Map<string, string>();
+    for (let index = 1; index < args.length; index++) {
+      const flag = args[index];
+      if (flag !== "--outcomes" && flag !== "--reports") {
+        throw new Error(`Unknown metrics argument: ${flag}`);
+      }
+      const value = args[++index];
+      if (!value) throw new Error(`${flag} requires a value.`);
+      if (values.has(flag)) throw new Error(`${flag} may only be provided once.`);
+      values.set(flag, value);
     }
-    if (args[1] === "--outcomes" && !args[2]) {
-      throw new Error("--outcomes requires a value.");
-    }
-    const metrics = await measureFindingOutcomes(process.cwd(), args[2]);
+    const metrics = await measureFindingOutcomes(
+      process.cwd(),
+      values.get("--outcomes"),
+      values.get("--reports")
+    );
     console.log(JSON.stringify(metrics, null, 2));
     return;
   }
