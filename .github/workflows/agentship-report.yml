@@ -54,6 +54,9 @@ jobs:
         working-directory: subject
         run: npm ci --ignore-scripts
 
+      - name: Require Linux resource limiter
+        run: test -x /usr/bin/prlimit
+
       - name: Bind pull request task
         env:
           AGENTSHIP_TASK_PATH: ${{ runner.temp }}/agentship-pr-task.md
@@ -69,7 +72,7 @@ jobs:
         run: >-
           node ../verifier/dist/agentship.cjs review
           --base "$AGENTSHIP_BASE_SHA"
-          --config ../verifier/.agentship.yml
+          --config ../verifier/.agentship.ci.yml
           --task "$AGENTSHIP_TASK_PATH"
           --history .agentship/history
           --output .agentship/reviews/ci.json

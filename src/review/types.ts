@@ -23,6 +23,14 @@ export interface ReviewCheckConfig {
   network?: "allowed" | "denied";
   environment?: string[];
   whenChanged?: string[];
+  resources?: CheckResourceLimits;
+}
+
+export interface CheckResourceLimits {
+  cpuSeconds?: number;
+  memoryMiB?: number;
+  maxFileSizeMiB?: number;
+  maxOpenFiles?: number;
 }
 
 export interface ProtectedPathPolicy {
@@ -81,6 +89,10 @@ export interface CheckEvidence {
   stdout: string;
   stderr: string;
   outputTruncated: boolean;
+  execution?: {
+    backend: "direct" | "linux-prlimit" | "unsupported" | "not_executed";
+    resourceLimits?: CheckResourceLimits;
+  };
   selection?: {
     patterns: string[];
     matchedFiles: string[];

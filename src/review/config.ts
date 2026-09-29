@@ -63,6 +63,46 @@ function assertCheck(value: unknown, index: number): asserts value is ReviewChec
       assertPathPattern(pattern, `checks[${index}].whenChanged[${patternIndex}]`)
     );
   }
+  assertCheckResources(check.resources, index);
+}
+
+function assertCheckResources(value: unknown, checkIndex: number): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`checks[${checkIndex}].resources must be an object.`);
+  }
+  const resources = value as Record<string, unknown>;
+  const bounds = {
+    cpuSeconds: 86_400,
+    memoryMiB: 1_048_576,
+    maxFileSizeMiB: 1_048_576,
+    maxOpenFiles: 1_048_576,
+  } as const;
+  const supported = new Set(Object.keys(bounds));
+  for (const name of Object.keys(resources)) {
+    if (!supported.has(name)) {
+      throw new Error(`checks[${checkIndex}].resources.${name} is unsupported.`);
+    }
+  }
+  let configured = 0;
+  for (const [name, maximum] of Object.entries(bounds)) {
+    const limit = resources[name];
+    if (limit === undefined) continue;
+    configured++;
+    if (
+      typeof limit !== "number" ||
+      !Number.isSafeInteger(limit) ||
+      limit <= 0 ||
+      limit > maximum
+    ) {
+      throw new Error(
+        `checks[${checkIndex}].resources.${name} must be a positive integer no greater than ${maximum}.`
+      );
+    }
+  }
+  if (configured === 0) {
+    throw new Error(`checks[${checkIndex}].resources must configure at least one limit.`);
+  }
 }
 
 function assertLimits(value: unknown): void {

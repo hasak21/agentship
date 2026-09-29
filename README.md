@@ -262,8 +262,30 @@ directory patterns. A check with no matching changed path is recorded as `skippe
 an explicit `` `check:name` `` requirement still treats that status as unsatisfied.
 Repository-owned `limits.maxChangedFiles` and `limits.maxDiffBytes` stop command
 execution and emit blockers before an oversized review runs. Per-check timeouts and the
-workflow timeout provide wall-clock bounds; CPU, memory, process, and network isolation
-remain future maintainer-mode controls.
+workflow timeout provide wall-clock bounds. On Linux, a check may also request kernel
+resource limits:
+
+```yaml
+checks:
+  - name: test
+    run: npm test
+    timeoutSeconds: 120
+    resources:
+      cpuSeconds: 120
+      memoryMiB: 2048
+      maxFileSizeMiB: 64
+      maxOpenFiles: 1024
+```
+
+AgentShip executes such checks through `/usr/bin/prlimit` and records the backend and
+configured values in the report. The configuration fails closed without that Linux
+backend. These limits apply to each process and are inherited by children; they are not
+aggregate process-tree, disk-capacity, process-count, network, or filesystem isolation.
+`memoryMiB` is an address-space limit, not an RSS or container-memory limit, and modern
+JavaScript/Wasm runtimes may reserve far more virtual memory than they physically use.
+The portable local `.agentship.yml` therefore remains unrestricted. The official Ubuntu
+workflow uses the base-owned `.agentship.ci.yml` for CPU, file-size, and open-file bounds,
+but does not claim a reliable memory bound for its Node-based checks.
 
 Known warning findings can be suppressed by an exact finding ID and kind under
 `policy.suppressions`. Every suppression requires a stable suppression ID, owner, reason,

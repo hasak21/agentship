@@ -594,6 +594,10 @@ function skippedCheckEvidence(
     stdout: "",
     stderr: "",
     outputTruncated: false,
+    execution: {
+      backend: "not_executed",
+      ...(check.resources ? { resourceLimits: check.resources } : {}),
+    },
     ...(check.whenChanged
       ? { selection: { patterns: check.whenChanged, matchedFiles: [] } }
       : {}),
@@ -798,8 +802,13 @@ function renderMarkdown(report: ReviewReport): string {
   const icon = report.verdict === "PASS" ? "✅" : report.verdict === "WARN" ? "⚠️" : "⛔";
   const checks = report.checks
     .map(
-      (check) =>
-        `| ${check.name} | ${check.status} | ${check.exitCode ?? "—"} | ${check.durationMs} ms | ${
+      (check) => {
+        const limits = check.execution?.resourceLimits
+          ? Object.entries(check.execution.resourceLimits)
+              .map(([name, value]) => `${name}=${value}`)
+              .join(", ")
+          : "";
+        return `| ${check.name} | ${check.status} | ${check.exitCode ?? "—"} | ${check.durationMs} ms | ${check.execution?.backend ?? "legacy"}${limits ? ` (${limits})` : ""} | ${
           check.skipReason
             ? `skipped: ${check.skipReason}`
             : check.selection
@@ -807,7 +816,8 @@ function renderMarkdown(report: ReviewReport): string {
               ? check.selection.matchedFiles.map((file) => `\`${file}\``).join(", ")
               : "no path match"
             : "all changes"
-        } | \`${check.command}\` |`
+        } | \`${check.command}\` |`;
+      }
     )
     .join("\n");
   const findings = report.findings.length
@@ -939,5 +949,5 @@ function renderMarkdown(report: ReviewReport): string {
       ].join("\n")
     : "History recording was not enabled.";
 
-  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Override record\n\n${override}\n\nOverride actors are recorded claims until authenticated signing is implemented.\n\n## Report history\n\n${history}\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
+  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Override record\n\n${override}\n\nOverride actors are recorded claims until authenticated signing is implemented.\n\n## Report history\n\n${history}\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Execution | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
 }

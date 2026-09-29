@@ -18,7 +18,11 @@ import {
   selectChangedFiles,
 } from "../src/review/review";
 import { mapRequirementsToChangedFiles } from "../src/review/requirement-mapper";
-import { buildCheckEnvironment, runCheck } from "../src/review/runner";
+import {
+  buildCheckEnvironment,
+  buildCheckInvocation,
+  runCheck,
+} from "../src/review/runner";
 import type { CheckEvidence, ReviewReport } from "../src/review/types";
 
 const execFileAsync = promisify(execFile);
@@ -143,6 +147,90 @@ test("all passing checks produce a pass verdict", () => {
   const findings = buildFindings([check()]);
   assert.deepEqual(findings, []);
   assert.equal(calculateVerdict(findings), "PASS");
+});
+
+test("Linux resource limits produce an exact prlimit invocation", () => {
+  const invocation = buildCheckInvocation(
+    {
+      name: "bounded",
+      run: "npm test",
+      resources: {
+        cpuSeconds: 2,
+        memoryMiB: 1024,
+        maxFileSizeMiB: 8,
+        maxOpenFiles: 256,
+      },
+    },
+    "linux",
+    true
+  );
+
+  assert.equal(invocation.file, "/usr/bin/prlimit");
+  assert.equal(invocation.shell, false);
+  assert.deepEqual(invocation.args, [
+    "--core=0:0",
+    "--cpu=2:2",
+    "--as=1073741824:1073741824",
+    "--fsize=8388608:8388608",
+    "--nofile=256:256",
+    "--",
+    "/bin/sh",
+    "-c",
+    "npm test",
+  ]);
+  assert.deepEqual(invocation.execution, {
+    backend: "linux-prlimit",
+    resourceLimits: {
+      cpuSeconds: 2,
+      memoryMiB: 1024,
+      maxFileSizeMiB: 8,
+      maxOpenFiles: 256,
+    },
+  });
+});
+
+test("configured resource limits fail closed without the Linux backend", () => {
+  assert.throws(
+    () =>
+      buildCheckInvocation(
+        {
+          name: "bounded",
+          run: "npm test",
+          resources: { cpuSeconds: 2 },
+        },
+        "darwin",
+        false
+      ),
+    /require Linux with \/usr\/bin\/prlimit; the check was not executed/
+  );
+});
+
+test("Linux CPU limits stop a busy check before its wall timeout", async (context) => {
+  if (process.platform !== "linux") {
+    context.skip("Linux prlimit integration only");
+    return;
+  }
+  try {
+    await access("/usr/bin/prlimit");
+  } catch {
+    context.skip("/usr/bin/prlimit is unavailable");
+    return;
+  }
+
+  const evidence = await runCheck(
+    {
+      name: "cpu-bound",
+      run: 'node -e "for (;;) {}"',
+      timeoutSeconds: 5,
+      resources: { cpuSeconds: 1 },
+    },
+    process.cwd()
+  );
+
+  assert.equal(evidence.status, "failed");
+  assert.equal(evidence.execution?.backend, "linux-prlimit");
+  assert.deepEqual(evidence.execution?.resourceLimits, { cpuSeconds: 1 });
+  assert.ok(evidence.durationMs < 4_500, `check took ${evidence.durationMs} ms`);
 });
 
 test("active owned suppressions retain warning evidence but remove verdict impact", () => {

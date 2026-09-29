@@ -105,6 +105,11 @@ limits:
 checks:
   - name: review
     run: npm test
+    resources:
+      cpuSeconds: 60
+      memoryMiB: 2048
+      maxFileSizeMiB: 64
+      maxOpenFiles: 1024
     whenChanged:
       - src/review/**
       - package.json
@@ -119,8 +124,37 @@ checks:
         maxChangedFiles: 100,
         maxDiffBytes: 1048576,
       });
+      assert.deepEqual(config.checks[0]?.resources, {
+        cpuSeconds: 60,
+        memoryMiB: 2048,
+        maxFileSizeMiB: 64,
+        maxOpenFiles: 1024,
+      });
     }
   );
+});
+
+test("configuration rejects empty, unknown, and invalid check resources", async () => {
+  for (const [resources, expected] of [
+    ["{}", /must configure at least one limit/],
+    ["{ processes: 4 }", /resources\.processes is unsupported/],
+    ["{ cpuSeconds: 0 }", /resources\.cpuSeconds must be a positive integer/],
+    ["{ memoryMiB: 1.5 }", /resources\.memoryMiB must be a positive integer/],
+    ["{ maxOpenFiles: 1048577 }", /resources\.maxOpenFiles must be a positive integer/],
+  ] as const) {
+    await withConfig(
+      `version: 1
+mode: report
+checks:
+  - name: review
+    run: npm test
+    resources: ${resources}
+`,
+      async (directory) => {
+        await assert.rejects(loadConfig(directory), expected);
+      }
+    );
+  }
 });
 
 test("configuration rejects unsafe check paths and invalid budgets", async () => {

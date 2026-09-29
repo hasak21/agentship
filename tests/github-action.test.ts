@@ -7,6 +7,7 @@ const workflowUrl = new URL(
   "../.github/workflows/agentship-report.yml",
   import.meta.url
 );
+const ciPolicyUrl = new URL("../.agentship.ci.yml", import.meta.url);
 
 test("CI report workflow keeps untrusted pull requests in a read-only context", async () => {
   const source = await readFile(workflowUrl, "utf8");
@@ -34,7 +35,8 @@ test("CI report uses immutable actions and separate trusted and subject checkout
   assert.match(source, /path: subject/);
   assert.equal((source.match(/persist-credentials: false/g) ?? []).length, 2);
   assert.match(source, /node \.\.\/verifier\/dist\/agentship\.cjs review/);
-  assert.match(source, /--config \.\.\/verifier\/\.agentship\.yml/);
+  assert.match(source, /--config \.\.\/verifier\/\.agentship\.ci\.yml/);
+  assert.match(source, /test -x \/usr\/bin\/prlimit/);
   assert.doesNotMatch(source, /--approve-path/);
   assert.doesNotMatch(source, /--override/);
   assert.match(source, /subject\/\.agentship\/reviews\/ci\.\*/);
@@ -45,4 +47,18 @@ test("CI report uses immutable actions and separate trusted and subject checkout
   assert.doesNotMatch(source, /actions\/cache\/save@/);
   assert.match(source, /agentship-history-v1-pr-/);
   assert.match(source, /--history \.agentship\/history/);
+});
+
+test("CI policy bounds checks without claiming a Node memory limit", async () => {
+  const policy = parse(await readFile(ciPolicyUrl, "utf8")) as {
+    checks?: Array<{ resources?: Record<string, number> }>;
+  };
+
+  assert.ok(policy.checks?.length);
+  for (const check of policy.checks ?? []) {
+    assert.ok(check.resources?.cpuSeconds);
+    assert.ok(check.resources?.maxFileSizeMiB);
+    assert.ok(check.resources?.maxOpenFiles);
+    assert.equal(check.resources?.memoryMiB, undefined);
+  }
 });

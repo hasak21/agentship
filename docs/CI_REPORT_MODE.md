@@ -9,7 +9,7 @@ artifact into an always-neutral Check Run without granting merge authority.
 1. `pull_request` starts a GitHub-hosted disposable runner with `contents: read`.
 2. The pull request's base SHA is checked out under `verifier/`.
 3. The pull-request subject is checked out separately under `subject/`.
-4. AgentShip is built from `verifier/`; `.agentship.yml` is also loaded from that trusted checkout.
+4. AgentShip is built from `verifier/`; `.agentship.ci.yml` is also loaded from that trusted checkout.
 5. A base-owned script reads the GitHub event JSON and writes the PR body to a bounded temporary task document without shell interpolation.
 6. The trusted executable enforces base-owned changed-file/diff limits, selects checks through base-owned `whenChanged` patterns, runs applicable checks against `subject/`, and records skipped checks explicitly.
 7. The pull-request job has explicit read-only cache access and restores the newest PR-scoped, publisher-validated report into `.agentship/history`; a miss simply starts without a baseline.
@@ -22,12 +22,12 @@ artifact into an always-neutral Check Run without granting merge authority.
 
 All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review. The publisher has only `actions: read`, `contents: read`, and `checks: write`; the subject workflow retains only `contents: read`.
 
-`limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. Every check also has its own timeout and the job has a workflow timeout. These controls do not impose CPU, memory, disk, process-count, or network quotas.
+`limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. Every check also has its own timeout and the job has a workflow timeout. The official Ubuntu policy uses `/usr/bin/prlimit` for per-process CPU time, maximum output-file size, and open-file counts; the workflow verifies that backend exists before review. AgentShip can also configure a virtual-address-space bound, but the official Node checks omit it because JavaScript/Wasm runtimes reserve large address ranges unrelated to resident memory. Limits are inherited by child processes but are not aggregated across the process tree. They do not impose a reliable memory or disk-capacity bound, process-count, network, filesystem, or container isolation.
 
 Warning suppressions are also loaded from the base revision. A pull request cannot add a suppression that takes effect in its own report. Matching is exact on finding ID and kind; active owner, reason, and expiry evidence remains visible in every report format. Blocker kinds cannot be configured as suppressible.
 
 The same boundary applies to blocking rules and protected paths: the workflow passes
-`--config ../verifier/.agentship.yml` and never supplies `--approve-path` or
+`--config ../verifier/.agentship.ci.yml` and never supplies `--approve-path` or
 `--override`. A pull request can edit its own `.agentship.yml` or add approval-shaped
 files, but neither becomes effective policy for that run. An executable regression
 reviews a subject that replaces gate policy with a permissive report configuration and

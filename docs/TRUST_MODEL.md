@@ -16,7 +16,7 @@ Only observed, reproduced, or explicitly attested evidence may satisfy a require
 
 The first local runner executes commands from the repository's trusted `.agentship.yml`. It is intended for a developer's own checkout. It is not yet safe for hostile pull requests because repository commands execute on the host.
 
-Before maintainer-side execution, AgentShip must add process isolation, network denial by default, resource budgets, secret separation, immutable policy loading, and signed evidence manifests.
+Before privileged maintainer-side execution, AgentShip must add process isolation, network denial by default, aggregate worker budgets, secret separation, immutable policy loading, and signed evidence manifests. The current hosted report workflow has narrower per-process Linux limits only.
 
 ## Evidence manifest
 
@@ -40,7 +40,7 @@ The lower-level provider client also refuses to inherit an environment credentia
 
 Local checks receive a minimal cross-platform environment allowlist. A repository may request additional variable names for a check, but captured evidence records only those names. Values whose names indicate credentials, tokens, cookies, passwords, secrets, or authenticated proxies are redacted from stdout and stderr.
 
-Timeouts terminate the spawned process tree rather than only the shell parent. This is a reliability boundary, not hostile-code isolation: trusted local checks still execute directly on the host.
+Timeouts terminate the spawned process tree rather than only the shell parent. Checks with a `resources` policy execute on Linux through `/usr/bin/prlimit` with exact CPU-time, virtual-address-space, file-size, and open-file limits; configuration fails closed when that backend is unavailable. Children inherit these limits, but consumption is not aggregated across the process tree. This is a reliability boundary, not hostile-code isolation: checks still execute directly on the host and retain its filesystem and network view.
 
 The `network` field in version 1 policy is a declared capability recorded in evidence; it is not yet enforced. Network denial requires the isolated runner planned for adversarial maintainer mode.
 
@@ -84,7 +84,7 @@ The `benchmark --fixtures` command validates corpus paths, size bounds, schema, 
 
 ## CI report boundary
 
-The subject GitHub workflow uses the unprivileged `pull_request` event with `contents: read`, no repository secrets, blank CLI token variables, a GitHub-hosted disposable runner, and full-commit-SHA-pinned official actions. It checks out the base revision and pull-request subject separately. The AgentShip executable, task extractor, and `.agentship.yml` policy are built or loaded from the trusted base checkout; pull-request changes cannot replace them for that run. The PR title/body is passed as data through the GitHub event file, never interpolated into a shell program. JSON, Markdown, and SARIF reports are uploaded as artifacts, and the Markdown is copied into the workflow job summary.
+The subject GitHub workflow uses the unprivileged `pull_request` event with `contents: read`, no repository secrets, blank CLI token variables, a GitHub-hosted disposable runner, and full-commit-SHA-pinned official actions. It checks out the base revision and pull-request subject separately. The AgentShip executable, task extractor, and `.agentship.ci.yml` policy are built or loaded from the trusted base checkout; pull-request changes cannot replace them for that run. The PR title/body is passed as data through the GitHub event file, never interpolated into a shell program. JSON, Markdown, and SARIF reports are uploaded as artifacts, and the Markdown is copied into the workflow job summary.
 
 A separate default-branch `workflow_run` publisher holds `checks: write`. It checks out
 only trusted publisher code, downloads the named artifact from the exact triggering run,
@@ -101,7 +101,7 @@ required branch-protection check; doing so would confuse report delivery with ap
 
 The subject's configured checks still execute hostile repository code with network access inside the hosted runner. This mode is suitable only for secretless, read-only reporting on GitHub-hosted disposable runners. It is not safe for self-hosted runners, privileged subject triggers, subject write tokens, secrets, cloud metadata access, or merge gating. GitHub repository settings can also opt into write tokens or secrets for fork workflows; operators must leave those options disabled. The unsigned artifact may be attacker-influenced despite the trusted verifier, which is why the privileged publisher emits only a bounded neutral summary. Live fork-PR validation remains required before the workflow is marked fully delivered.
 
-Base-owned `whenChanged` patterns select checks using only exact repository paths and trailing `/**` directory patterns. A non-applicable check is recorded as `skipped`, never as passing; a task that explicitly requires that check remains unsatisfied. Base-owned changed-file and diff-byte limits produce a blocker and skip repository commands before an oversized review executes. Per-check and workflow wall-clock timeouts are also enforced, but there are no CPU, memory, disk, process-count, or network quotas yet.
+Base-owned `whenChanged` patterns select checks using only exact repository paths and trailing `/**` directory patterns. A non-applicable check is recorded as `skipped`, never as passing; a task that explicitly requires that check remains unsatisfied. Base-owned changed-file and diff-byte limits produce a blocker and skip repository commands before an oversized review executes. Per-check and workflow wall-clock timeouts are enforced. The official Linux policy additionally applies per-process CPU-time, file-size, and descriptor limits through `prlimit`. A configurable address-space bound exists but is omitted for official Node checks because it is not a reliable resident-memory bound and breaks runtimes that reserve large virtual ranges. Aggregate process-tree, reliable memory, disk-capacity, process-count, network, and filesystem isolation remain absent.
 
 Repository-owned suppressions match an exact finding ID and warning kind. Each entry has a stable suppression ID, owner, reason, and calendar-date expiry. An active suppression is attached to—not removed from—the finding, is represented as an accepted external SARIF suppression, and removes only that warning's verdict impact. Expired entries are ignored. The schema rejects blocker kinds, duplicate identities, duplicate targets, invalid dates, and unbounded ownership/reason text.
 

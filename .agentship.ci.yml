@@ -1,0 +1,76 @@
+version: 1
+mode: report
+
+limits:
+  maxChangedFiles: 500
+  maxDiffBytes: 5242880
+
+# The official Ubuntu workflow validates /usr/bin/prlimit before loading this
+# trusted, base-owned policy. These are per-process kernel limits, not a sandbox.
+checks:
+  - name: lint
+    run: npm run lint
+    required: true
+    timeoutSeconds: 120
+    resources:
+      cpuSeconds: 120
+      maxFileSizeMiB: 64
+      maxOpenFiles: 1024
+
+  - name: test
+    run: npm test
+    required: true
+    timeoutSeconds: 120
+    resources:
+      cpuSeconds: 120
+      maxFileSizeMiB: 64
+      maxOpenFiles: 1024
+
+  - name: build
+    run: npm run build
+    required: true
+    timeoutSeconds: 180
+    resources:
+      cpuSeconds: 180
+      maxFileSizeMiB: 64
+      maxOpenFiles: 1024
+    whenChanged:
+      - src/**
+      - package.json
+      - package-lock.json
+      - next.config.mjs
+      - tsconfig.json
+    network: allowed
+    environment:
+      - HTTP_PROXY
+      - HTTPS_PROXY
+      - NO_PROXY
+
+  - name: cli-package
+    run: npm run verify:cli
+    required: true
+    timeoutSeconds: 120
+    resources:
+      cpuSeconds: 120
+      maxFileSizeMiB: 64
+      maxOpenFiles: 1024
+    whenChanged:
+      - src/cli/**
+      - src/review/**
+      - scripts/verify-cli.mjs
+      - package.json
+      - package-lock.json
+
+policy:
+  blockOn:
+    - required_check_failed
+    - required_check_timed_out
+    - explicit_requirement_path_unchanged
+    - explicit_requirement_evidence_unsatisfied
+  protectedPaths:
+    - pattern: .github/workflows/**
+      requireManualApproval: true
+    - pattern: src/app/api/**
+      requireManualApproval: true
+    - pattern: src/review/**
+      requireManualApproval: true
