@@ -1,8 +1,9 @@
 #!/usr/bin/env node
+import { writeSync } from "node:fs";
 import path from "node:path";
+import { measureCalibration } from "../review/calibration";
 import { runIntentBenchmark } from "../review/intent-benchmark";
 import {
-  measureFindingOutcomes,
   recordFindingOutcome,
   type FindingOutcomeStatus,
 } from "../review/outcome";
@@ -54,23 +55,19 @@ function parseArgs(args: string[]): CliOptions {
       }
       continue;
     }
-    if (arg === "--help" || arg === "-h") {
-      printHelp();
-      process.exit(0);
-    }
     throw new Error(`Unknown argument: ${arg}`);
   }
   return options;
 }
 
-function printHelp() {
-  console.log(`AgentShip Verify — evidence-based preflight for agent-written code
+function printHelp(): void {
+  const output = `AgentShip Verify — evidence-based preflight for agent-written code
 
 Usage:
   agentship review [options]
   agentship benchmark --fixtures <path>
   agentship outcome --report <path> --finding-id <id> --finding-kind <kind> --status <status> --actor <actor> --reason <reason>
-  agentship metrics [--outcomes <directory>] [--reports <directory>]
+  agentship metrics --outcomes <dir> --reports <dir> --benchmark-fixtures <path>
   npm run review -- [options]
 
 Options:
@@ -84,7 +81,39 @@ Options:
   --output <path>  JSON report path
   --confirm <ids>  Confirm comma-separated requirements marked [confirm]
   --approve-path <pattern> Confirm one configured protected-path policy (repeatable)
-  -h, --help       Show this help`);
+  -h, --help       Show this help\n`;
+  writeStdout(output);
+}
+
+function writeStdout(output: string): void {
+  writeSync(1, output);
+}
+
+function parseMetricsArgs(args: string[]): {
+  outcomesDirectory: string;
+  reportsDirectory: string;
+  benchmarkFixturePath: string;
+} {
+  const values = new Map<string, string>();
+  const supported = new Set(["--outcomes", "--reports", "--benchmark-fixtures"]);
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (!supported.has(arg)) throw new Error(`Unknown metrics argument: ${arg}`);
+    const value = args[++index];
+    if (!value) throw new Error(`${arg} requires a value.`);
+    if (values.has(arg)) throw new Error(`${arg} may only be provided once.`);
+    values.set(arg, value);
+  }
+  const required = (flag: string) => {
+    const value = values.get(flag);
+    if (!value) throw new Error(`metrics requires ${flag} <value>.`);
+    return value;
+  };
+  return {
+    outcomesDirectory: required("--outcomes"),
+    reportsDirectory: required("--reports"),
+    benchmarkFixturePath: required("--benchmark-fixtures"),
+  };
 }
 
 interface OutcomeCliOptions {
@@ -112,10 +141,6 @@ function parseOutcomeArgs(args: string[]): OutcomeCliOptions {
   ]);
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    if (arg === "--help" || arg === "-h") {
-      printHelp();
-      process.exit(0);
-    }
     if (!supported.has(arg)) throw new Error(`Unknown outcome argument: ${arg}`);
     const value = args[++index];
     if (!value) throw new Error(`${arg} requires a value.`);
@@ -152,10 +177,6 @@ function parseBenchmarkArgs(args: string[]): string {
       if (!fixturePath) throw new Error("--fixtures requires a value.");
       continue;
     }
-    if (arg === "--help" || arg === "-h") {
-      printHelp();
-      process.exit(0);
-    }
     throw new Error(`Unknown benchmark argument: ${arg}`);
   }
   if (!fixturePath) throw new Error("benchmark requires --fixtures <path>.");
@@ -164,30 +185,14 @@ function parseBenchmarkArgs(args: string[]): string {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args[0] === "metrics") {
-    const values = new Map<string, string>();
-    for (let index = 1; index < args.length; index++) {
-      const flag = args[index];
-      if (flag !== "--outcomes" && flag !== "--reports") {
-        throw new Error(`Unknown metrics argument: ${flag}`);
-      }
-      const value = args[++index];
-      if (!value) throw new Error(`${flag} requires a value.`);
-      if (values.has(flag)) throw new Error(`${flag} may only be provided once.`);
-      values.set(flag, value);
-    }
-    const metrics = await measureFindingOutcomes(
-      process.cwd(),
-      values.get("--outcomes"),
-      values.get("--reports")
-    );
-    console.log(JSON.stringify(metrics, null, 2));
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
     return;
   }
   if (args[0] === "benchmark") {
     const fixturePath = path.resolve(process.cwd(), parseBenchmarkArgs(args.slice(1)));
     const benchmark = await runIntentBenchmark(fixturePath);
-    console.log(JSON.stringify(benchmark, null, 2));
+    writeStdout(`${JSON.stringify(benchmark, null, 2)}\n`);
     return;
   }
   if (args[0] === "outcome") {
@@ -196,10 +201,21 @@ async function main() {
       repositoryRoot: process.cwd(),
       ...options,
     });
-    console.log(`AgentShip outcome: ${result.outcome.status}`);
-    console.log(`Finding: ${result.outcome.finding.id} (${result.outcome.finding.kind})`);
-    console.log(`Evidence: ${result.outcome.evidence}`);
-    console.log(`Record: ${result.outputPath}`);
+    writeStdout([
+      `AgentShip outcome: ${result.outcome.status}`,
+      `Finding: ${result.outcome.finding.id} (${result.outcome.finding.kind})`,
+      `Evidence: ${result.outcome.evidence}`,
+      `Record: ${result.outputPath}`,
+      "",
+    ].join("\n"));
+    return;
+  }
+  if (args[0] === "metrics") {
+    const metrics = await measureCalibration({
+      repositoryRoot: process.cwd(),
+      ...parseMetricsArgs(args.slice(1)),
+    });
+    writeStdout(`${JSON.stringify(metrics, null, 2)}\n`);
     return;
   }
   const options = parseArgs(args);
@@ -218,27 +234,31 @@ async function main() {
   });
 
   const { report } = result;
-  console.log(`\nAgentShip review: ${report.verdict}`);
-  console.log(`Checks: ${report.summary.passed} passed, ${report.summary.failed} failed, ${report.summary.timedOut} timed out, ${report.summary.skipped} skipped`);
-  console.log(`Findings: ${report.findings.length - report.summary.suppressed - report.summary.overridden} active, ${report.summary.suppressed} suppressed, ${report.summary.overridden} overridden`);
+  const output = [
+    "",
+    `AgentShip review: ${report.verdict}`,
+    `Checks: ${report.summary.passed} passed, ${report.summary.failed} failed, ${report.summary.timedOut} timed out, ${report.summary.skipped} skipped`,
+    `Findings: ${report.findings.length - report.summary.suppressed - report.summary.overridden} active, ${report.summary.suppressed} suppressed, ${report.summary.overridden} overridden`,
+  ];
   if (report.baseline) {
-    console.log(`Baseline: ${report.baseline.newFindings.length} new, ${report.baseline.existingFindings.length} existing, ${report.baseline.resolvedFindings.length} resolved`);
+    output.push(`Baseline: ${report.baseline.newFindings.length} new, ${report.baseline.existingFindings.length} existing, ${report.baseline.resolvedFindings.length} resolved`);
   }
   const pendingProtectedPaths = report.configuration.protectedPaths.filter(
     ({ approval }) => approval === "required"
   );
   if (pendingProtectedPaths.length > 0) {
-    console.log(
+    output.push(
       `Protected paths awaiting approval: ${pendingProtectedPaths.map(({ pattern }) => pattern).join(", ")}`
     );
   }
-  console.log(`Changed files: ${report.repository.changedFiles.length}`);
-  console.log(`Evidence: ${path.relative(process.cwd(), result.jsonPath)}`);
-  console.log(`Report: ${path.relative(process.cwd(), result.markdownPath)}`);
-  console.log(`SARIF: ${path.relative(process.cwd(), result.sarifPath)}`);
+  output.push(`Changed files: ${report.repository.changedFiles.length}`);
+  output.push(`Evidence: ${path.relative(process.cwd(), result.jsonPath)}`);
+  output.push(`Report: ${path.relative(process.cwd(), result.markdownPath)}`);
+  output.push(`SARIF: ${path.relative(process.cwd(), result.sarifPath)}`);
   if (result.historyJsonPath) {
-    console.log(`History: ${path.relative(process.cwd(), result.historyJsonPath)}`);
+    output.push(`History: ${path.relative(process.cwd(), result.historyJsonPath)}`);
   }
+  writeStdout(`${output.join("\n")}\n`);
 
   if (report.mode === "gate" && report.verdict === "BLOCK") {
     process.exitCode = 1;
@@ -246,6 +266,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`AgentShip review failed: ${error instanceof Error ? error.message : String(error)}`);
+  writeSync(2, `AgentShip review failed: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 2;
 });

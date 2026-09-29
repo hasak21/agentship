@@ -331,19 +331,21 @@ evidence. Records are hash-bound, bounded, exclusively created under the ignored
 `.agentship/outcomes` directory, and retain triage duration. Actor identity remains an
 unauthenticated claim. See `docs/OUTCOMES.md` for evidence semantics and storage limits.
 
-Aggregate the retained outcomes into machine-readable calibration metrics:
+Aggregate review denominators, finding outcomes, and a freshly executed omission corpus:
 
 ```bash
 npm run metrics -- \
   --outcomes .agentship/outcomes \
-  --reports .agentship/history
+  --reports .agentship/history \
+  --benchmark-fixtures fixtures/intent/executable-patch-corpus.json
 ```
 
-The output includes disposition precision and coverage, rejected blocker share, and
-median/p90 triage duration. With a bounded, hash-verified review corpus it also reports
-distinct false-blocked reviews per 100 reports. It still does not claim missed-finding
-recall because outcome events contain no independent labels for findings that were never
-emitted. The per-100 result is representative only if the supplied corpus is complete.
+The resulting hash-bound JSON reports finding and blocker precision, omission recall,
+false blocks per 100 reviews, median triage time, override rate, and post-override
+outcomes. It fails closed when an outcome's report is missing or tampered, a fixed finding
+still exists, or human dispositions conflict. Metrics retain sample sizes and return
+`null` for precision without an adjudicated denominator. See `docs/CALIBRATION.md` for
+formulas and provenance limits.
 
 Run the checked-in omission calibration corpus, or supply another compatible corpus:
 

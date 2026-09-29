@@ -39,24 +39,21 @@ not prove semantic correctness. Keep outcome directories in a trusted artifact s
 they are used for organizational metrics, because local records have no provenance
 signature yet.
 
-## Aggregate metrics
+## Calibration metrics
 
-Aggregate a repository-relative outcome directory as JSON:
+Combine outcomes with a complete review denominator and an independently labeled omission
+corpus:
 
 ```bash
 npm run metrics -- \
   --outcomes .agentship/outcomes \
-  --reports .agentship/history
+  --reports .agentship/history \
+  --benchmark-fixtures fixtures/intent/executable-patch-corpus.json
 ```
 
-The result reports accepted/fixed versus rejected disposition precision, disposition
-coverage, the rejected share of blocker outcomes, median/p90 triage duration, and
-false-blocked reviews per 100 review reports. An override is excluded from precision
-because it is an exception, not a validity judgment. Review files are parsed with the
-same bounds as source reports, deduplicated by SHA-256, and must include every report
-referenced by an outcome before the per-100 metric is emitted.
-
-These metrics deliberately do not report recall: outcome records describe emitted
-findings and contain no independently labeled missed findings. The per-100 result is only
-representative when `--reports` points to a complete review population for the period
-being measured. Duplicate dispositions for the same source-report finding fail closed.
+The result reports finding and blocker precision, independently measured omission recall,
+false blocks per 100 reviews, median triage time, override rate, and post-override
+outcomes. Outcome events alone cannot measure recall, so the command executes the supplied
+corpus and binds its hash and case count. Source and resolution report bytes must occur in
+the report set; duplicate lifecycle events are grouped, while conflicting confirmed and
+rejected dispositions fail closed. See `CALIBRATION.md` for formulas and limitations.

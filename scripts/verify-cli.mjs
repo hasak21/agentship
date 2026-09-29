@@ -15,17 +15,21 @@ try {
     cwd: temporaryDirectory,
     encoding: "utf8",
   });
-  if (
-    !stdout.includes("AgentShip Verify") ||
-    !stdout.includes("--task <path>") ||
-    !stdout.includes("--baseline <path>") ||
-    !stdout.includes("--override <path>") ||
-    !stdout.includes("--history <dir>") ||
-    !stdout.includes("agentship outcome") ||
-    !stdout.includes("agentship metrics") ||
-    !stdout.includes("--approve-path <pattern>")
-  ) {
-    throw new Error("Bundled CLI help output is incomplete.");
+  const requiredHelp = [
+    "AgentShip Verify",
+    "--task <path>",
+    "--baseline <path>",
+    "--override <path>",
+    "--history <dir>",
+    "agentship outcome",
+    "agentship metrics",
+    "--approve-path <pattern>",
+  ];
+  const missingHelp = requiredHelp.filter((fragment) => !stdout.includes(fragment));
+  if (missingHelp.length > 0) {
+    throw new Error(
+      `Bundled CLI help output is missing: ${missingHelp.join(", ")}; received ${JSON.stringify(stdout)}.`
+    );
   }
   const benchmark = await execFileAsync(
     process.execPath,
@@ -57,9 +61,9 @@ try {
       title: "Required check failed",
     }],
   };
-  await mkdir(path.join(temporaryDirectory, ".agentship", "reviews"), { recursive: true });
+  await mkdir(path.join(temporaryDirectory, "reports"));
   await writeFile(
-    path.join(temporaryDirectory, ".agentship", "reviews", "report.json"),
+    path.join(temporaryDirectory, "reports", "report.json"),
     `${JSON.stringify(sourceReport)}\n`,
     "utf8"
   );
@@ -69,7 +73,7 @@ try {
       isolatedCli,
       "outcome",
       "--report",
-      ".agentship/reviews/report.json",
+      "reports/report.json",
       "--finding-id",
       "standalone-finding",
       "--finding-kind",
@@ -91,7 +95,8 @@ try {
   if (record.status !== "accepted" || record.finding.id !== "standalone-finding") {
     throw new Error("Bundled CLI outcome record is incomplete.");
   }
-  const measured = await execFileAsync(
+  await copyFile(intentFixture, path.join(temporaryDirectory, "corpus.json"));
+  const calibration = await execFileAsync(
     process.execPath,
     [
       isolatedCli,
@@ -99,17 +104,20 @@ try {
       "--outcomes",
       ".agentship/outcomes",
       "--reports",
-      ".agentship/reviews",
+      "reports",
+      "--benchmark-fixtures",
+      "corpus.json",
     ],
     { cwd: temporaryDirectory, encoding: "utf8" }
   );
-  const metrics = JSON.parse(measured.stdout);
+  const metrics = JSON.parse(calibration.stdout);
   if (
-    metrics.outcomes !== 1 ||
-    metrics.dispositions.precision !== 1 ||
-    metrics.reviewCorpus.falseBlocksPer100Reviews !== 0
+    metrics.schemaVersion !== 1 ||
+    metrics.samples.reviews !== 1 ||
+    metrics.samples.trackedFindings !== 1 ||
+    metrics.recall.cases !== 12
   ) {
-    throw new Error("Bundled CLI metrics output is incomplete.");
+    throw new Error("Bundled CLI calibration metrics are incomplete.");
   }
   console.log("Bundled CLI review, benchmark, outcome, and metrics commands run outside the repository without node_modules.");
 } finally {
