@@ -8,7 +8,7 @@ import { runCheck } from "./runner";
 import { applyOverride, loadOverride } from "./override";
 import {
   findLatestCompatibleHistory,
-  resolveHistoryDirectory,
+  prepareHistoryDirectory,
 } from "./history";
 import {
   applyRequirementConfirmations,
@@ -220,7 +220,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
   const finished = Date.now();
   const runId = randomUUID();
   const historyTarget = options.historyDirectory
-    ? buildHistoryTarget(
+    ? await buildHistoryTarget(
         repositoryRoot,
         options.historyDirectory,
         new Date(finished),
@@ -318,13 +318,13 @@ export async function runReview(options: RunReviewOptions): Promise<{
   };
 }
 
-function buildHistoryTarget(
+async function buildHistoryTarget(
   repositoryRoot: string,
   historyDirectory: string,
   finishedAt: Date,
   runId: string
 ) {
-  const directory = resolveHistoryDirectory(repositoryRoot, historyDirectory);
+  const directory = await prepareHistoryDirectory(repositoryRoot, historyDirectory);
   const timestamp = finishedAt.toISOString().replaceAll(":", "-");
   const baseName = `${timestamp}-${runId}`;
   const absoluteBase = path.join(directory.absolutePath, baseName);

@@ -1,4 +1,4 @@
-import { open, realpath, writeFile } from "node:fs/promises";
+import { mkdir, open, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -60,6 +60,19 @@ export async function buildCheckRunPayload(options) {
     throw new Error("AgentShip report base does not match the pull request base.");
   }
   const reviewedCommit = gitObjectId(reportRepository.head, "AgentShip report repository head");
+  if (reportRepository.reviewScope !== "base") {
+    throw new Error("AgentShip CI report must use base review scope.");
+  }
+  sha256String(reportRepository.diffSha256, "AgentShip report diff SHA-256");
+  const reportConfiguration = objectField(
+    report.configuration,
+    "AgentShip report configuration"
+  );
+  sha256String(reportConfiguration.sha256, "AgentShip report configuration SHA-256");
+  if (report.task !== undefined) {
+    const reportTask = objectField(report.task, "AgentShip report task");
+    sha256String(reportTask.sha256, "AgentShip report task SHA-256");
+  }
   if (!Array.isArray(report.findings) || report.findings.length > MAX_FINDINGS) {
     throw new Error(`AgentShip report findings must contain at most ${MAX_FINDINGS} entries.`);
   }
@@ -68,7 +81,7 @@ export async function buildCheckRunPayload(options) {
   }
   const reportRunId = boundedString(report.runId, "AgentShip report runId", 128);
 
-  return {
+  const payload = {
     owner: ownerLogin,
     repo: repositoryName,
     name: "AgentShip evidence report",
@@ -90,6 +103,33 @@ export async function buildCheckRunPayload(options) {
       ].join("\n"),
     },
   };
+  if (Boolean(options.historyReportPath) !== Boolean(options.historyRoot)) {
+    throw new Error("History output requires both historyReportPath and historyRoot.");
+  }
+  if (options.historyReportPath && options.historyRoot) {
+    await writeValidatedHistoryReport(
+      report,
+      options.historyReportPath,
+      options.historyRoot
+    );
+  }
+  return payload;
+}
+
+async function writeValidatedHistoryReport(report, outputPath, historyRoot) {
+  await mkdir(historyRoot, { recursive: true, mode: 0o700 });
+  const resolvedRoot = await realpath(historyRoot);
+  const absoluteOutput = path.resolve(outputPath);
+  const relative = path.relative(resolvedRoot, absoluteOutput);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("History report output must stay inside the history directory.");
+  }
+  const handle = await open(absoluteOutput, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(report)}\n`, "utf8");
+  } finally {
+    await handle.close();
+  }
 }
 
 async function readJsonFile(filePath, maxBytes, label, requiredRoot) {
@@ -142,6 +182,13 @@ function gitObjectId(value, field) {
   return candidate;
 }
 
+function sha256String(value, field) {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new Error(`${field} must be a lowercase SHA-256 digest.`);
+  }
+  return value;
+}
+
 function positiveInteger(value, field) {
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${field} must be a positive integer.`);
   return value;
@@ -162,15 +209,21 @@ function boundedHttpsUrl(value, field) {
 }
 
 async function main() {
-  const [eventPath, reportPath, outputPath] = process.argv.slice(2);
-  if (!eventPath || !reportPath || !outputPath || process.argv.length !== 5) {
-    throw new Error("Usage: node scripts/build-check-run.mjs <event.json> <report.json> <output.json>");
+  const [eventPath, reportPath, outputPath, historyReportPath] = process.argv.slice(2);
+  if (!eventPath || !reportPath || !outputPath || process.argv.length < 5 || process.argv.length > 6) {
+    throw new Error("Usage: node scripts/build-check-run.mjs <event.json> <report.json> <output.json> [history.json]");
   }
   const payload = await buildCheckRunPayload({
     eventPath,
     reportPath,
     expectedRepository: process.env.GITHUB_REPOSITORY,
     artifactRoot: process.env.AGENTSHIP_ARTIFACT_ROOT,
+    ...(historyReportPath
+      ? {
+          historyReportPath,
+          historyRoot: process.env.AGENTSHIP_HISTORY_ROOT,
+        }
+      : {}),
   });
   await writeFile(outputPath, `${JSON.stringify(payload)}\n`, { encoding: "utf8", mode: 0o600 });
 }

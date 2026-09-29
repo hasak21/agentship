@@ -22,6 +22,7 @@ This model covers the local review CLI, public Next.js endpoints, provider clien
 5. **Verifier to provider:** destinations and credentials are deployment-owned.
 6. **Fork to maintainer infrastructure:** the GitHub-hosted report workflow treats fork contents, tests, and task text as hostile; privileged or self-hosted execution remains unsupported.
 7. **Report to consumer:** manifests are hash-bound but not yet signed.
+8. **Publisher to CI history:** only the bounded trusted publisher writes the AgentShip cache namespace; pull-request jobs receive read-only cache access.
 
 ## Adversaries
 
@@ -53,7 +54,8 @@ This model covers the local review CLI, public Next.js endpoints, provider clien
 | T15 | In-memory or app-level rate limits fail across replicas | No distributed limiter is claimed | Host/control-plane limiter required |
 | T16 | Oversized pull-request input consumes excessive check time | Base-owned changed-file/diff-byte limits block before checks; check and workflow wall-clock timeouts bound duration | CPU, memory, disk, process-count, and network quotas remain open |
 | T17 | Contributor suppresses a finding in the same pull request | Fork CI loads exact-match, warning-only suppressions from the trusted base policy and retains suppression evidence | Local working-tree policy is developer-trusted; immutable policy and signed overrides remain open |
-| T18 | Malformed or misleading baseline hides a regression | Baselines are size/count/schema bounded, hash-bound, exact-match only, and cannot affect verdicts | Baseline selection/provenance and durable retention remain operator-owned |
+| T18 | Malformed or misleading baseline hides a regression | Baselines are size/count/schema bounded, hash-bound, exact-match only, and cannot affect verdicts; CI additionally requires compatible task/policy/scope/base context | Unsigned provenance remains visible but cannot weaken the verdict |
+| T19 | Fork or low-trust workflow poisons or redirects shared CI history | PR job declares cache read-only; only the non-executing publisher canonicalizes a context-validated report and saves under a unique PR/run key; verifier rejects symlinked history directories | Caches are unsigned, background-process races require worker isolation, and another repository workflow could collide with the namespace; workflow governance remains trusted |
 
 ## Preconditions for privileged hostile-pull-request enforcement
 

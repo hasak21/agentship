@@ -38,7 +38,14 @@ function report() {
     schemaVersion: 1,
     runId: "report-run",
     verdict: "BLOCK",
-    repository: { head: MERGE_SHA, base: BASE_SHA },
+    repository: {
+      head: MERGE_SHA,
+      base: BASE_SHA,
+      reviewScope: "base",
+      diffSha256: "d".repeat(64),
+    },
+    configuration: { sha256: "e".repeat(64) },
+    task: { sha256: "f".repeat(64) },
     findings: [{ id: "finding-1" }],
   };
 }
@@ -87,12 +94,44 @@ test("Check Run payload rejects mismatched context and report bindings", async (
     );
     await writeFile(
       reportPath,
-      JSON.stringify({ ...report(), repository: { head: MERGE_SHA, base: HEAD_SHA } }),
+      JSON.stringify({
+        ...report(),
+        repository: { ...report().repository, base: HEAD_SHA },
+      }),
       "utf8"
     );
     await assert.rejects(
       buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
       /base does not match/
+    );
+  });
+});
+
+test("validated reports are canonicalized only inside the trusted history directory", async () => {
+  await withPayloadFixture(async ({ root, eventPath, reportPath }) => {
+    const historyRoot = path.join(root, "history");
+    const historyReportPath = path.join(historyRoot, "1234.json");
+    await buildCheckRunPayload({
+      eventPath,
+      reportPath,
+      artifactRoot: root,
+      historyRoot,
+      historyReportPath,
+    });
+    assert.deepEqual(
+      JSON.parse(await readFile(historyReportPath, "utf8")),
+      report()
+    );
+
+    await assert.rejects(
+      buildCheckRunPayload({
+        eventPath,
+        reportPath,
+        artifactRoot: root,
+        historyRoot,
+        historyReportPath: path.join(root, "outside.json"),
+      }),
+      /inside the history directory/
     );
   });
 });
@@ -112,13 +151,21 @@ test("privileged publisher uses only trusted code and immutable actions", async 
     contents: "read",
   });
   const uses = [...source.matchAll(/^\s*uses:\s*([^\s#]+)/gm)].map((match) => match[1]);
-  assert.equal(uses.length, 3);
+  assert.equal(uses.length, 4);
   for (const action of uses) assert.match(action, /^[^@]+@[a-f0-9]{40}$/);
   assert.match(source, /github\.event\.repository\.default_branch/);
   assert.match(source, /persist-credentials: false/);
   assert.match(source, /github\.event\.workflow_run\.pull_requests\[0\]\.number/);
   assert.match(source, /github\.event\.workflow_run\.id/);
   assert.match(source, /scripts\/build-check-run\.mjs/);
+  assert.match(source, /cache-mode: write-only/);
+  assert.match(source, /actions\/cache\/save@[a-f0-9]{40}/);
+  assert.doesNotMatch(source, /actions\/cache\/restore@/);
+  assert.match(source, /agentship-history-v1-pr-/);
+  assert.ok(
+    source.indexOf("scripts/build-check-run.mjs") <
+      source.indexOf("actions/cache/save@")
+  );
   assert.doesNotMatch(source, /pull_request_target/);
   assert.doesNotMatch(source, /checkout[^\n]*head_sha/);
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -40,6 +40,25 @@ test("missing history has no compatible baseline", async () => {
     );
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("history rejects a repository path redirected through a symbolic link", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentship-history-link-"));
+  const outside = await mkdtemp(path.join(os.tmpdir(), "agentship-history-outside-"));
+  try {
+    await mkdir(path.join(root, ".agentship"), { recursive: true });
+    await symlink(outside, path.join(root, ".agentship", "history"), "dir");
+    await assert.rejects(
+      findLatestCompatibleHistory(root, ".agentship/history", {
+        configurationSha256: "c".repeat(64),
+        reviewScope: "working-tree",
+      }),
+      /must not traverse a symbolic link/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 

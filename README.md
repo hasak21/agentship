@@ -234,7 +234,7 @@ npm run review -- --task task.md --baseline .agentship/baselines/main.json
 The report classifies exact finding ID/kind pairs as new, existing, or resolved and
 binds the comparison to the baseline SHA-256, run ID, and commit. Baselines are bounded,
 parsed as data, and never change the current verdict. Selecting and retaining the right
-explicit baseline—or restoring trusted history in CI—remains an operator responsibility.
+explicit baseline remains an operator responsibility.
 
 For repeated local reviews of the same task and policy, enable durable history:
 
@@ -250,6 +250,12 @@ from other tasks or policies are skipped. History is limited to 1,000 directory 
 individual reports retain the 5 MiB bound, malformed history fails closed, and the
 selected baseline remains informational—it cannot change the current verdict. An explicit
 `--baseline` takes precedence while the run is still recorded to history.
+
+The checked-in GitHub workflows restore the latest publisher-validated report for the
+same PR through a read-only cache, then save the newly validated report from the separate
+write-only publisher. Cache misses and incompatible task/policy/base contexts fall back
+to a history-free review, and baseline comparison never changes the verdict. See
+`docs/CI_REPORT_MODE.md` for cache-poisoning and provenance boundaries.
 
 Checks may declare `whenChanged` with exact repository paths or trailing `/**`
 directory patterns. A check with no matching changed path is recorded as `skipped`;

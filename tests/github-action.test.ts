@@ -25,7 +25,7 @@ test("CI report uses immutable actions and separate trusted and subject checkout
   const uses = [...source.matchAll(/^\s*uses:\s*([^\s#]+)/gm)].map(
     (match) => match[1]
   );
-  assert.equal(uses.length, 4);
+  assert.equal(uses.length, 5);
   for (const action of uses) {
     assert.match(action, /^[^@]+@[a-f0-9]{40}$/);
   }
@@ -40,4 +40,9 @@ test("CI report uses immutable actions and separate trusted and subject checkout
   assert.match(source, /subject\/\.agentship\/reviews\/ci\.\*/);
   assert.match(source, /GITHUB_STEP_SUMMARY/);
   assert.match(source, /subject\/\.agentship\/reviews\/ci\.md/);
+  assert.match(source, /cache-mode: read/);
+  assert.match(source, /actions\/cache\/restore@[a-f0-9]{40}/);
+  assert.doesNotMatch(source, /actions\/cache\/save@/);
+  assert.match(source, /agentship-history-v1-pr-/);
+  assert.match(source, /--history \.agentship\/history/);
 });

@@ -1,4 +1,4 @@
-import { open, readdir } from "node:fs/promises";
+import { mkdir, open, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 
 const MAX_HISTORY_ENTRIES = 1_000;
@@ -41,6 +41,7 @@ export async function findLatestCompatibleHistory(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+  await assertResolvedHistoryDirectory(repositoryRoot, directory);
   if (entries.length > MAX_HISTORY_ENTRIES) {
     throw new Error(`History directory exceeds ${MAX_HISTORY_ENTRIES} entries.`);
   }
@@ -58,6 +59,30 @@ export async function findLatestCompatibleHistory(
     }
   }
   return undefined;
+}
+
+export async function prepareHistoryDirectory(
+  repositoryRoot: string,
+  historyDirectory: string
+): Promise<{ absolutePath: string; relativePath: string }> {
+  const directory = resolveHistoryDirectory(repositoryRoot, historyDirectory);
+  await mkdir(directory.absolutePath, { recursive: true });
+  await assertResolvedHistoryDirectory(repositoryRoot, directory);
+  return directory;
+}
+
+async function assertResolvedHistoryDirectory(
+  repositoryRoot: string,
+  directory: { absolutePath: string; relativePath: string }
+): Promise<void> {
+  const [resolvedRoot, resolvedDirectory] = await Promise.all([
+    realpath(repositoryRoot),
+    realpath(directory.absolutePath),
+  ]);
+  const expectedDirectory = path.resolve(resolvedRoot, directory.relativePath);
+  if (resolvedDirectory !== expectedDirectory) {
+    throw new Error("History directory must not traverse a symbolic link.");
+  }
 }
 
 function isCompatible(

@@ -12,11 +12,13 @@ artifact into an always-neutral Check Run without granting merge authority.
 4. AgentShip is built from `verifier/`; `.agentship.yml` is also loaded from that trusted checkout.
 5. A base-owned script reads the GitHub event JSON and writes the PR body to a bounded temporary task document without shell interpolation.
 6. The trusted executable enforces base-owned changed-file/diff limits, selects checks through base-owned `whenChanged` patterns, runs applicable checks against `subject/`, and records skipped checks explicitly.
-7. JSON, Markdown, and SARIF reports are uploaded as workflow artifacts even when verification blocks.
-8. The fixed Markdown report is appended to the workflow job summary without granting write permission to the repository.
-9. A `workflow_run` job starts only after the named report workflow completes and GitHub associates exactly one pull request with it.
-10. The publisher checks out only the default branch, downloads the named artifact from the exact triggering run, and parses event/report JSON under byte and finding-count bounds. Artifact contents are never executed.
-11. The publisher binds the report base to the event's PR base and creates a Check Run on the event's PR head with `conclusion: neutral`, regardless of PASS, WARN, or BLOCK.
+7. The pull-request job has explicit read-only cache access and restores the newest PR-scoped, publisher-validated report into `.agentship/history`; a miss simply starts without a baseline.
+8. JSON, Markdown, and SARIF reports are uploaded as workflow artifacts even when verification blocks.
+9. The fixed Markdown report is appended to the workflow job summary without granting write permission to the repository.
+10. A `workflow_run` job starts only after the named report workflow completes and GitHub associates exactly one pull request with it.
+11. The publisher checks out only the default branch, downloads the named artifact from the exact triggering run, and parses event/report JSON under byte and finding-count bounds. Artifact contents are never executed.
+12. After validation, the publisher canonicalizes the JSON into a fresh directory and saves it under a unique PR/run cache key using write-only cache access. Validation failure prevents the cache-save step.
+13. The publisher binds the report base to the event's PR base and creates a Check Run on the event's PR head with `conclusion: neutral`, regardless of PASS, WARN, or BLOCK.
 
 All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review. The publisher has only `actions: read`, `contents: read`, and `checks: write`; the subject workflow retains only `contents: read`.
 
@@ -33,7 +35,9 @@ proves the external trusted policy still emits the required-check and protected-
 blockers. Trusted maintainers may add an override workflow later, but it must load the
 record from a trusted revision rather than the pull-request subject.
 
-The CLI can compare a run with a prior JSON report through `--baseline`. It validates bounded report metadata and finding identities, records the baseline hash/run/commit, and classifies exact ID/kind pairs as new, existing, or resolved. Comparison is informational and cannot change the current verdict. Local `--history` mode durably records all report formats and automatically selects the newest report with the same configuration/task hashes, scope, and base. The initial workflow does not yet fetch or restore that history from a prior CI artifact.
+The CLI can compare a run with a prior JSON report through `--baseline`. It validates bounded report metadata and finding identities, records the baseline hash/run/commit, and classifies exact ID/kind pairs as new, existing, or resolved. Comparison is informational and cannot change the current verdict. Local `--history` mode durably records all report formats and automatically selects the newest report with the same configuration/task hashes, scope, and base. CI uses that same compatibility check after a restore, so an edited PR task or changed base/policy safely yields no automatic baseline. Only the latest validated report is carried forward; cache eviction or a miss degrades to a normal history-free review.
+
+The cache split follows GitHub's low-trust guidance: the `pull_request` job declares `cache-mode: read` and uses only `actions/cache/restore`, while the publisher declares `cache-mode: write-only` and uses only `actions/cache/save`. Both actions are pinned to the full v6.1.0 commit. GitHub scopes caches by key/version/branch and searches the current PR scope before the base/default branch, so repositories must not let another untrusted workflow create the `agentship-history-v1-pr-` namespace. The report workflow itself cannot write because its cache token is read-only, and AgentShip rejects a history directory redirected through a repository-controlled symbolic link. Verified against the [GitHub dependency caching reference](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching) on 2026-09-29.
 
 ## Required repository settings
 
@@ -47,7 +51,7 @@ The CLI can compare a run with a prior JSON report through `--baseline`. It vali
 
 ## Residual risk
 
-Untrusted checks can use the hosted runner's network and inspect files or ephemeral Actions runtime state available to their process. The workflow blanks common GitHub CLI token variables, but this is not OS-level network or credential isolation. Artifacts are unsigned and may be attacker-influenced, so the privileged publisher exposes only bounded summary fields, never executes artifact content, and always reports a neutral conclusion. SARIF remains an artifact rather than a code-scanning upload. A live fork pull request has not yet validated the two-stage workflow end to end. Do not reuse the subject workflow on a self-hosted runner or add secrets, deployments, package publishing, comments, labels, write permissions, or merge gating.
+Untrusted checks can use the hosted runner's network and inspect files or ephemeral Actions runtime state available to their process. The workflow blanks common GitHub CLI token variables, but this is not OS-level network or credential isolation. Artifacts and caches are unsigned and may be attacker-influenced despite structural validation, so the privileged publisher never executes their content and the restored baseline remains informational. A repository-level workflow outside this design could populate the same key namespace in a PR scope; workflow protection and namespace ownership remain operator responsibilities. SARIF remains an artifact rather than a code-scanning upload. A live fork pull request has not yet validated the two-stage workflow end to end. Do not reuse the subject workflow on a self-hosted runner or add secrets, deployments, package publishing, comments, labels, write permissions, or merge gating.
 
 ## Pull-request task format
 
