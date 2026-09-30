@@ -24,6 +24,7 @@ export interface ReviewCheckConfig {
   environment?: string[];
   whenChanged?: string[];
   resources?: CheckResourceLimits;
+  isolation?: "bubblewrap";
 }
 
 export interface CheckResourceLimits {
@@ -90,8 +91,18 @@ export interface CheckEvidence {
   stderr: string;
   outputTruncated: boolean;
   execution?: {
-    backend: "direct" | "linux-prlimit" | "unsupported" | "not_executed";
+    backend:
+      | "direct"
+      | "linux-prlimit"
+      | "linux-bubblewrap"
+      | "unsupported"
+      | "not_executed";
     resourceLimits?: CheckResourceLimits;
+    isolation?: {
+      workspace: "disposable-copy";
+      hostFilesystem: "minimal-read-only-runtime";
+      network: "allowed" | "denied";
+    };
   };
   selection?: {
     patterns: string[];

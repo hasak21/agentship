@@ -28,6 +28,16 @@ headings, and table/code values cannot introduce columns or raw HTML. JSON and S
 remain structured data; any downstream renderer must apply its own context-appropriate
 encoding rather than trusting display strings.
 
+AgentShip now has an opt-in Linux bubblewrap backend, but the checked-in GitHub workflow
+does not enable it yet. The current GitHub-hosted Ubuntu 24.04 image manifest does not
+list bubblewrap as a guaranteed installed package, and fetching a floating package during
+each review would weaken verifier reproducibility. Until a pinned backend is provisioned,
+the workflow continues to rely on the disposable hosted runner plus per-process limits;
+it must remain secretless, read-only, non-gating, and unsuitable for self-hosted runners.
+This availability assessment was checked against the
+[GitHub Ubuntu 24.04 runner manifest](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md)
+on 2026-09-30.
+
 `limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. Every check also has its own timeout and the job has a workflow timeout. The official Ubuntu policy uses `/usr/bin/prlimit` for per-process CPU time, maximum output-file size, and open-file counts; the workflow verifies that backend exists before review. AgentShip can also configure a virtual-address-space bound, but the official Node checks omit it because JavaScript/Wasm runtimes reserve large address ranges unrelated to resident memory. Limits are inherited by child processes but are not aggregated across the process tree. They do not impose a reliable memory or disk-capacity bound, process-count, network, filesystem, or container isolation.
 
 Warning suppressions are also loaded from the base revision. A pull request cannot add a suppression that takes effect in its own report. Matching is exact on finding ID and kind; active owner, reason, and expiry evidence remains visible in every report format. Blocker kinds cannot be configured as suppressible.

@@ -63,6 +63,9 @@ function assertCheck(value: unknown, index: number): asserts value is ReviewChec
       assertPathPattern(pattern, `checks[${index}].whenChanged[${patternIndex}]`)
     );
   }
+  if (check.isolation !== undefined && check.isolation !== "bubblewrap") {
+    throw new Error(`checks[${index}].isolation must be 'bubblewrap'.`);
+  }
   assertCheckResources(check.resources, index);
 }
 

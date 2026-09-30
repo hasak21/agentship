@@ -51,7 +51,7 @@ test("CI report uses immutable actions and separate trusted and subject checkout
 
 test("CI policy bounds checks without claiming a Node memory limit", async () => {
   const policy = parse(await readFile(ciPolicyUrl, "utf8")) as {
-    checks?: Array<{ resources?: Record<string, number> }>;
+    checks?: Array<{ resources?: Record<string, number>; isolation?: string }>;
   };
 
   assert.ok(policy.checks?.length);
@@ -60,5 +60,6 @@ test("CI policy bounds checks without claiming a Node memory limit", async () =>
     assert.ok(check.resources?.maxFileSizeMiB);
     assert.ok(check.resources?.maxOpenFiles);
     assert.equal(check.resources?.memoryMiB, undefined);
+    assert.equal(check.isolation, undefined);
   }
 });

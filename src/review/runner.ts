@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import {
+  BUBBLEWRAP_PATH,
+  prepareBubblewrapSandbox,
+  type PreparedSandbox,
+} from "./sandbox";
 import type { CheckEvidence, ReviewCheckConfig } from "./types";
 
 const MAX_OUTPUT_BYTES = 256 * 1024;
@@ -50,9 +55,19 @@ export async function runCheck(
   const environment = buildCheckEnvironment(check);
   const secrets = collectSecrets(environment);
   let invocation: CheckInvocation;
+  let sandbox: PreparedSandbox | undefined;
   try {
-    invocation = buildCheckInvocation(check);
+    if (check.isolation === "bubblewrap") {
+      sandbox = await prepareBubblewrapSandbox(check, repositoryRoot);
+    }
+    invocation = buildCheckInvocation(
+      check,
+      process.platform,
+      existsSync(PRLIMIT_PATH),
+      sandbox
+    );
   } catch (error) {
+    await sandbox?.cleanup();
     const finished = Date.now();
     return {
       name: check.name,
@@ -90,6 +105,8 @@ export async function runCheck(
     let stderr = "";
     let outputTruncated = false;
     let timedOut = false;
+    let cleanupPromise: Promise<void> | undefined;
+    const cleanup = () => (cleanupPromise ??= sandbox?.cleanup() ?? Promise.resolve());
 
     const append = (current: string, chunk: Buffer): string => {
       const currentBytes = Buffer.byteLength(current);
@@ -112,7 +129,7 @@ export async function runCheck(
     child.once("error", (error) => {
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
-      reject(error);
+      void cleanup().then(() => reject(error), reject);
     });
 
     const timer = setTimeout(() => {
@@ -124,17 +141,30 @@ export async function runCheck(
       );
     }, timeoutMs);
 
-    child.once("close", (exitCode, signal) => {
+    child.once("close", async (exitCode, signal) => {
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       const finished = Date.now();
+      let cleanupFailed = false;
+      try {
+        await cleanup();
+      } catch (error) {
+        cleanupFailed = true;
+        stderr = append(
+          stderr,
+          Buffer.from(
+            `\nAgentShip could not remove the disposable workspace: ${error instanceof Error ? error.message : String(error)}`
+          )
+        );
+      }
       resolve({
         name: check.name,
         command: check.run,
         required: check.required !== false,
         network: check.network ?? "unspecified",
         environment: Object.keys(environment).sort(),
-        status: timedOut ? "timed_out" : exitCode === 0 ? "passed" : "failed",
+        status:
+          timedOut ? "timed_out" : exitCode === 0 && !cleanupFailed ? "passed" : "failed",
         exitCode,
         signal,
         startedAt,
@@ -152,21 +182,52 @@ export async function runCheck(
 export function buildCheckInvocation(
   check: ReviewCheckConfig,
   platform: NodeJS.Platform = process.platform,
-  prlimitAvailable = existsSync(PRLIMIT_PATH)
+  prlimitAvailable = existsSync(PRLIMIT_PATH),
+  sandbox?: PreparedSandbox
 ): CheckInvocation {
-  if (!check.resources) {
-    return {
-      file: check.run,
-      args: [],
-      shell: true,
-      execution: { backend: "direct" },
-    };
+  if (check.isolation && !sandbox) {
+    throw new Error(
+      "Configured check isolation was not prepared; the check was not executed."
+    );
   }
+  const base: CheckInvocation = sandbox
+    ? {
+        file: BUBBLEWRAP_PATH,
+        args: sandbox.args,
+        shell: false,
+        execution: sandbox.execution,
+      }
+    : {
+        file: check.run,
+        args: [],
+        shell: true,
+        execution: { backend: "direct" },
+      };
+  if (!check.resources) return base;
   if (platform !== "linux" || !prlimitAvailable) {
     throw new Error(
       "Configured check resource limits require Linux with /usr/bin/prlimit; the check was not executed."
     );
   }
+  const args = resourceLimitArguments(check);
+  args.push(
+    "--",
+    sandbox ? base.file : "/bin/sh",
+    ...(sandbox ? base.args : ["-c", check.run])
+  );
+  return {
+    file: PRLIMIT_PATH,
+    args,
+    shell: false,
+    execution: sandbox?.execution ?? {
+      backend: "linux-prlimit",
+      resourceLimits: check.resources,
+    },
+  };
+}
+
+function resourceLimitArguments(check: ReviewCheckConfig): string[] {
+  if (!check.resources) return [];
   const args = ["--core=0:0"];
   const exact = (name: string, value: number) =>
     args.push(`--${name}=${value}:${value}`);
@@ -182,16 +243,7 @@ export function buildCheckInvocation(
   if (check.resources.maxOpenFiles !== undefined) {
     exact("nofile", check.resources.maxOpenFiles);
   }
-  args.push("--", "/bin/sh", "-c", check.run);
-  return {
-    file: PRLIMIT_PATH,
-    args,
-    shell: false,
-    execution: {
-      backend: "linux-prlimit",
-      resourceLimits: check.resources,
-    },
-  };
+  return args;
 }
 
 function mebibytes(value: number): number {
@@ -204,7 +256,30 @@ export function buildCheckEnvironment(check: ReviewCheckConfig): Record<string, 
     [...allowed]
       .map((name) => [name, process.env[name]] as const)
       .filter((entry): entry is readonly [string, string] => entry[1] !== undefined)
+      .filter(
+        ([name, value]) =>
+          check.isolation !== "bubblewrap" || isolatedEnvironmentValueAllowed(name, value)
+      )
   );
+}
+
+function isolatedEnvironmentValueAllowed(name: string, value: string): boolean {
+  if (!SENSITIVE_ENVIRONMENT_NAME.test(name)) return true;
+  if (/^no_proxy$/i.test(name)) return true;
+  if (!/proxy/i.test(name)) return false;
+  try {
+    const proxy = new URL(value);
+    return (
+      (proxy.protocol === "http:" || proxy.protocol === "https:") &&
+      !proxy.username &&
+      !proxy.password &&
+      (proxy.pathname === "" || proxy.pathname === "/") &&
+      !proxy.search &&
+      !proxy.hash
+    );
+  } catch {
+    return false;
+  }
 }
 
 function collectSecrets(environment: Record<string, string>): Array<[string, string]> {

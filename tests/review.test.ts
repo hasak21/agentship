@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -19,6 +20,10 @@ import {
   selectChangedFiles,
 } from "../src/review/review";
 import { mapRequirementsToChangedFiles } from "../src/review/requirement-mapper";
+import {
+  buildBubblewrapArguments,
+  prepareBubblewrapSandbox,
+} from "../src/review/sandbox";
 import {
   buildCheckEnvironment,
   buildCheckInvocation,
@@ -238,6 +243,82 @@ test("configured resource limits fail closed without the Linux backend", () => {
   );
 });
 
+test("bubblewrap invocation exposes only the disposable workspace and runtime", () => {
+  const args = buildBubblewrapArguments({
+    repositoryRoot: "/work/subject",
+    workspace: "/tmp/copy",
+    nodeModules: "/work/subject/node_modules",
+    network: "denied",
+    command: "npm test",
+  });
+
+  assert.ok(args.includes("--unshare-all"));
+  assert.equal(args.includes("--share-net"), false);
+  assert.deepEqual(args.slice(-3), ["/bin/sh", "-c", "npm test"]);
+  assert.ok(args.some((value, index) =>
+    value === "--bind" && args[index + 1] === "/tmp/copy" && args[index + 2] === "/work/subject"
+  ));
+  assert.equal(
+    args.some((value, index) => value === "--ro-bind" && args[index + 1] === "/"),
+    false
+  );
+
+  const allowed = buildBubblewrapArguments({
+    repositoryRoot: "/work/subject",
+    workspace: "/tmp/copy",
+    network: "allowed",
+    command: "npm test",
+  });
+  assert.ok(allowed.includes("--share-net"));
+  assert.ok(allowed.includes("/etc/ssl"));
+});
+
+test("isolated resource limits wrap bubblewrap and unsupported hosts fail closed", async () => {
+  const execution = {
+    backend: "linux-bubblewrap" as const,
+    resourceLimits: { cpuSeconds: 5 },
+    isolation: {
+      workspace: "disposable-copy" as const,
+      hostFilesystem: "minimal-read-only-runtime" as const,
+      network: "denied" as const,
+    },
+  };
+  const invocation = buildCheckInvocation(
+    {
+      name: "isolated",
+      run: "npm test",
+      isolation: "bubblewrap",
+      resources: { cpuSeconds: 5 },
+    },
+    "linux",
+    true,
+    { args: ["--unshare-all", "--", "/bin/sh", "-c", "npm test"], execution, cleanup: async () => {} }
+  );
+  assert.equal(invocation.file, "/usr/bin/prlimit");
+  assert.deepEqual(invocation.args, [
+    "--core=0:0",
+    "--cpu=5:5",
+    "--",
+    "/usr/bin/bwrap",
+    "--unshare-all",
+    "--",
+    "/bin/sh",
+    "-c",
+    "npm test",
+  ]);
+  assert.deepEqual(invocation.execution, execution);
+
+  await assert.rejects(
+    prepareBubblewrapSandbox(
+      { name: "isolated", run: "npm test", isolation: "bubblewrap" },
+      process.cwd(),
+      "darwin",
+      false
+    ),
+    /requires Linux with \/usr\/bin\/bwrap and \/usr\/bin\/git; the check was not executed/
+  );
+});
+
 test("Linux CPU limits stop a busy check before its wall timeout", async (context) => {
   if (process.platform !== "linux") {
     context.skip("Linux prlimit integration only");
@@ -263,7 +344,64 @@ test("Linux CPU limits stop a busy check before its wall timeout", async (contex
   assert.equal(evidence.status, "failed");
   assert.equal(evidence.execution?.backend, "linux-prlimit");
   assert.deepEqual(evidence.execution?.resourceLimits, { cpuSeconds: 1 });
+  assert.ok(evidence.durationMs >= 700, `check stopped too early at ${evidence.durationMs} ms`);
   assert.ok(evidence.durationMs < 4_500, `check took ${evidence.durationMs} ms`);
+});
+
+test("bubblewrap discards mutations, hides host files, and denies network by default", async (context) => {
+  if (process.env.AGENTSHIP_SANDBOX === "bubblewrap") {
+    context.skip("nested bubblewrap is outside this integration test");
+    return;
+  }
+  if (process.platform !== "linux") {
+    context.skip("Linux bubblewrap integration only");
+    return;
+  }
+  try {
+    await access("/usr/bin/bwrap");
+  } catch {
+    context.skip("/usr/bin/bwrap is unavailable");
+    return;
+  }
+
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-isolation-"));
+  const server = createServer((_request, response) => response.end("reachable"));
+  try {
+    await writeFile(path.join(directory, "subject.txt"), "original\n", "utf8");
+    await writeFile(path.join(directory, ".gitignore"), "ignored-secret\n", "utf8");
+    await writeFile(path.join(directory, "ignored-secret"), "host-only\n", "utf8");
+    await execFileAsync("git", ["init"], { cwd: directory });
+    await execFileAsync("git", ["add", ".gitignore", "subject.txt"], { cwd: directory });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await runCheck(
+      {
+        name: "isolated",
+        run: `test ! -e /etc/passwd && test ! -e ignored-secret && touch sandbox-only && node -e "fetch('http://127.0.0.1:${address.port}').then(() => process.exit(1), () => process.exit(0))"`,
+        timeoutSeconds: 10,
+        isolation: "bubblewrap",
+      },
+      directory
+    );
+
+    assert.equal(evidence.status, "passed", evidence.stderr);
+    assert.deepEqual(evidence.execution, {
+      backend: "linux-bubblewrap",
+      isolation: {
+        workspace: "disposable-copy",
+        hostFilesystem: "minimal-read-only-runtime",
+        network: "denied",
+      },
+    });
+    await assert.rejects(access(path.join(directory, "sandbox-only")));
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("active owned suppressions retain warning evidence but remove verdict impact", () => {
@@ -823,8 +961,12 @@ test("protected path approval must exactly match configured policy", () => {
 test("check environments are allowlisted and secrets are redacted", async () => {
   const previousSecret = process.env.AGENTSHIP_TEST_SECRET;
   const previousIgnored = process.env.AGENTSHIP_TEST_IGNORED;
+  const previousProxy = process.env.AGENTSHIP_TEST_PROXY;
+  const previousSafeProxy = process.env.AGENTSHIP_TEST_SAFE_PROXY;
   process.env.AGENTSHIP_TEST_SECRET = "should-not-appear";
   process.env.AGENTSHIP_TEST_IGNORED = "not-allowed";
+  process.env.AGENTSHIP_TEST_PROXY = "http://user:password@proxy.invalid";
+  process.env.AGENTSHIP_TEST_SAFE_PROXY = "http://proxy.invalid:8080";
 
   try {
     const environment = buildCheckEnvironment({
@@ -834,6 +976,22 @@ test("check environments are allowlisted and secrets are redacted", async () => 
     });
     assert.equal(environment.AGENTSHIP_TEST_SECRET, "should-not-appear");
     assert.equal(environment.AGENTSHIP_TEST_IGNORED, undefined);
+    const isolatedEnvironment = buildCheckEnvironment({
+      name: "isolated-environment",
+      run: "ignored",
+      isolation: "bubblewrap",
+      environment: [
+        "AGENTSHIP_TEST_SECRET",
+        "AGENTSHIP_TEST_PROXY",
+        "AGENTSHIP_TEST_SAFE_PROXY",
+      ],
+    });
+    assert.equal(isolatedEnvironment.AGENTSHIP_TEST_SECRET, undefined);
+    assert.equal(isolatedEnvironment.AGENTSHIP_TEST_PROXY, undefined);
+    assert.equal(
+      isolatedEnvironment.AGENTSHIP_TEST_SAFE_PROXY,
+      "http://proxy.invalid:8080"
+    );
 
     const evidence = await runCheck(
       {
@@ -854,6 +1012,10 @@ test("check environments are allowlisted and secrets are redacted", async () => 
     else process.env.AGENTSHIP_TEST_SECRET = previousSecret;
     if (previousIgnored === undefined) delete process.env.AGENTSHIP_TEST_IGNORED;
     else process.env.AGENTSHIP_TEST_IGNORED = previousIgnored;
+    if (previousProxy === undefined) delete process.env.AGENTSHIP_TEST_PROXY;
+    else process.env.AGENTSHIP_TEST_PROXY = previousProxy;
+    if (previousSafeProxy === undefined) delete process.env.AGENTSHIP_TEST_SAFE_PROXY;
+    else process.env.AGENTSHIP_TEST_SAFE_PROXY = previousSafeProxy;
   }
 });
 

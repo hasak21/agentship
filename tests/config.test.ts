@@ -105,6 +105,7 @@ limits:
 checks:
   - name: review
     run: npm test
+    isolation: bubblewrap
     resources:
       cpuSeconds: 60
       memoryMiB: 2048
@@ -130,6 +131,7 @@ checks:
         maxFileSizeMiB: 64,
         maxOpenFiles: 1024,
       });
+      assert.equal(config.checks[0]?.isolation, "bubblewrap");
     }
   );
 });
@@ -155,6 +157,21 @@ checks:
       }
     );
   }
+});
+
+test("configuration rejects unsupported check isolation backends", async () => {
+  await withConfig(
+    `version: 1
+mode: report
+checks:
+  - name: review
+    run: npm test
+    isolation: docker
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /isolation must be 'bubblewrap'/);
+    }
+  );
 });
 
 test("configuration rejects unsafe check paths and invalid budgets", async () => {

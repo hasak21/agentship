@@ -60,7 +60,7 @@ Exit criterion: omitted requirements are detected with measured, publishable acc
 
 - [~] Build a fork-safe GitHub Action (trusted-base, read-only, artifact-only report workflow delivered; live fork-PR validation pending).
 - [~] Publish Check Run, Markdown, JSON, and SARIF outputs (artifact/job-summary outputs and a separate bounded, always-neutral `workflow_run` Check Run publisher are delivered; live fork-PR validation remains pending).
-- [~] Add changed-path filtering and execution budgets (deterministic check selection, pre-execution changed-file/diff limits, wall-clock timeouts, and Linux per-process CPU/address-space/file-size/file-descriptor limits delivered; aggregate process-tree, disk-capacity, and isolated-worker quotas remain pending).
+- [~] Add changed-path filtering and execution budgets (deterministic check selection, pre-execution changed-file/diff limits, wall-clock timeouts, Linux per-process limits, and opt-in disposable bubblewrap workers delivered; aggregate cgroup accounting, disk-capacity quotas, and official CI worker provisioning remain pending).
 - [x] Add baselines, suppressions with ownership, and report history (bounded comparison, owned suppressions, compatible local history, and validated publisher-written/read-only PR cache restoration delivered).
 
 Exit criterion: a team can install AgentShip without granting merge-blocking authority.
@@ -76,8 +76,8 @@ Exit criterion: teams can enable gate mode without trusting an LLM verdict.
 
 ## M6 — Adversarial maintainer mode
 
-- [ ] Execute untrusted checks in isolated, resource-limited workers.
-- [ ] Enforce network denial and secret isolation (version 1 only records declared network capability).
+- [~] Execute untrusted checks in isolated, resource-limited workers (opt-in Linux bubblewrap disposable-copy backend composes with `prlimit`; official hosted-runner provisioning and stronger kernel/container boundaries remain pending).
+- [~] Enforce network denial and secret isolation (bubblewrap checks default to a fresh network namespace and minimal filesystem with no host home or `/etc`; non-isolated checks still only record network capability, and explicitly allowed networking shares the host namespace).
 - [~] Treat source, task text, tests, and repository instructions as hostile inputs (structured parsing and Markdown report anti-forgery escaping delivered; model prompt isolation and broader adversarial corpus remain pending).
 - [ ] Sign evidence manifests and preserve verifier provenance.
 

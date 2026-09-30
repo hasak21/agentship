@@ -1,0 +1,67 @@
+version: 1
+mode: report
+
+limits:
+  maxChangedFiles: 500
+  maxDiffBytes: 5242880
+
+# Opt-in Linux policy for hosts with /usr/bin/bwrap. The Next build explicitly
+# needs network for next/font; every other project check stays network-denied.
+checks:
+  - name: lint
+    run: npm run lint
+    required: true
+    timeoutSeconds: 120
+    isolation: bubblewrap
+    network: denied
+    resources:
+      cpuSeconds: 120
+      maxFileSizeMiB: 64
+      maxOpenFiles: 1024
+
+  - name: test
+    run: npm test
+    required: true
+    timeoutSeconds: 120
+    isolation: bubblewrap
+    network: denied
+    resources:
+      cpuSeconds: 120
+      maxFileSizeMiB: 64
+      maxOpenFiles: 1024
+
+  - name: build
+    run: npm run build
+    required: true
+    timeoutSeconds: 180
+    isolation: bubblewrap
+    network: allowed
+    resources:
+      cpuSeconds: 180
+      maxFileSizeMiB: 64
+      maxOpenFiles: 1024
+
+  - name: cli-package
+    run: npm run verify:cli
+    required: true
+    timeoutSeconds: 120
+    isolation: bubblewrap
+    network: denied
+    resources:
+      cpuSeconds: 120
+      maxFileSizeMiB: 64
+      maxOpenFiles: 1024
+
+policy:
+  blockOn:
+    - required_check_failed
+    - required_check_timed_out
+    - explicit_requirement_path_unchanged
+    - explicit_requirement_evidence_unsatisfied
+  protectedPaths:
+    - pattern: .github/workflows/**
+      requireManualApproval: true
+    - pattern: src/app/api/**
+      requireManualApproval: true
+    - pattern: src/review/**
+      requireManualApproval: true

@@ -287,6 +287,31 @@ The portable local `.agentship.yml` therefore remains unrestricted. The official
 workflow uses the base-owned `.agentship.ci.yml` for CPU, file-size, and open-file bounds,
 but does not claim a reliable memory bound for its Node-based checks.
 
+Linux users with `/usr/bin/bwrap` may opt a check into a disposable worker:
+
+```yaml
+checks:
+  - name: test
+    run: npm test
+    isolation: bubblewrap
+    network: denied
+```
+
+The worker copies Git-tracked and non-ignored untracked files without `.git`, `.agentship`, or `node_modules`, mounts
+the copied workspace writable, mounts `node_modules` and the minimal system/Node runtime
+read-only, creates fresh `/tmp` and home directories, and discards the copy afterward.
+Network is denied unless the trusted policy explicitly says `network: allowed`. Workspace
+copying is bounded to 200,000 entries and 2 GiB. Unsupported platforms or a missing
+backend fail closed. This is meaningful host-file, mutation, PID, and network namespace
+isolation, but not a VM or a defense against kernel vulnerabilities. See
+`docs/ISOLATED_CHECKS.md` for exact boundaries.
+
+This repository dogfoods the backend with:
+
+```bash
+npm run review -- --config .agentship.bubblewrap.yml --task task.md
+```
+
 Known warning findings can be suppressed by an exact finding ID and kind under
 `policy.suppressions`. Every suppression requires a stable suppression ID, owner, reason,
 and `YYYY-MM-DD` expiry. Suppressions cannot target blocker kinds, never delete evidence,

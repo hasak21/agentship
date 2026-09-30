@@ -16,7 +16,7 @@ Only observed, reproduced, or explicitly attested evidence may satisfy a require
 
 The first local runner executes commands from the repository's trusted `.agentship.yml`. It is intended for a developer's own checkout. It is not yet safe for hostile pull requests because repository commands execute on the host.
 
-Before privileged maintainer-side execution, AgentShip must add process isolation, network denial by default, aggregate worker budgets, secret separation, immutable policy loading, and signed evidence manifests. The current hosted report workflow has narrower per-process Linux limits only.
+Before privileged maintainer-side execution, AgentShip must add reproducibly provisioned process isolation, aggregate worker budgets, immutable policy loading, and signed evidence manifests. An opt-in Linux bubblewrap backend now provides disposable-copy, filesystem, PID, and default network isolation, but the current hosted report workflow does not provision it and still has narrower per-process Linux limits only.
 
 ## Evidence manifest
 
@@ -42,7 +42,32 @@ Local checks receive a minimal cross-platform environment allowlist. A repositor
 
 Timeouts terminate the spawned process tree rather than only the shell parent. Checks with a `resources` policy execute on Linux through `/usr/bin/prlimit` with exact CPU-time, virtual-address-space, file-size, and open-file limits; configuration fails closed when that backend is unavailable. Children inherit these limits, but consumption is not aggregated across the process tree. This is a reliability boundary, not hostile-code isolation: checks still execute directly on the host and retain its filesystem and network view.
 
-The `network` field in version 1 policy is a declared capability recorded in evidence; it is not yet enforced. Network denial requires the isolated runner planned for adversarial maintainer mode.
+For direct checks, the `network` field remains a declared capability recorded in evidence
+rather than an enforced boundary. For checks with `isolation: bubblewrap`, it is enforced: absent or
+`denied` creates a fresh network namespace, while `allowed` deliberately shares the host
+network namespace and mounts only resolver/certificate configuration needed by clients.
+Non-isolated checks retain the older declaration-only behavior. The report distinguishes
+the backend, disposable workspace, filesystem profile, and effective network mode so a
+consumer cannot confuse a direct check with an isolated one.
+
+The bubblewrap worker makes a bounded copy of Git-tracked and non-ignored untracked
+repository content, omitting `.git`, `.agentship`, ignored local secrets, and
+`node_modules`; a host-installed dependency tree is mounted read-only.
+The worker receives only `/usr`, essential library paths, the active Node distribution,
+a private `/proc`, minimal `/dev`, and fresh temporary/home directories. It does not see
+the host home, `/etc`, or repository writes made inside the disposable copy. An explicitly
+network-allowed worker additionally receives read-only TLS and resolver files. Copy setup
+is bounded to 200,000 entries and 2 GiB and fails closed on special files or unavailable
+Linux user namespaces. This boundary does not prevent kernel exploits, side channels,
+resource use outside current per-process limits, or malicious behavior in an explicitly
+mounted runtime/dependency tree.
+
+Isolated checks also drop environment names shaped like credentials, tokens, cookies,
+passwords, or secrets even when requested by policy. Proxy variables are retained only
+for credential-free origin URLs, while `NO_PROXY` remains routing data. This is defense
+in depth, not semantic secret detection: an operator can still place a secret under an
+innocuous custom name, so hostile-check policies must never request unknown sensitive
+values.
 
 ## Public API boundary
 
