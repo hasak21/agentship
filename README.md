@@ -228,6 +228,27 @@ JSON evidence includes the canonical host Git executable and its bounded version
 AgentShip refuses repository-controlled and `node_modules/.bin` Git replacements before
 calculating the reviewed head or diff.
 
+Optionally sign the exact JSON report with an Ed25519 private key stored outside the
+reviewed repository:
+
+```bash
+openssl genpkey -algorithm Ed25519 -out ../agentship-signing-key.pem
+chmod 600 ../agentship-signing-key.pem
+openssl pkey -in ../agentship-signing-key.pem -pubout -out ../agentship-signing-public.pem
+
+npm run review -- --task task.md \
+  --output .agentship/reviews/latest.json \
+  --signing-key ../agentship-signing-key.pem
+node dist/agentship.cjs verify-signature \
+  --report .agentship/reviews/latest.json \
+  --signature .agentship/reviews/latest.sig.json \
+  --public-key ../agentship-signing-public.pem
+```
+
+Verification requires the separately trusted public key; a key embedded beside an
+untrusted report is not authority. See `docs/EVIDENCE_SIGNATURES.md` for key and CI
+boundaries.
+
 Compare a review with a previous AgentShip JSON report:
 
 ```bash

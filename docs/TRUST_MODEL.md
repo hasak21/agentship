@@ -29,7 +29,20 @@ Each report binds together:
 - findings derived from that captured evidence;
 - the AgentShip schema and tool version.
 
-The current manifest is tamper-evident through hashes but is not cryptographically signed.
+The JSON report can now be accompanied by a detached Ed25519 signature. The signed
+canonical statement binds the exact report byte length and SHA-256 to the trusted public
+key's SPKI SHA-256. Verification recomputes all three values and requires an explicitly
+supplied public key outside the verifier's trusted working root; the sidecar does not
+carry a self-authorizing key. Signing private keys must resolve outside the reviewed
+repository and, on POSIX, deny group/other access. See `docs/EVIDENCE_SIGNATURES.md`.
+
+Signatures authenticate possession of a configured key, not a person's identity, unless
+the operator separately maps that public-key fingerprint to an owner. The ordinary local
+and GitHub report flows remain unsigned unless signing is explicitly configured. Current
+CI intentionally sends no signing secret into the pull-request job; a future privileged
+attestor must sign only after bounded artifact validation. Key rotation, HSM/KMS support,
+revocation, trusted timestamps, transparency logs, AgentShip binary digests, and runner
+image attestations remain open provenance work.
 
 ## Verifier tool resolution
 

@@ -8,6 +8,10 @@ import {
   type FindingOutcomeStatus,
 } from "../review/outcome";
 import { runReview } from "../review/review";
+import {
+  signEvidenceReport,
+  verifyEvidenceSignature,
+} from "../review/signature";
 
 interface CliOptions {
   taskPath?: string;
@@ -20,6 +24,8 @@ interface CliOptions {
   approvedProtectedPathPatterns: string[];
   overridePath?: string;
   historyDirectory?: string;
+  signingKeyPath?: string;
+  signatureOutputPath?: string;
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -35,7 +41,7 @@ function parseArgs(args: string[]): CliOptions {
       options.staged = true;
       continue;
     }
-    if (["--task", "--config", "--base", "--baseline", "--override", "--history", "--output", "--confirm", "--approve-path"].includes(arg)) {
+    if (["--task", "--config", "--base", "--baseline", "--override", "--history", "--output", "--confirm", "--approve-path", "--signing-key", "--signature-output"].includes(arg)) {
       const value = args[++index];
       if (!value) throw new Error(`${arg} requires a value.`);
       if (arg === "--task") options.taskPath = value;
@@ -45,6 +51,8 @@ function parseArgs(args: string[]): CliOptions {
       if (arg === "--override") options.overridePath = value;
       if (arg === "--history") options.historyDirectory = value;
       if (arg === "--output") options.outputPath = value;
+      if (arg === "--signing-key") options.signingKeyPath = value;
+      if (arg === "--signature-output") options.signatureOutputPath = value;
       if (arg === "--confirm") {
         options.confirmedRequirementIds.push(
           ...value.split(",").map((id) => id.trim()).filter(Boolean)
@@ -57,6 +65,9 @@ function parseArgs(args: string[]): CliOptions {
     }
     throw new Error(`Unknown argument: ${arg}`);
   }
+  if (options.signatureOutputPath && !options.signingKeyPath) {
+    throw new Error("--signature-output requires --signing-key.");
+  }
   return options;
 }
 
@@ -68,6 +79,7 @@ Usage:
   agentship benchmark --fixtures <path>
   agentship outcome --report <path> --finding-id <id> --finding-kind <kind> --status <status> --actor <actor> --reason <reason>
   agentship metrics --outcomes <dir> --reports <dir> --benchmark-fixtures <path>
+  agentship verify-signature --report <path> --signature <path> --public-key <path>
   npm run review -- [options]
 
 Options:
@@ -79,6 +91,8 @@ Options:
   --override <path> Bounded override record referencing a prior report hash
   --history <dir>  Record history and select the latest compatible baseline
   --output <path>  JSON report path
+  --signing-key <path> Sign exact JSON evidence with an external Ed25519 private key
+  --signature-output <path> Detached signature path (default: report .sig.json)
   --confirm <ids>  Confirm comma-separated requirements marked [confirm]
   --approve-path <pattern> Confirm one configured protected-path policy (repeatable)
   -h, --help       Show this help\n`;
@@ -183,6 +197,35 @@ function parseBenchmarkArgs(args: string[]): string {
   return fixturePath;
 }
 
+function parseVerifySignatureArgs(args: string[]): {
+  reportPath: string;
+  signaturePath: string;
+  publicKeyPath: string;
+} {
+  const values = new Map<string, string>();
+  const supported = new Set(["--report", "--signature", "--public-key"]);
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (!supported.has(arg)) {
+      throw new Error(`Unknown verify-signature argument: ${arg}`);
+    }
+    const value = args[++index];
+    if (!value) throw new Error(`${arg} requires a value.`);
+    if (values.has(arg)) throw new Error(`${arg} may only be provided once.`);
+    values.set(arg, value);
+  }
+  const required = (flag: string) => {
+    const value = values.get(flag);
+    if (!value) throw new Error(`verify-signature requires ${flag} <path>.`);
+    return path.resolve(process.cwd(), value);
+  };
+  return {
+    reportPath: required("--report"),
+    signaturePath: required("--signature"),
+    publicKeyPath: required("--public-key"),
+  };
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes("--help") || args.includes("-h")) {
@@ -218,6 +261,16 @@ async function main() {
     writeStdout(`${JSON.stringify(metrics, null, 2)}\n`);
     return;
   }
+  if (args[0] === "verify-signature") {
+    const statement = await verifyEvidenceSignature({
+      ...parseVerifySignatureArgs(args.slice(1)),
+      trustedRoot: process.cwd(),
+    });
+    writeStdout(
+      `AgentShip signature: VALID\nReport SHA-256: ${statement.reportSha256}\nPublic key SHA-256: ${statement.publicKeySha256}\n`
+    );
+    return;
+  }
   const options = parseArgs(args);
   const result = await runReview({
     cwd: process.cwd(),
@@ -234,6 +287,16 @@ async function main() {
   });
 
   const { report } = result;
+  const signed = options.signingKeyPath
+    ? await signEvidenceReport({
+        repositoryRoot: report.repository.root,
+        reportPath: result.jsonPath,
+        privateKeyPath: path.resolve(process.cwd(), options.signingKeyPath),
+        ...(options.signatureOutputPath
+          ? { outputPath: path.resolve(process.cwd(), options.signatureOutputPath) }
+          : {}),
+      })
+    : undefined;
   const output = [
     "",
     `AgentShip review: ${report.verdict}`,
@@ -255,6 +318,9 @@ async function main() {
   output.push(`Evidence: ${path.relative(process.cwd(), result.jsonPath)}`);
   output.push(`Report: ${path.relative(process.cwd(), result.markdownPath)}`);
   output.push(`SARIF: ${path.relative(process.cwd(), result.sarifPath)}`);
+  if (signed) {
+    output.push(`Signature: ${path.relative(process.cwd(), signed.outputPath)}`);
+  }
   if (result.historyJsonPath) {
     output.push(`History: ${path.relative(process.cwd(), result.historyJsonPath)}`);
   }
@@ -266,6 +332,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  writeSync(2, `AgentShip review failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  writeSync(2, `AgentShip command failed: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 2;
 });

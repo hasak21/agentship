@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,6 +24,8 @@ try {
     "--history <dir>",
     "agentship outcome",
     "agentship metrics",
+    "agentship verify-signature",
+    "--signing-key <path>",
     "--approve-path <pattern>",
   ];
   const missingHelp = requiredHelp.filter((fragment) => !stdout.includes(fragment));
@@ -119,7 +122,72 @@ try {
   ) {
     throw new Error("Bundled CLI calibration metrics are incomplete.");
   }
-  console.log("Bundled CLI review, benchmark, outcome, and metrics commands run outside the repository without node_modules.");
+
+  const reviewRepository = path.join(temporaryDirectory, "signed-review");
+  const keyDirectory = path.join(temporaryDirectory, "trusted-keys");
+  await mkdir(reviewRepository);
+  await mkdir(keyDirectory);
+  await writeFile(
+    path.join(reviewRepository, ".agentship.yml"),
+    "version: 1\nmode: report\nchecks:\n  - name: smoke\n    run: node -e \"process.exit(0)\"\n",
+    "utf8"
+  );
+  await writeFile(path.join(reviewRepository, "subject.txt"), "signed evidence\n", "utf8");
+  await execFileAsync("git", ["init", "-q"], { cwd: reviewRepository });
+  await execFileAsync("git", ["config", "user.email", "verify@example.com"], {
+    cwd: reviewRepository,
+  });
+  await execFileAsync("git", ["config", "user.name", "CLI Verifier"], {
+    cwd: reviewRepository,
+  });
+  await execFileAsync("git", ["add", "."], { cwd: reviewRepository });
+  await execFileAsync("git", ["commit", "-qm", "fixture"], { cwd: reviewRepository });
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const privateKeyPath = path.join(keyDirectory, "private.pem");
+  const publicKeyPath = path.join(keyDirectory, "public.pem");
+  await writeFile(
+    privateKeyPath,
+    privateKey.export({ format: "pem", type: "pkcs8" }),
+    { mode: 0o600 }
+  );
+  await writeFile(
+    publicKeyPath,
+    publicKey.export({ format: "pem", type: "spki" }),
+    "utf8"
+  );
+  const signedReview = await execFileAsync(
+    process.execPath,
+    [
+      isolatedCli,
+      "review",
+      "--output",
+      ".agentship/reviews/signed.json",
+      "--signing-key",
+      privateKeyPath,
+    ],
+    { cwd: reviewRepository, encoding: "utf8" }
+  );
+  if (!signedReview.stdout.includes("Signature: .agentship/reviews/signed.sig.json")) {
+    throw new Error("Bundled CLI did not emit detached signature evidence.");
+  }
+  const verifiedSignature = await execFileAsync(
+    process.execPath,
+    [
+      isolatedCli,
+      "verify-signature",
+      "--report",
+      ".agentship/reviews/signed.json",
+      "--signature",
+      ".agentship/reviews/signed.sig.json",
+      "--public-key",
+      publicKeyPath,
+    ],
+    { cwd: reviewRepository, encoding: "utf8" }
+  );
+  if (!verifiedSignature.stdout.includes("AgentShip signature: VALID")) {
+    throw new Error("Bundled CLI did not verify detached signature evidence.");
+  }
+  console.log("Bundled CLI review, benchmark, outcome, metrics, and signature commands run outside the repository without node_modules.");
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
 }
