@@ -66,6 +66,13 @@ For requirements without an equivalent explicit path annotation, AgentShip conse
 
 The report also lists changed files not matched by any explicit change annotation. These files are **unattributed**, not proven unrelated. This reverse-coverage view is evidence for human review and does not produce a finding by itself.
 
+Human-readable Markdown is a separate display boundary. Task prose, paths, check labels,
+commands, finding titles, and operator-supplied reasons are normalized and encoded before
+they enter fixed report prose, tables, or code markup. This prevents those values from
+creating apparent AgentShip headings, columns, links, or raw HTML. The underlying JSON
+and SARIF preserve structured evidence; other consumers remain responsible for encoding
+it for their own output context.
+
 A task containing the exact `<!-- agentship: strict-change-coverage -->` directive turns unattributed files into a warning-level finding. The task document itself is excluded because it is review input rather than implementation output. Only explicit path mappings satisfy strict attribution; inferred roles cannot hide an unattributed file. The directive is task-owned and warning-only, so it is not an immutable repository policy and is not sufficient for hostile pull-request enforcement.
 
 A requirement prefixed with `[confirm]` blocks gate-mode review until its stable requirement ID is supplied through `--confirm`. The report records whether confirmation was required or supplied. This is an explicit local operator assertion bound to the task and diff hashes; it is not authenticated identity, a signature, or attested approval. AgentShip does not infer ambiguity from unrestricted prose.

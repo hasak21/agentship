@@ -78,7 +78,7 @@ Exit criterion: teams can enable gate mode without trusting an LLM verdict.
 
 - [ ] Execute untrusted checks in isolated, resource-limited workers.
 - [ ] Enforce network denial and secret isolation (version 1 only records declared network capability).
-- [ ] Treat source, task text, tests, and repository instructions as hostile inputs.
+- [~] Treat source, task text, tests, and repository instructions as hostile inputs (structured parsing and Markdown report anti-forgery escaping delivered; model prompt isolation and broader adversarial corpus remain pending).
 - [ ] Sign evidence manifests and preserve verifier provenance.
 
 Exit criterion: a malicious pull request cannot escape the runner, obtain secrets, or approve itself.

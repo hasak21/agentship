@@ -798,7 +798,7 @@ async function loadTask(repositoryRoot: string, taskPath: string) {
   };
 }
 
-function renderMarkdown(report: ReviewReport): string {
+export function renderMarkdown(report: ReviewReport): string {
   const icon = report.verdict === "PASS" ? "✅" : report.verdict === "WARN" ? "⚠️" : "⛔";
   const checks = report.checks
     .map(
@@ -808,15 +808,15 @@ function renderMarkdown(report: ReviewReport): string {
               .map(([name, value]) => `${name}=${value}`)
               .join(", ")
           : "";
-        return `| ${check.name} | ${check.status} | ${check.exitCode ?? "—"} | ${check.durationMs} ms | ${check.execution?.backend ?? "legacy"}${limits ? ` (${limits})` : ""} | ${
+        return `| ${escapeMarkdown(check.name)} | ${check.status} | ${check.exitCode ?? "—"} | ${check.durationMs} ms | ${check.execution?.backend ?? "legacy"}${limits ? ` (${limits})` : ""} | ${
           check.skipReason
-            ? `skipped: ${check.skipReason}`
+            ? `skipped: ${escapeMarkdown(check.skipReason)}`
             : check.selection
             ? check.selection.matchedFiles.length > 0
-              ? check.selection.matchedFiles.map((file) => `\`${file}\``).join(", ")
+              ? check.selection.matchedFiles.map(markdownCode).join(", ")
               : "no path match"
             : "all changes"
-        } | \`${check.command}\` |`;
+        } | ${markdownCode(check.command)} |`;
       }
     )
     .join("\n");
@@ -824,11 +824,11 @@ function renderMarkdown(report: ReviewReport): string {
     ? report.findings
         .map(
           (finding) =>
-            `- **${finding.override ? "OVERRIDDEN " : finding.suppression ? "SUPPRESSED " : ""}${finding.severity.toUpperCase()}**: ${finding.title}${
+            `- **${finding.override ? "OVERRIDDEN " : finding.suppression ? "SUPPRESSED " : ""}${finding.severity.toUpperCase()}**: ${escapeMarkdown(finding.title)}${
               finding.suppression
-                ? ` — \`${finding.suppression.id}\`, owner ${finding.suppression.owner}, expires ${finding.suppression.expiresAt}: ${finding.suppression.reason}`
+                ? ` — ${markdownCode(finding.suppression.id)}, owner ${escapeMarkdown(finding.suppression.owner)}, expires ${finding.suppression.expiresAt}: ${escapeMarkdown(finding.suppression.reason)}`
                 : finding.override
-                  ? ` — \`${finding.override.id}\`, actor ${finding.override.actor}, expires ${finding.override.expiresAt}, source report SHA-256 \`${finding.override.reportSha256}\`: ${finding.override.reason}`
+                  ? ` — ${markdownCode(finding.override.id)}, actor ${escapeMarkdown(finding.override.actor)}, expires ${finding.override.expiresAt}, source report SHA-256 ${markdownCode(finding.override.reportSha256)}: ${escapeMarkdown(finding.override.reason)}`
                 : ""
             }`
         )
@@ -842,7 +842,7 @@ function renderMarkdown(report: ReviewReport): string {
               requirement.confirmationBasis.length
                 ? ` via ${requirement.confirmationBasis.join("+")}`
                 : ""
-            }): ${requirement.text}`
+            }): ${escapeMarkdown(requirement.text)}`
         )
         .join("\n")
     : "No explicit numbered requirements were found.";
@@ -852,23 +852,23 @@ function renderMarkdown(report: ReviewReport): string {
           (mapping) =>
             `- **${mapping.requirementId}**: ${mapping.status} (${mapping.basis})${
               mapping.observedFiles.length
-                ? ` — ${mapping.observedFiles.map((file) => `\`${file}\``).join(", ")}`
+                ? ` — ${mapping.observedFiles.map(markdownCode).join(", ")}`
                 : ""
             }${
               mapping.missingReferences.length
-                ? ` — missing ${mapping.missingReferences.map((reference) => `\`${reference}\``).join(", ")}`
+                ? ` — missing ${mapping.missingReferences.map(markdownCode).join(", ")}`
                 : ""
             }${
               mapping.checkEvidence.length
-                ? ` — checks ${mapping.checkEvidence.map(({ name, status }) => `\`${name}\`=${status}`).join(", ")}`
+                ? ` — checks ${mapping.checkEvidence.map(({ name, status }) => `${markdownCode(name)}=${status}`).join(", ")}`
                 : ""
             }${
               mapping.symbolEvidence.length
-                ? ` — symbols ${mapping.symbolEvidence.map(({ path, symbol, status }) => `\`${path}#${symbol}\`=${status}`).join(", ")}`
+                ? ` — symbols ${mapping.symbolEvidence.map(({ path, symbol, status }) => `${markdownCode(`${path}#${symbol}`)}=${status}`).join(", ")}`
                 : ""
             }${
               mapping.roleEvidence.length
-                ? ` — inferred ${mapping.roleEvidence.map(({ role, observedFiles }) => `${role}=${observedFiles.length ? observedFiles.map((file) => `\`${file}\``).join(",") : "missing"}`).join("; ")}`
+                ? ` — inferred ${mapping.roleEvidence.map(({ role, observedFiles }) => `${role}=${observedFiles.length ? observedFiles.map(markdownCode).join(",") : "missing"}`).join("; ")}`
                 : ""
             }`
         )
@@ -879,7 +879,7 @@ function renderMarkdown(report: ReviewReport): string {
         `- Mode: ${report.task.options.strictChangeCoverage ? "strict" : "advisory"}`,
         `- Attributed changed files: ${report.task.changeCoverage.attributedFiles.length}`,
         `- Unattributed changed files: ${report.task.changeCoverage.unattributedFiles.length}`,
-        ...report.task.changeCoverage.unattributedFiles.map((file) => `  - \`${file}\``),
+        ...report.task.changeCoverage.unattributedFiles.map((file) => `  - ${markdownCode(file)}`),
       ].join("\n")
     : "No task was supplied, so change attribution was not evaluated.";
   const budget = report.budget
@@ -898,21 +898,21 @@ function renderMarkdown(report: ReviewReport): string {
     : "No review input budgets were configured.";
   const baseline = report.baseline
     ? [
-        `- Report: \`${report.baseline.path}\``,
+        `- Report: ${markdownCode(report.baseline.path)}`,
         `- Run: \`${report.baseline.runId}\``,
         `- Commit: \`${report.baseline.head}\``,
         `- SHA-256: \`${report.baseline.sha256}\``,
         `- New findings: ${report.baseline.newFindings.length}`,
         ...report.baseline.newFindings.map(
-          (finding) => `  - \`${finding.id}\` (${finding.kind}, ${finding.severity})`
+          (finding) => `  - ${markdownCode(finding.id)} (${finding.kind}, ${finding.severity})`
         ),
         `- Existing findings: ${report.baseline.existingFindings.length}`,
         ...report.baseline.existingFindings.map(
-          (finding) => `  - \`${finding.id}\` (${finding.kind}, ${finding.severity})`
+          (finding) => `  - ${markdownCode(finding.id)} (${finding.kind}, ${finding.severity})`
         ),
         `- Resolved findings: ${report.baseline.resolvedFindings.length}`,
         ...report.baseline.resolvedFindings.map(
-          (finding) => `  - \`${finding.id}\` (${finding.kind}, ${finding.severity})`
+          (finding) => `  - ${markdownCode(finding.id)} (${finding.kind}, ${finding.severity})`
         ),
       ].join("\n")
     : "No baseline report was supplied.";
@@ -925,29 +925,54 @@ function renderMarkdown(report: ReviewReport): string {
     ? report.configuration.protectedPaths
         .map(
           ({ pattern, matchedFiles, approval }) =>
-            `- \`${pattern}\`: ${approval} — ${matchedFiles.map((file) => `\`${file}\``).join(", ")}`
+            `- ${markdownCode(pattern)}: ${approval} — ${matchedFiles.map(markdownCode).join(", ")}`
         )
         .join("\n")
     : "No configured protected paths matched this change.";
   const override = report.override
     ? [
-        `- Record: \`${report.override.path}\``,
+        `- Record: ${markdownCode(report.override.path)}`,
         `- Override ID: \`${report.override.id}\``,
-        `- Actor: ${report.override.actor}`,
-        `- Reason: ${report.override.reason}`,
+        `- Actor: ${escapeMarkdown(report.override.actor)}`,
+        `- Reason: ${escapeMarkdown(report.override.reason)}`,
         `- Expires: ${report.override.expiresAt}`,
-        `- Source report: \`${report.override.sourceReport.path}\``,
+        `- Source report: ${markdownCode(report.override.sourceReport.path)}`,
         `- Source report SHA-256: \`${report.override.sourceReport.sha256}\``,
         `- Overridden findings: ${report.override.findings.length}`,
       ].join("\n")
     : "No override record was supplied.";
   const history = report.history
     ? [
-        `- Directory: \`${report.history.directory}\``,
+        `- Directory: ${markdownCode(report.history.directory)}`,
         `- Baseline selection: ${report.history.selection}`,
-        `- Recorded report: \`${report.history.recordedReport}\``,
+        `- Recorded report: ${markdownCode(report.history.recordedReport)}`,
       ].join("\n")
     : "History recording was not enabled.";
 
   return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Override record\n\n${override}\n\nOverride actors are recorded claims until authenticated signing is implemented.\n\n## Report history\n\n${history}\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Execution | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
+}
+
+function normalizeMarkdownValue(value: string): string {
+  return value.replace(
+    /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g,
+    " "
+  );
+}
+
+function escapeMarkdown(value: string): string {
+  return normalizeMarkdownValue(value)
+    .replaceAll("\\", "\\\\")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replace(/([`*_[\]{}()#+.!|~:/?@=,'"-])/g, "\\$1");
+}
+
+function markdownCode(value: string): string {
+  const escaped = normalizeMarkdownValue(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("|", "&#124;");
+  return `<code>${escaped}</code>`;
 }

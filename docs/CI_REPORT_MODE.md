@@ -22,6 +22,12 @@ artifact into an always-neutral Check Run without granting merge authority.
 
 All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review. The publisher has only `actions: read`, `contents: read`, and `checks: write`; the subject workflow retains only `contents: read`.
 
+Task prose, repository paths, check labels, commands, finding titles, and human-entered
+reasons are encoded before Markdown rendering. Control characters cannot create new
+headings, and table/code values cannot introduce columns or raw HTML. JSON and SARIF
+remain structured data; any downstream renderer must apply its own context-appropriate
+encoding rather than trusting display strings.
+
 `limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. Every check also has its own timeout and the job has a workflow timeout. The official Ubuntu policy uses `/usr/bin/prlimit` for per-process CPU time, maximum output-file size, and open-file counts; the workflow verifies that backend exists before review. AgentShip can also configure a virtual-address-space bound, but the official Node checks omit it because JavaScript/Wasm runtimes reserve large address ranges unrelated to resident memory. Limits are inherited by child processes but are not aggregated across the process tree. They do not impose a reliable memory or disk-capacity bound, process-count, network, filesystem, or container isolation.
 
 Warning suppressions are also loaded from the base revision. A pull request cannot add a suppression that takes effect in its own report. Matching is exact on finding ID and kind; active owner, reason, and expiry evidence remains visible in every report format. Blocker kinds cannot be configured as suppressible.

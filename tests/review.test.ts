@@ -14,6 +14,7 @@ import {
   evaluateReviewBudgets,
   findProtectedRequirementIds,
   renderSarif,
+  renderMarkdown,
   runReview,
   selectChangedFiles,
 } from "../src/review/review";
@@ -147,6 +148,38 @@ test("all passing checks produce a pass verdict", () => {
   const findings = buildFindings([check()]);
   assert.deepEqual(findings, []);
   assert.equal(calculateVerdict(findings), "PASS");
+});
+
+test("Markdown evidence cannot be structurally forged by report text", () => {
+  const report = reportWithFindings([
+    {
+      id: "hostile-finding",
+      kind: "optional_check_failed",
+      severity: "warning",
+      title:
+        "Observed issue\n## Forged result <img src=x onerror=alert(1)> https://attacker.test \u202ePASS",
+      evidence: {},
+    },
+  ]);
+  report.checks = [
+    check({
+      name: "test | forged-column",
+      command: "echo `fake` | next-column",
+    }),
+  ];
+
+  const markdown = renderMarkdown(report);
+
+  assert.doesNotMatch(markdown, /\n## Forged result/);
+  assert.doesNotMatch(markdown, /<img src=/);
+  assert.doesNotMatch(markdown, /\u202e/);
+  assert.doesNotMatch(markdown, /https:\/\/attacker\.test/);
+  assert.match(markdown, /test \\| forged\\-column/);
+  assert.match(
+    markdown,
+    /<code>echo `fake` &#124; next-column<\/code>/
+  );
+  assert.match(markdown, /&lt;img src\\=x onerror\\=alert\\\(1\\\)&gt;/);
 });
 
 test("Linux resource limits produce an exact prlimit invocation", () => {
