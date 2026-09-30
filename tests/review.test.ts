@@ -565,6 +565,8 @@ checks:
     });
 
     assert.equal(result.report.verdict, "BLOCK");
+    assert.ok(path.isAbsolute(result.report.tool.git?.executable ?? ""));
+    assert.match(result.report.tool.git?.version ?? "", /^git version /);
     assert.equal(result.report.checks[0]?.status, "skipped");
     assert.equal(
       result.report.checks[0]?.skipReason,

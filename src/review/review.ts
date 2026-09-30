@@ -3,7 +3,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { compareWithBaseline, loadBaseline } from "./baseline";
 import { loadConfig } from "./config";
-import { collectGitEvidence, getHead, resolveRepositoryRoot } from "./git";
+import {
+  collectGitEvidence,
+  getGitProvenance,
+  getHead,
+  resolveRepositoryRoot,
+} from "./git";
 import { runCheck } from "./runner";
 import { applyOverride, loadOverride } from "./override";
 import {
@@ -68,6 +73,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
 }> {
   const started = Date.now();
   const repositoryRoot = await resolveRepositoryRoot(options.cwd);
+  const gitProvenance = await getGitProvenance(repositoryRoot);
   const { config, absolutePath: configPath, source: configSource } = await loadConfig(
     repositoryRoot,
     options.configPath
@@ -230,7 +236,11 @@ export async function runReview(options: RunReviewOptions): Promise<{
   const report: ReviewReport = {
     schemaVersion: 1,
     runId,
-    tool: { name: "AgentShip Verify", version: "0.1.0" },
+    tool: {
+      name: "AgentShip Verify",
+      version: "0.1.0",
+      git: gitProvenance,
+    },
     mode: config.mode,
     verdict,
     startedAt: new Date(started).toISOString(),

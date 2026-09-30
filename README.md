@@ -224,6 +224,9 @@ node dist/agentship.cjs review --task task.md
 ```
 
 The review writes JSON, Markdown, and SARIF evidence under `.agentship/reviews/`.
+JSON evidence includes the canonical host Git executable and its bounded version string;
+AgentShip refuses repository-controlled and `node_modules/.bin` Git replacements before
+calculating the reviewed head or diff.
 
 Compare a review with a previous AgentShip JSON report:
 

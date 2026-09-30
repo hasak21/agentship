@@ -25,10 +25,25 @@ Each report binds together:
 - Git head, review scope, changed paths, and a SHA-256 digest of the reviewed diff;
 - task and configuration digests;
 - exact commands, timing, exit status, and bounded output;
+- the canonical Git executable path and version used to calculate repository evidence;
 - findings derived from that captured evidence;
 - the AgentShip schema and tool version.
 
 The current manifest is tamper-evident through hashes but is not cryptographically signed.
+
+## Verifier tool resolution
+
+Repository evidence never resolves `git` through an unfiltered inherited `PATH`.
+AgentShip prefers canonical host-owned system locations on Linux, macOS, and Windows;
+fallback search accepts only absolute directories outside the reviewed checkout and
+rejects every `node_modules/.bin` segment. Symlink targets are canonicalized and checked
+again. If no such executable exists, review fails closed. The selected canonical path and
+the bounded `git --version` result are retained in JSON evidence.
+
+This protects the common `npm run review` case where npm injects repository package bins
+ahead of system paths. It does not authenticate the host operating system or protect
+against an administrator replacing a system Git binary. Binary hashing and signed runner
+image provenance remain part of the unfinished evidence-attestation work.
 
 ## Public provider boundary
 

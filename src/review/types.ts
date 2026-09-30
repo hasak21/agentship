@@ -176,7 +176,11 @@ export interface BaselineComparison {
 export interface ReviewReport {
   schemaVersion: 1;
   runId: string;
-  tool: { name: "AgentShip Verify"; version: string };
+  tool: {
+    name: "AgentShip Verify";
+    version: string;
+    git?: { executable: string; version: string };
+  };
   mode: ReviewMode;
   verdict: ReviewVerdict;
   startedAt: string;
