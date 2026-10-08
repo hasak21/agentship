@@ -16,7 +16,7 @@ Only observed, reproduced, or explicitly attested evidence may satisfy a require
 
 The first local runner executes commands from the repository's trusted `.agentship.yml`. It is intended for a developer's own checkout. It is not yet safe for hostile pull requests because repository commands execute on the host.
 
-Before privileged maintainer-side execution, AgentShip must add aggregate worker budgets, authenticated policy/approval provenance, and privileged evidence attestation. The current hosted report workflow now provisions a digest-pinned bubblewrap package and combines disposable-copy, filesystem, PID, default network isolation, and per-process limits, but remains secretless, neutral, unsigned, and non-gating.
+Before privileged maintainer-side execution, AgentShip must add aggregate kernel-enforced worker budgets, authenticated policy/approval provenance, and privileged evidence attestation. The current hosted report workflow now provisions a digest-pinned bubblewrap package and combines disposable-copy, filesystem, PID, default network isolation, a cumulative check wall-clock deadline, and per-process limits, but remains secretless, neutral, unsigned, and non-gating.
 
 ## Evidence manifest
 
@@ -95,7 +95,7 @@ The lower-level provider client also refuses to inherit an environment credentia
 
 Local checks receive a minimal cross-platform environment allowlist. A repository may request additional variable names for a check, but captured evidence records only those names. Values whose names indicate credentials, tokens, cookies, passwords, secrets, or authenticated proxies are redacted from stdout and stderr.
 
-Timeouts terminate the spawned process tree rather than only the shell parent. Checks with a `resources` policy execute on Linux through `/usr/bin/prlimit` with exact CPU-time, virtual-address-space, file-size, and open-file limits; configuration fails closed when that backend is unavailable. Children inherit these limits, but consumption is not aggregated across the process tree. This is a reliability boundary, not hostile-code isolation: checks still execute directly on the host and retain its filesystem and network view.
+Timeouts terminate the spawned process tree rather than only the shell parent. A repository-owned `limits.maxCheckSeconds` deadline covers cumulative check preparation/execution, initiates termination when the remaining time expires, and prevents later applicable checks from starting after exhaustion. Forced kill has a one-second grace and sandbox cleanup may extend observed elapsed time beyond the configured deadline. Checks with a `resources` policy execute on Linux through `/usr/bin/prlimit` with exact CPU-time, virtual-address-space, file-size, and open-file limits; configuration fails closed when that backend is unavailable. Children inherit kernel limits, but CPU, memory, process-count, and disk consumption are not aggregated across the process tree. This is a reliability boundary, not hostile-code isolation: direct checks still retain the host filesystem and network view.
 
 For direct checks, the `network` field remains a declared capability recorded in evidence
 rather than an enforced boundary. For checks with `isolation: bubblewrap`, it is enforced: absent or

@@ -102,6 +102,7 @@ mode: report
 limits:
   maxChangedFiles: 100
   maxDiffBytes: 1048576
+  maxCheckSeconds: 300
 checks:
   - name: review
     run: npm test
@@ -124,6 +125,7 @@ checks:
       assert.deepEqual(config.limits, {
         maxChangedFiles: 100,
         maxDiffBytes: 1048576,
+        maxCheckSeconds: 300,
       });
       assert.deepEqual(config.checks[0]?.resources, {
         cpuSeconds: 60,
@@ -202,6 +204,34 @@ checks:
 `,
     async (directory) => {
       await assert.rejects(loadConfig(directory), /must be a positive integer/);
+    }
+  );
+
+  await withConfig(
+    `version: 1
+mode: report
+limits:
+  maxCheckSeconds: 86401
+checks:
+  - name: review
+    run: npm test
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /no greater than 86400/);
+    }
+  );
+
+  await withConfig(
+    `version: 1
+mode: report
+limits:
+  unexpectedBudget: 1
+checks:
+  - name: review
+    run: npm test
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /unexpectedBudget is unsupported/);
     }
   );
 });

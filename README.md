@@ -290,9 +290,13 @@ Checks may declare `whenChanged` with exact repository paths or trailing `/**`
 directory patterns. A check with no matching changed path is recorded as `skipped`;
 an explicit `` `check:name` `` requirement still treats that status as unsatisfied.
 Repository-owned `limits.maxChangedFiles` and `limits.maxDiffBytes` stop command
-execution and emit blockers before an oversized review runs. Per-check timeouts and the
-workflow timeout provide wall-clock bounds. On Linux, a check may also request kernel
-resource limits:
+execution and emit blockers before an oversized review runs. `limits.maxCheckSeconds`
+sets a cumulative wall-clock deadline across check preparation and execution: AgentShip
+clamps the active check to the remaining time, stops starting later applicable checks, and
+emits a blocker when exhausted. Per-check and outer workflow timeouts remain independent
+defense-in-depth bounds. Process termination still has a one-second forced-kill grace and
+sandbox cleanup may finish after the deadline; the report records actual elapsed time. On
+Linux, a check may also request kernel resource limits:
 
 ```yaml
 checks:
@@ -308,8 +312,9 @@ checks:
 
 AgentShip executes such checks through `/usr/bin/prlimit` and records the backend and
 configured values in the report. The configuration fails closed without that Linux
-backend. These limits apply to each process and are inherited by children; they are not
-aggregate process-tree, disk-capacity, process-count, network, or filesystem isolation.
+backend. Kernel limits apply to each process and are inherited by children; the cumulative
+wall deadline is aggregate time, not aggregate CPU, memory, process-count, or disk-capacity
+accounting, network control, or filesystem isolation.
 `memoryMiB` is an address-space limit, not an RSS or container-memory limit, and modern
 JavaScript/Wasm runtimes may reserve far more virtual memory than they physically use.
 The portable local `.agentship.yml` therefore remains unrestricted. The official Ubuntu

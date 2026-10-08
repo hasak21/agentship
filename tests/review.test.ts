@@ -653,6 +653,60 @@ checks:
   }
 });
 
+test("aggregate check wall-clock budget clamps the active check and skips later work", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-check-budget-"));
+  try {
+    await execFileAsync("git", ["init", "-q"], { cwd: directory });
+    await execFileAsync("git", ["config", "user.email", "test@example.com"], {
+      cwd: directory,
+    });
+    await execFileAsync("git", ["config", "user.name", "AgentShip Test"], {
+      cwd: directory,
+    });
+    await writeFile(
+      path.join(directory, ".agentship.yml"),
+      `version: 1
+mode: report
+limits:
+  maxCheckSeconds: 0.05
+checks:
+  - name: exhaust-budget
+    run: node -e "setTimeout(() => {}, 5000)"
+    timeoutSeconds: 5
+  - name: must-not-run
+    run: node -e "require('node:fs').writeFileSync('command-ran', 'yes')"
+`,
+      "utf8"
+    );
+    await execFileAsync("git", ["add", "."], { cwd: directory });
+    await execFileAsync("git", ["commit", "-qm", "fixture"], { cwd: directory });
+
+    const result = await runReview({
+      cwd: directory,
+      outputPath: ".agentship/reviews/check-budget.json",
+    });
+
+    assert.equal(result.report.verdict, "BLOCK");
+    assert.equal(result.report.checks[0]?.status, "timed_out");
+    assert.ok((result.report.checks[0]?.timeoutMs ?? Infinity) <= 50);
+    assert.equal(result.report.checks[1]?.status, "skipped");
+    assert.equal(result.report.checks[1]?.skipReason, "review_budget_exceeded");
+    assert.ok(
+      result.report.findings.some(
+        ({ kind, evidence }) =>
+          kind === "review_budget_exceeded" &&
+          evidence.budget === "check_wall_clock_ms" &&
+          evidence.limit === 50
+      )
+    );
+    assert.equal(result.report.budget?.limits.maxCheckSeconds, 0.05);
+    assert.ok((result.report.budget?.checkDurationMs ?? 0) >= 50);
+    await assert.rejects(access(path.join(directory, "command-ran")));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("review blocks protected changes without relying on task annotations", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-protected-"));
   try {

@@ -67,6 +67,7 @@ export interface AgentShipConfig {
   limits?: {
     maxChangedFiles?: number;
     maxDiffBytes?: number;
+    maxCheckSeconds?: number;
   };
   policy?: {
     blockOn?: ReviewFindingKind[];
@@ -87,6 +88,7 @@ export interface CheckEvidence {
   startedAt: string;
   finishedAt: string;
   durationMs: number;
+  timeoutMs?: number;
   stdout: string;
   stderr: string;
   outputTruncated: boolean;
@@ -137,7 +139,7 @@ export interface ReviewFinding {
     }>;
     expectedRoles?: Array<"test" | "documentation">;
     unexpectedPaths?: string[];
-    budget?: "changed_files" | "diff_bytes";
+    budget?: "changed_files" | "diff_bytes" | "check_wall_clock_ms";
     observed?: number;
     limit?: number;
     protectedPathPattern?: string;
@@ -305,9 +307,11 @@ export interface ReviewReport {
   budget?: {
     changedFiles: number;
     diffBytes: number;
+    checkDurationMs: number;
     limits: {
       maxChangedFiles?: number;
       maxDiffBytes?: number;
+      maxCheckSeconds?: number;
     };
   };
   baseline?: BaselineComparison;

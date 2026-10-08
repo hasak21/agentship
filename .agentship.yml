@@ -4,6 +4,7 @@ mode: report
 limits:
   maxChangedFiles: 500
   maxDiffBytes: 5242880
+  maxCheckSeconds: 480
 
 checks:
   - name: lint

@@ -114,6 +114,14 @@ function assertLimits(value: unknown): void {
     throw new Error("limits must be an object.");
   }
   const limits = value as Record<string, unknown>;
+  const supported = new Set([
+    "maxChangedFiles",
+    "maxDiffBytes",
+    "maxCheckSeconds",
+  ]);
+  for (const name of Object.keys(limits)) {
+    if (!supported.has(name)) throw new Error(`limits.${name} is unsupported.`);
+  }
   for (const name of ["maxChangedFiles", "maxDiffBytes"] as const) {
     const limit = limits[name];
     if (
@@ -122,6 +130,18 @@ function assertLimits(value: unknown): void {
     ) {
       throw new Error(`limits.${name} must be a positive integer.`);
     }
+  }
+  const maxCheckSeconds = limits.maxCheckSeconds;
+  if (
+    maxCheckSeconds !== undefined &&
+    (typeof maxCheckSeconds !== "number" ||
+      !Number.isFinite(maxCheckSeconds) ||
+      maxCheckSeconds <= 0 ||
+      maxCheckSeconds > 86_400)
+  ) {
+    throw new Error(
+      "limits.maxCheckSeconds must be greater than zero and no greater than 86400."
+    );
   }
 }
 

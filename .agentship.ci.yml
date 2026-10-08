@@ -4,6 +4,7 @@ mode: report
 limits:
   maxChangedFiles: 500
   maxDiffBytes: 5242880
+  maxCheckSeconds: 480
 
 # The official Ubuntu workflow provisions a digest-pinned /usr/bin/bwrap and validates
 # /usr/bin/prlimit before loading this trusted, base-owned policy.

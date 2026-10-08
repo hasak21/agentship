@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { compareWithBaseline, loadBaseline } from "./baseline";
 import { loadConfig } from "./config";
 import {
@@ -41,7 +42,7 @@ import type {
 } from "./types";
 
 interface BudgetExcess {
-  budget: "changed_files" | "diff_bytes";
+  budget: "changed_files" | "diff_bytes" | "check_wall_clock_ms";
   observed: number;
   limit: number;
 }
@@ -114,6 +115,10 @@ export async function runReview(options: RunReviewOptions): Promise<{
   }
 
   const checks: CheckEvidence[] = [];
+  const checkBudgetStarted = performance.now();
+  const checkDeadline = config.limits?.maxCheckSeconds
+    ? checkBudgetStarted + config.limits.maxCheckSeconds * 1000
+    : undefined;
   for (const check of config.checks) {
     if (budgetExcesses.length > 0) {
       checks.push(skippedCheckEvidence(check, "review_budget_exceeded"));
@@ -124,7 +129,16 @@ export async function runReview(options: RunReviewOptions): Promise<{
       checks.push(skippedCheckEvidence(check, "no_changed_path_match"));
       continue;
     }
-    const evidence = await runCheck(check, repositoryRoot);
+    const remainingCheckMs = checkDeadline === undefined
+      ? undefined
+      : checkDeadline - performance.now();
+    if (remainingCheckMs !== undefined && remainingCheckMs <= 0) {
+      checks.push(skippedCheckEvidence(check, "review_budget_exceeded"));
+      continue;
+    }
+    const evidence = await runCheck(check, repositoryRoot, {
+      maxTimeoutMs: remainingCheckMs,
+    });
     checks.push(
       check.whenChanged
         ? {
@@ -133,6 +147,17 @@ export async function runReview(options: RunReviewOptions): Promise<{
           }
         : evidence
     );
+  }
+  const checkDurationMs = Math.ceil(performance.now() - checkBudgetStarted);
+  if (
+    checkDeadline !== undefined &&
+    performance.now() >= checkDeadline
+  ) {
+    budgetExcesses.push({
+      budget: "check_wall_clock_ms",
+      observed: checkDurationMs,
+      limit: config.limits!.maxCheckSeconds! * 1000,
+    });
   }
   if (task) {
     task.mappings = mapRequirementsToChangedFiles(
@@ -174,6 +199,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
     ? {
         changedFiles: gitEvidence.changedFiles.length,
         diffBytes: Buffer.byteLength(gitEvidence.diff),
+        checkDurationMs,
         limits: config.limits,
       }
     : undefined;
@@ -936,8 +962,13 @@ export function renderMarkdown(report: ReviewReport): string {
             ? ""
             : ` / ${report.budget.limits.maxDiffBytes}`
         }`,
+        `- Check wall-clock milliseconds: ${report.budget.checkDurationMs}${
+          report.budget.limits.maxCheckSeconds === undefined
+            ? ""
+            : ` / ${report.budget.limits.maxCheckSeconds * 1000}`
+        }`,
       ].join("\n")
-    : "No review input budgets were configured.";
+    : "No review budgets were configured.";
   const baseline = report.baseline
     ? [
         `- Report: ${markdownCode(report.baseline.path)}`,

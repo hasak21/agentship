@@ -4,6 +4,7 @@ mode: report
 limits:
   maxChangedFiles: 500
   maxDiffBytes: 5242880
+  maxCheckSeconds: 480
 
 # Opt-in Linux policy for hosts with /usr/bin/bwrap. Vendored fonts keep every
 # project check network-denied.

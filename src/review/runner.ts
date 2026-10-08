@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { performance } from "node:perf_hooks";
 import {
   BUBBLEWRAP_PATH,
   prepareBubblewrapSandbox,
@@ -47,11 +48,21 @@ interface CheckInvocation {
 
 export async function runCheck(
   check: ReviewCheckConfig,
-  repositoryRoot: string
+  repositoryRoot: string,
+  options: { maxTimeoutMs?: number } = {}
 ): Promise<CheckEvidence> {
   const started = Date.now();
+  const budgetStarted = performance.now();
   const startedAt = new Date(started).toISOString();
-  const timeoutMs = (check.timeoutSeconds ?? 120) * 1000;
+  const configuredTimeoutMs = (check.timeoutSeconds ?? 120) * 1000;
+  let timeoutMs = Math.max(
+    1,
+    Math.floor(
+      options.maxTimeoutMs === undefined
+        ? configuredTimeoutMs
+        : Math.min(configuredTimeoutMs, options.maxTimeoutMs)
+    )
+  );
   const environment = buildCheckEnvironment(check);
   const secrets = collectSecrets(environment);
   let invocation: CheckInvocation;
@@ -66,6 +77,33 @@ export async function runCheck(
       existsSync(PRLIMIT_PATH),
       sandbox
     );
+    if (options.maxTimeoutMs !== undefined) {
+      const remainingMs = options.maxTimeoutMs - (performance.now() - budgetStarted);
+      if (remainingMs <= 0) {
+        await sandbox?.cleanup();
+        const finished = Date.now();
+        return {
+          name: check.name,
+          command: check.run,
+          required: check.required !== false,
+          network: check.network ?? "unspecified",
+          environment: Object.keys(environment).sort(),
+          status: "timed_out",
+          exitCode: null,
+          signal: null,
+          startedAt,
+          finishedAt: new Date(finished).toISOString(),
+          durationMs: finished - started,
+          timeoutMs: Math.max(0, Math.floor(options.maxTimeoutMs)),
+          stdout: "",
+          stderr: "Aggregate check wall-clock budget expired during check preparation.",
+          outputTruncated: false,
+          execution: invocation.execution,
+        };
+      }
+      timeoutMs = Math.min(configuredTimeoutMs, remainingMs);
+    }
+    timeoutMs = Math.max(1, Math.floor(timeoutMs));
   } catch (error) {
     await sandbox?.cleanup();
     const finished = Date.now();
@@ -81,6 +119,7 @@ export async function runCheck(
       startedAt,
       finishedAt: new Date(finished).toISOString(),
       durationMs: finished - started,
+      timeoutMs,
       stdout: "",
       stderr: error instanceof Error ? error.message : String(error),
       outputTruncated: false,
@@ -170,6 +209,7 @@ export async function runCheck(
         startedAt,
         finishedAt: new Date(finished).toISOString(),
         durationMs: finished - started,
+        timeoutMs,
         stdout: redactSecrets(stdout, secrets),
         stderr: redactSecrets(stderr, secrets),
         outputTruncated,
