@@ -40,6 +40,12 @@ function report() {
     tool: {
       name: "AgentShip Verify",
       version: "0.1.0",
+      git: {
+        executable: "/usr/bin/git",
+        version: "git version 2.43.0",
+        bytes: 3660136,
+        sha256: "6".repeat(64),
+      },
       verifier: {
         entrypoint: "/home/runner/work/agentship/verifier/dist/agentship.cjs",
         bytes: 415000,
@@ -115,6 +121,7 @@ test("Check Run payload is bound to the PR head and always neutral", async () =>
         `Verifier SHA-256: \`${"9".repeat(64)}\``
       )
     );
+    assert.ok(payload.output.summary.includes(`Git SHA-256: \`${"6".repeat(64)}\``));
     assert.match(payload.output.summary, /Runner image: `ubuntu24\/20261005\.1`/);
     assert.ok(
       payload.output.summary.includes(
@@ -193,6 +200,34 @@ test("Check Run payload rejects missing or malformed verifier provenance", async
     await assert.rejects(
       buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
       /verifier SHA-256 must be a lowercase SHA-256 digest/
+    );
+  });
+});
+
+test("Check Run payload rejects missing or malformed Git provenance", async () => {
+  await withPayloadFixture(async ({ root, eventPath, reportPath }) => {
+    const missing = report();
+    delete (missing.tool as { git?: unknown }).git;
+    await writeFile(reportPath, JSON.stringify(missing), "utf8");
+    await assert.rejects(
+      buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
+      /report tool Git must be an object/
+    );
+
+    await writeFile(
+      reportPath,
+      JSON.stringify({
+        ...report(),
+        tool: {
+          ...report().tool,
+          git: { ...report().tool.git, sha256: "untrusted" },
+        },
+      }),
+      "utf8"
+    );
+    await assert.rejects(
+      buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
+      /tool Git SHA-256 must be a lowercase SHA-256 digest/
     );
   });
 });

@@ -25,7 +25,8 @@ Each report binds together:
 - Git head, review scope, changed paths, and a SHA-256 digest of the reviewed diff;
 - task and configuration digests;
 - exact commands, timing, exit status, and bounded output;
-- the canonical Git executable path and version used to calculate repository evidence;
+- the canonical Git executable path, bounded version, exact byte length, and SHA-256 used
+  to calculate repository evidence;
 - the canonical AgentShip entrypoint path, exact byte length, and SHA-256;
 - platform, architecture, kernel release, optional bounded OS-release identity/hash, and the
   canonical launching Node executable path, exact byte length, and SHA-256;
@@ -73,12 +74,16 @@ AgentShip prefers canonical host-owned system locations on Linux, macOS, and Win
 fallback search accepts only absolute directories outside the reviewed checkout and
 rejects every `node_modules/.bin` segment. Symlink targets are canonicalized and checked
 again. If no such executable exists, review fails closed. The selected canonical path and
-the bounded `git --version` result are retained in JSON evidence.
+the bounded `git --version` result are retained in evidence. AgentShip hashes the bounded
+binary through a stable file handle before and after version execution, records its byte
+length and SHA-256, and repeats provenance collection after checks; a mismatch fails the
+review without producing misleading evidence.
 
 This protects the common `npm run review` case where npm injects repository package bins
 ahead of system paths. It does not authenticate the host operating system or protect
-against an administrator replacing a system Git binary. Hashing the Git binary and signed
-runner image provenance remain unfinished evidence-attestation work.
+against a privileged administrator substituting and restoring a system Git binary between
+observations. OS-package signatures, reproducible Git builds, shared-library identity, and
+signed runner/workload provenance remain unfinished evidence-attestation work.
 
 ## Public provider boundary
 

@@ -55,6 +55,17 @@ export async function buildCheckRunPayload(options) {
     throw new Error("AgentShip report tool name is invalid.");
   }
   boundedString(reportTool.version, "AgentShip report tool version", 64);
+  const git = objectField(reportTool.git, "AgentShip report tool Git");
+  boundedString(git.executable, "AgentShip report tool Git executable", 4096);
+  boundedString(git.version, "AgentShip report tool Git version", 160);
+  const gitBytes = positiveInteger(git.bytes, "AgentShip report tool Git bytes");
+  if (gitBytes > 128 * 1024 * 1024) {
+    throw new Error("AgentShip report tool Git exceeds 134217728 bytes.");
+  }
+  const gitSha256 = sha256String(
+    git.sha256,
+    "AgentShip report tool Git SHA-256"
+  );
   const verifier = objectField(
     reportTool.verifier,
     "AgentShip report tool verifier"
@@ -201,6 +212,7 @@ export async function buildCheckRunPayload(options) {
         `- Findings: ${report.findings.length}`,
         `- Report run: \`${reportRunId}\``,
         `- Reviewed checkout: \`${reviewedCommit}\``,
+        `- Git SHA-256: \`${gitSha256}\``,
         `- Verifier SHA-256: \`${verifierSha256}\``,
         `- Runner image: \`${imageOs}/${imageVersion}\``,
         `- Runner OS: \`${osPrettyName}\``,

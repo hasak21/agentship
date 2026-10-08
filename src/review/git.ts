@@ -1,11 +1,14 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import type { GitProvenance } from "./types";
 
 const execFileAsync = promisify(execFile);
+const MAX_GIT_BYTES = 128 * 1024 * 1024;
+const HASH_CHUNK_BYTES = 1024 * 1024;
 
 async function git(args: string[], cwd: string): Promise<string> {
   const { stdout } = await execFileAsync(resolveTrustedGitExecutable(cwd), args, {
@@ -47,11 +50,9 @@ function trustedCandidate(candidate: string, cwd: string): string | undefined {
   return isRepositoryControlledBin(path.dirname(resolved), cwd) ? undefined : resolved;
 }
 
-export async function getGitProvenance(cwd: string): Promise<{
-  executable: string;
-  version: string;
-}> {
+export async function getGitProvenance(cwd: string): Promise<GitProvenance> {
   const executable = resolveTrustedGitExecutable(cwd);
+  const before = await hashStableGitExecutable(executable);
   const { stdout } = await execFileAsync(executable, ["--version"], {
     cwd,
     encoding: "utf8",
@@ -61,7 +62,50 @@ export async function getGitProvenance(cwd: string): Promise<{
   if (!/^git version [^\0\r\n]{1,128}$/.test(version)) {
     throw new Error("Trusted Git returned an invalid version identifier.");
   }
-  return { executable, version };
+  const after = await hashStableGitExecutable(executable);
+  if (before.bytes !== after.bytes || before.sha256 !== after.sha256) {
+    throw new Error("Trusted Git changed while its provenance was being collected.");
+  }
+  return { executable, version, ...after };
+}
+
+async function hashStableGitExecutable(
+  executable: string
+): Promise<{ bytes: number; sha256: string }> {
+  const handle = await open(executable, "r");
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()) throw new Error("Trusted Git must be a regular file.");
+    if (before.size <= 0 || before.size > MAX_GIT_BYTES) {
+      throw new Error(`Trusted Git must contain 1-${MAX_GIT_BYTES} bytes.`);
+    }
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(Math.min(HASH_CHUNK_BYTES, before.size));
+    let position = 0;
+    while (position < before.size) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        Math.min(buffer.length, before.size - position),
+        position
+      );
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    const after = await handle.stat();
+    if (
+      position !== before.size ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ino !== before.ino
+    ) {
+      throw new Error("Trusted Git changed while it was being hashed.");
+    }
+    return { bytes: position, sha256: hash.digest("hex") };
+  } finally {
+    await handle.close();
+  }
 }
 
 function knownGitCandidates(

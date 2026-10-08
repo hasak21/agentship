@@ -198,13 +198,20 @@ export interface RunnerProvenance {
   };
 }
 
+export interface GitProvenance {
+  executable: string;
+  version: string;
+  bytes: number;
+  sha256: string;
+}
+
 export interface ReviewReport {
   schemaVersion: 1;
   runId: string;
   tool: {
     name: "AgentShip Verify";
     version: string;
-    git?: { executable: string; version: string };
+    git?: GitProvenance;
     verifier?: { entrypoint: string; bytes: number; sha256: string };
   };
   runner?: RunnerProvenance;

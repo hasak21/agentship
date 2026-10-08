@@ -200,6 +200,21 @@ test("Markdown evidence displays verifier entrypoint provenance", () => {
   assert.ok(markdown.includes(`Verifier SHA-256: \`${"9".repeat(64)}\``));
 });
 
+test("Markdown evidence displays exact Git executable provenance", () => {
+  const report = reportWithFindings([]);
+  report.tool.git = {
+    executable: "/usr/bin/git",
+    version: "git version 2.43.0",
+    bytes: 3660136,
+    sha256: "6".repeat(64),
+  };
+
+  const markdown = renderMarkdown(report);
+  assert.match(markdown, /Git: <code>git version 2\.43\.0<\/code> at <code>\/usr\/bin\/git<\/code>/);
+  assert.match(markdown, /Git bytes: 3660136/);
+  assert.ok(markdown.includes(`Git SHA-256: \`${"6".repeat(64)}\``));
+});
+
 test("Markdown evidence displays runner and runtime provenance", () => {
   const report = reportWithFindings([]);
   report.runner = {
@@ -625,6 +640,8 @@ checks:
     assert.equal(result.report.verdict, "BLOCK");
     assert.ok(path.isAbsolute(result.report.tool.git?.executable ?? ""));
     assert.match(result.report.tool.git?.version ?? "", /^git version /);
+    assert.ok((result.report.tool.git?.bytes ?? 0) > 0);
+    assert.match(result.report.tool.git?.sha256 ?? "", /^[a-f0-9]{64}$/);
     assert.equal(result.report.checks[0]?.status, "skipped");
     assert.equal(
       result.report.checks[0]?.skipReason,

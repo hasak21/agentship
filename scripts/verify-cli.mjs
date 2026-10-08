@@ -204,6 +204,18 @@ try {
   ) {
     throw new Error("Bundled CLI report is not bound to the launching Node runtime.");
   }
+  const gitExecutable = reviewEvidence.tool?.git?.executable;
+  if (typeof gitExecutable !== "string") {
+    throw new Error("Bundled CLI report is missing Git executable provenance.");
+  }
+  const gitStats = await stat(gitExecutable);
+  const expectedGitSha256 = await sha256File(gitExecutable);
+  if (
+    reviewEvidence.tool.git.bytes !== gitStats.size ||
+    reviewEvidence.tool.git.sha256 !== expectedGitSha256
+  ) {
+    throw new Error("Bundled CLI report is not bound to the exact Git executable.");
+  }
   const verifiedSignature = await execFileAsync(
     process.execPath,
     [

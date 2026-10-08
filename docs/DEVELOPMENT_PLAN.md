@@ -79,7 +79,7 @@ Exit criterion: teams can enable gate mode without trusting an LLM verdict.
 - [~] Execute untrusted checks in isolated, resource-limited workers (Linux bubblewrap disposable-copy backend composes with `prlimit`, and official CI installs a fixed SHA-256-verified Ubuntu package; stronger kernel/VM and aggregate cgroup boundaries remain pending).
 - [~] Enforce network denial and secret isolation (all official checks use fresh network namespaces and minimal filesystems with no host home or `/etc`, including an offline build backed by pinned local fonts; dependency installation and non-isolated local checks remain outside enforcement).
 - [~] Treat source, task text, tests, and repository instructions as hostile inputs (structured parsing and Markdown report anti-forgery escaping delivered; model prompt isolation and broader adversarial corpus remain pending).
-- [~] Sign evidence manifests and preserve verifier provenance (trusted Git executable/version evidence, exact standalone-verifier and Node runtime digests, recorded OS/GitHub runner-image identity, and detached Ed25519 report signatures delivered; authenticated runner/workload attestation, authenticated key ownership, and official CI signing remain pending).
+- [~] Sign evidence manifests and preserve verifier provenance (trusted Git path/version/digest evidence, exact standalone-verifier and Node runtime digests, recorded OS/GitHub runner-image identity, and detached Ed25519 report signatures delivered; authenticated runner/workload attestation, authenticated key ownership, and official CI signing remain pending).
 
 Exit criterion: a malicious pull request cannot escape the runner, obtain secrets, or approve itself.
 

@@ -158,6 +158,15 @@ export async function runReview(options: RunReviewOptions): Promise<{
     base: options.base,
   });
   const postCheckHead = await getHead(repositoryRoot);
+  const postCheckGitProvenance = await getGitProvenance(repositoryRoot);
+  if (
+    gitProvenance.executable !== postCheckGitProvenance.executable ||
+    gitProvenance.version !== postCheckGitProvenance.version ||
+    gitProvenance.bytes !== postCheckGitProvenance.bytes ||
+    gitProvenance.sha256 !== postCheckGitProvenance.sha256
+  ) {
+    throw new Error("Trusted Git provenance changed during review.");
+  }
   const postCheckDiffSha256 = sha256(postCheckGitEvidence.diff);
   const stableDuringChecks =
     head === postCheckHead && diffSha256 === postCheckDiffSha256;
@@ -985,7 +994,10 @@ export function renderMarkdown(report: ReviewReport): string {
   const verifier = report.tool.verifier
     ? `- Verifier entrypoint: ${markdownCode(report.tool.verifier.entrypoint)}\n- Verifier bytes: ${report.tool.verifier.bytes}\n- Verifier SHA-256: \`${report.tool.verifier.sha256}\``
     : "- Verifier entrypoint provenance: unavailable";
-  const runner = report.runner
+  const git = report.tool.git
+    ? `- Git: ${markdownCode(report.tool.git.version)} at ${markdownCode(report.tool.git.executable)}\n- Git bytes: ${report.tool.git.bytes}\n- Git SHA-256: \`${report.tool.git.sha256}\``
+    : "- Git executable provenance: unavailable";
+  const runnerProvenance = report.runner
     ? [
         `- Runner: ${markdownCode(`${report.runner.platform}/${report.runner.architecture}`)}`,
         `- Kernel: ${markdownCode(report.runner.kernelRelease)}`,
@@ -1003,6 +1015,7 @@ export function renderMarkdown(report: ReviewReport): string {
           : []),
       ].join("\n")
     : "- Runner provenance: unavailable";
+  const runner = `${git}\n${runnerProvenance}`;
 
   return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n${verifier}\n${runner}\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Override record\n\n${override}\n\nOverride actors are recorded claims until authenticated signing is implemented.\n\n## Report history\n\n${history}\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Execution | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
 }

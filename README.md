@@ -227,9 +227,11 @@ The review writes JSON, Markdown, and SARIF evidence under `.agentship/reviews/`
 JSON and Markdown bind the canonical AgentShip entrypoint path, byte length, and SHA-256.
 For the standalone CLI and official CI, this is the exact self-contained bundle; source
 mode honestly identifies only the TypeScript entrypoint, not every imported module. JSON
-also includes the canonical host Git executable and its bounded version string; AgentShip
-refuses repository-controlled and `node_modules/.bin` Git replacements before calculating
-the reviewed head or diff.
+and Markdown also include the canonical host Git executable, bounded version string,
+exact byte length, and SHA-256; AgentShip refuses repository-controlled and
+`node_modules/.bin` Git replacements before calculating the reviewed head or diff and
+fails closed if the Git provenance changes during review. The digest identifies executable
+bytes but does not authenticate the host administrator, OS package, or Git vendor.
 
 Optionally sign the exact JSON report with an Ed25519 private key stored outside the
 reviewed repository:
@@ -455,7 +457,7 @@ as untrusted data, validates the bounded report and event bindings, and creates 
 always-neutral Check Run on the pull-request head. Keep the subject workflow on
 GitHub-hosted runners and do not enable write tokens or secrets for fork workflows. The
 publisher never executes artifact contents and does not comment, label, or block merging.
-Reports hash the exact AgentShip entrypoint and launching Node executable and record
+Reports hash the exact AgentShip entrypoint, Git executable, and launching Node executable and record
 bounded OS and GitHub runner-image metadata. The publisher requires the expected
 GitHub-hosted Linux X64 shape and includes the image/runtime identity in its neutral
 summary. This is recorded provenance, not authenticated runner or workload attestation.

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -40,6 +41,12 @@ test("Git evidence ignores repository-controlled executable replacements", async
     const provenance = await getGitProvenance(directory);
     assert.equal(provenance.executable, "/usr/bin/git");
     assert.match(provenance.version, /^git version /);
+    const gitBytes = await readFile(provenance.executable);
+    assert.equal(provenance.bytes, gitBytes.length);
+    assert.equal(
+      provenance.sha256,
+      createHash("sha256").update(gitBytes).digest("hex")
+    );
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;

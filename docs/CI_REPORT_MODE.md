@@ -24,13 +24,13 @@ artifact into an always-neutral Check Run without granting merge authority.
 All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review. The publisher has only `actions: read`, `contents: read`, and `checks: write`; the subject workflow retains only `contents: read`.
 
 The JSON and Markdown reports record the canonical path, byte length, and SHA-256 of the
-actual AgentShip entrypoint and launching Node executable. They also record bounded
+actual AgentShip entrypoint, Git executable, and launching Node executable. They also record bounded
 platform, architecture, kernel, optional `/etc/os-release` identity/hash, and GitHub's
 `RUNNER_ENVIRONMENT`, `RUNNER_OS`, `RUNNER_ARCH`, `ImageOS`, and `ImageVersion` fields when
 present. In this workflow the entrypoint is the trusted base checkout's self-contained
 `dist/agentship.cjs` bundle. The privileged publisher rejects missing, oversized, malformed,
-or non-GitHub-hosted Linux X64 runner provenance and displays the verifier, image, OS, and
-Node identities in the neutral Check Run summary. These fields identify claimed bytes and
+or non-GitHub-hosted Linux X64 runner provenance and displays the Git, verifier, image, OS,
+and Node identities in the neutral Check Run summary. These fields identify claimed bytes and
 environment metadata; they do not authenticate the unsigned artifact, prove that GitHub
 issued the environment values, attest the image/kernel, or establish a reproducible bundle
 build.
