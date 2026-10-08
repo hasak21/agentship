@@ -18,10 +18,12 @@ artifact into an always-neutral Check Run without granting merge authority.
 10. The fixed Markdown report is appended to the workflow job summary without granting write permission to the repository.
 11. A `workflow_run` job starts only after the named report workflow completes and GitHub associates exactly one pull request with it.
 12. The publisher checks out only the default branch, downloads the named artifact from the exact triggering run, and parses event/report JSON under byte and finding-count bounds. Artifact contents are never executed.
-13. After validation, the publisher canonicalizes the JSON into a fresh directory and saves it under a unique PR/run cache key using write-only cache access. Validation failure prevents the cache-save step.
-14. The publisher binds the report base to the event's PR base and creates a Check Run on the event's PR head with `conclusion: neutral`, regardless of PASS, WARN, or BLOCK.
+13. After validation, the publisher canonicalizes the JSON into a fresh directory. Validation failure stops publication.
+14. A full-SHA-pinned `actions/attest` v4.2.2 step uses GitHub OIDC and a short-lived Sigstore certificate to attest those exact canonical bytes. The publisher uploads the JSON and verification bundle together with 30-day retention.
+15. The publisher saves the canonical JSON under a unique PR/run cache key using write-only cache access.
+16. The publisher binds the report base to the event's PR base and creates a Check Run on the event's PR head with `conclusion: neutral`, regardless of PASS, WARN, or BLOCK, including a validated GitHub attestation URL.
 
-All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review. The publisher has only `actions: read`, `contents: read`, and `checks: write`; the subject workflow retains only `contents: read`.
+All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review. The publisher has `actions: read`, `contents: read`, `checks: write`, `attestations: write`, and `id-token: write`; the subject workflow retains only `contents: read` and cannot request an attestation identity.
 
 The JSON and Markdown reports record the canonical path, byte length, and SHA-256 of the
 actual AgentShip entrypoint, Git executable, and launching Node executable. They also record bounded
@@ -33,7 +35,24 @@ or non-GitHub-hosted Linux X64 runner provenance and displays the Git, verifier,
 and Node identities in the neutral Check Run summary. These fields identify claimed bytes and
 environment metadata; they do not authenticate the unsigned artifact, prove that GitHub
 issued the environment values, attest the image/kernel, or establish a reproducible bundle
-build.
+build. The later publisher attestation authenticates the canonical report digest and the
+publisher workflow identity, not these subject-runner claims or the truth of any finding.
+
+After downloading `RUN_ID.json` and its bundle from the
+`agentship-attested-evidence-PR-RUN_ID` artifact, verify online with:
+
+```bash
+gh attestation verify RUN_ID.json \
+  --repo OWNER/REPOSITORY \
+  --signer-workflow OWNER/REPOSITORY/.github/workflows/agentship-publish-check.yml \
+  --deny-self-hosted-runners
+```
+
+Add `--bundle BUNDLE_PATH` for offline verification. GitHub artifact attestations are
+available for public repositories on current plans and for private/internal repositories
+on GitHub Enterprise Cloud. GitHub Enterprise Server is not supported by the selected
+action. Verification establishes the attesting workflow and subject digest; consumers
+must still trust the reviewed publisher revision and evaluate the report evidence.
 
 Task prose, repository paths, check labels, commands, finding titles, and human-entered
 reasons are encoded before Markdown rendering. Control characters cannot create new
@@ -79,7 +98,7 @@ The cache split follows GitHub's low-trust guidance: the `pull_request` job decl
 
 ## Residual risk
 
-Dependency installation still processes attacker-selected package metadata with network access outside the sandbox, although lifecycle scripts are disabled. Every configured check receives a fresh network namespace; the production build uses pinned local Geist assets and no longer needs a host-network exception. Bubblewrap shares the host kernel and is not a VM, and its writable tmpfs/disposable copy still lack hard disk-capacity and cgroup-wide resource quotas. Artifacts and caches are unsigned and may be attacker-influenced despite structural validation, so the privileged publisher never executes their content and the restored baseline remains informational. A repository-level workflow outside this design could populate the same key namespace in a PR scope; workflow protection and namespace ownership remain operator responsibilities. SARIF remains an artifact rather than a code-scanning upload. A live fork pull request has not yet validated the two-stage workflow end to end. Do not reuse the subject workflow on a self-hosted runner or add secrets, deployments, package publishing, comments, labels, write permissions, or merge gating.
+Dependency installation still processes attacker-selected package metadata with network access outside the sandbox, although lifecycle scripts are disabled. Every configured check receives a fresh network namespace; the production build uses pinned local Geist assets and no longer needs a host-network exception. Bubblewrap shares the host kernel and is not a VM, and its writable tmpfs/disposable copy still lack hard disk-capacity and cgroup-wide resource quotas. The incoming subject artifact is unsigned and may be attacker-influenced despite the trusted verifier, so the privileged publisher never executes it. Only the later validated canonical JSON is attested. Cache restoration does not retrieve or verify that attestation, and the restored baseline remains informational. A repository-level workflow outside this design could populate the same key namespace in a PR scope; workflow protection and namespace ownership remain operator responsibilities. SARIF remains an artifact rather than a code-scanning upload. A live fork pull request has not yet validated the two-stage workflow end to end. Do not reuse the subject workflow on a self-hosted runner or add secrets, deployments, package publishing, comments, labels, write permissions, or merge gating.
 
 ## Pull-request task format
 

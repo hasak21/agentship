@@ -465,7 +465,23 @@ publisher never executes artifact contents and does not comment, label, or block
 Reports hash the exact AgentShip entrypoint, Git executable, and launching Node executable and record
 bounded OS and GitHub runner-image metadata. The publisher requires the expected
 GitHub-hosted Linux X64 shape and includes the image/runtime identity in its neutral
-summary. This is recorded provenance, not authenticated runner or workload attestation.
+summary. After validation it uses GitHub's workload identity and Sigstore to attest the
+exact fresh canonical JSON, uploads that JSON with the verification bundle, and links the
+attestation from the Check Run. This authenticates the publisher workflow and report
+digest; it does not prove that the subject runner or claims inside the report were truthful.
+
+Download the attested artifact and verify online against the expected publisher workflow:
+
+```bash
+gh attestation verify RUN_ID.json \
+  --repo OWNER/REPOSITORY \
+  --signer-workflow OWNER/REPOSITORY/.github/workflows/agentship-publish-check.yml \
+  --deny-self-hosted-runners
+```
+
+For offline verification, add `--bundle BUNDLE_PATH`. GitHub artifact attestations are
+available for public repositories on current plans and for private/internal repositories
+on GitHub Enterprise Cloud; this workflow is not supported on GitHub Enterprise Server.
 Do not configure the neutral `AgentShip evidence report` Check Run as a required check.
 See `docs/CI_REPORT_MODE.md` for the trust boundary.
 

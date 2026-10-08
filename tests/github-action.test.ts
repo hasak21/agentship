@@ -18,6 +18,8 @@ test("CI report workflow keeps untrusted pull requests in a read-only context", 
   assert.equal("pull_request_target" in (workflow.on as Record<string, unknown>), false);
   assert.deepEqual(workflow.permissions, { contents: "read" });
   assert.doesNotMatch(source, /\bsecrets\./);
+  assert.doesNotMatch(source, /actions\/attest@/);
+  assert.doesNotMatch(source, /\b(?:attestations|id-token):/);
   assert.match(source, /GITHUB_TOKEN: ""/);
   assert.match(source, /GH_TOKEN: ""/);
 });

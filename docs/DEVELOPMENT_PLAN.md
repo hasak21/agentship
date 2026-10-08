@@ -59,7 +59,7 @@ Exit criterion: omitted requirements are detected with measured, publishable acc
 ## M4 — CI report mode
 
 - [~] Build a fork-safe GitHub Action (trusted-base, read-only, artifact-only report workflow delivered; live fork-PR validation pending).
-- [~] Publish Check Run, Markdown, JSON, and SARIF outputs (artifact/job-summary outputs and a separate bounded, always-neutral `workflow_run` Check Run publisher are delivered; live fork-PR validation remains pending).
+- [~] Publish Check Run, Markdown, JSON, and SARIF outputs (artifact/job-summary outputs and a separate bounded, always-neutral `workflow_run` Check Run publisher with attested canonical JSON and Sigstore bundle are delivered; live fork-PR validation remains pending).
 - [~] Add changed-path filtering and execution budgets (deterministic check selection, pre-execution changed-file/diff limits, per-check plus cumulative check wall-clock deadlines, Linux per-process limits, and digest-pinned disposable bubblewrap workers in official CI delivered; aggregate cgroup accounting and disk-capacity quotas remain pending).
 - [x] Add baselines, suppressions with ownership, and report history (bounded comparison, owned suppressions, compatible local history, and validated publisher-written/read-only PR cache restoration delivered).
 
@@ -79,7 +79,7 @@ Exit criterion: teams can enable gate mode without trusting an LLM verdict.
 - [~] Execute untrusted checks in isolated, resource-limited workers (Linux bubblewrap disposable-copy backend composes with `prlimit`, and official CI installs a fixed SHA-256-verified Ubuntu package; stronger kernel/VM and aggregate cgroup boundaries remain pending).
 - [~] Enforce network denial and secret isolation (all official checks use fresh network namespaces and minimal filesystems with no host home or `/etc`, including an offline build backed by pinned local fonts; dependency installation and non-isolated local checks remain outside enforcement).
 - [~] Treat source, task text, tests, and repository instructions as hostile inputs (structured parsing and Markdown report anti-forgery escaping delivered; model prompt isolation and broader adversarial corpus remain pending).
-- [~] Sign evidence manifests and preserve verifier provenance (trusted Git path/version/digest evidence, exact standalone-verifier and Node runtime digests, recorded OS/GitHub runner-image identity, and detached Ed25519 report signatures delivered; authenticated runner/workload attestation, authenticated key ownership, and official CI signing remain pending).
+- [~] Sign evidence manifests and preserve verifier provenance (trusted Git path/version/digest evidence, exact standalone-verifier and Node runtime digests, recorded OS/GitHub runner-image identity, detached Ed25519 report signatures, and GitHub-workload-attested canonical publisher reports delivered; subject-runner attestation and authenticated Ed25519 key ownership remain pending).
 
 Exit criterion: a malicious pull request cannot escape the runner, obtain secrets, or approve itself.
 

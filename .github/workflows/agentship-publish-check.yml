@@ -9,8 +9,10 @@ on:
 
 permissions:
   actions: read
+  attestations: write
   checks: write
   contents: read
+  id-token: write
 
 concurrency:
   group: agentship-publish-check-${{ github.event.workflow_run.id }}
@@ -55,6 +57,22 @@ jobs:
           "$AGENTSHIP_CHECK_PAYLOAD"
           "$AGENTSHIP_HISTORY_REPORT"
 
+      - name: Attest validated canonical report
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/agentship-history/${{ github.event.workflow_run.id }}.json
+
+      - name: Upload attested canonical evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agentship-attested-evidence-${{ github.event.workflow_run.pull_requests[0].number }}-${{ github.event.workflow_run.id }}
+          path: |
+            ${{ runner.temp }}/agentship-history/${{ github.event.workflow_run.id }}.json
+            ${{ steps.attest.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Save validated review history
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -65,9 +83,15 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           AGENTSHIP_CHECK_PAYLOAD: ${{ runner.temp }}/agentship-check-run.json
+          AGENTSHIP_ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require("node:fs");
             const payload = JSON.parse(fs.readFileSync(process.env.AGENTSHIP_CHECK_PAYLOAD, "utf8"));
+            const attestation = new URL(process.env.AGENTSHIP_ATTESTATION_URL);
+            if (attestation.protocol !== "https:" || attestation.hostname !== "github.com" || attestation.username || attestation.password) {
+              throw new Error("Attestation URL must be a credential-free github.com HTTPS URL.");
+            }
+            payload.output.summary += `\n- Publisher attestation: ${attestation.href}`;
             await github.rest.checks.create(payload);

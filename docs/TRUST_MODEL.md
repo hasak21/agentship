@@ -43,11 +43,13 @@ repository and, on POSIX, deny group/other access. See `docs/EVIDENCE_SIGNATURES
 
 Signatures authenticate possession of a configured key, not a person's identity, unless
 the operator separately maps that public-key fingerprint to an owner. The ordinary local
-and GitHub report flows remain unsigned unless signing is explicitly configured. Current
-CI intentionally sends no signing secret into the pull-request job; a future privileged
-attestor must sign only after bounded artifact validation. Key rotation, HSM/KMS support,
-revocation, trusted timestamps, transparency logs, and authenticated runner/workload
-attestations remain open provenance work.
+flow remains unsigned unless signing is explicitly configured. Current CI intentionally
+sends no signing secret into the pull-request job. The separate official publisher now
+attests exact canonical post-validation bytes using GitHub workload identity and a
+short-lived Sigstore certificate. That authenticates the publisher workflow and digest,
+not the subject runner or claims within the report. Key rotation, HSM/KMS support,
+authenticated Ed25519 key ownership, trusted timestamps for local signatures, and
+subject-runner/build attestations remain open provenance work.
 
 ## Verifier tool resolution
 
@@ -173,20 +175,25 @@ The `benchmark --fixtures` command validates corpus paths, size bounds, schema, 
 
 The subject GitHub workflow uses the unprivileged `pull_request` event with `contents: read`, no repository secrets, blank CLI token variables, a GitHub-hosted disposable runner, and full-commit-SHA-pinned official actions. It checks out the base revision and pull-request subject separately. The AgentShip executable, task extractor, and `.agentship.ci.yml` policy are built or loaded from the trusted base checkout; pull-request changes cannot replace them for that run. The PR title/body is passed as data through the GitHub event file, never interpolated into a shell program. JSON, Markdown, and SARIF reports are uploaded as artifacts, and the Markdown is copied into the workflow job summary.
 
-A separate default-branch `workflow_run` publisher holds `checks: write`. It checks out
-only trusted publisher code, downloads the named artifact from the exact triggering run,
-and treats every artifact byte as untrusted data. The parser bounds both event and report,
-requires one event-associated pull request, verifies repository and base bindings, and
-selects the Check Run head exclusively from the trusted workflow event. The result is
-always `neutral`, including for a BLOCK report, so it cannot serve as a policy gate. The
-publisher does not execute artifact contents or write comments, labels, source, releases,
-deployments, code-scanning results, or merge status.
+A separate default-branch `workflow_run` publisher holds `checks: write`,
+`attestations: write`, and `id-token: write`. It checks out only trusted publisher code,
+downloads the named artifact from the exact triggering run, and treats every artifact
+byte as untrusted data. The parser bounds both event and report, requires one
+event-associated pull request, verifies repository and base bindings, and selects the
+Check Run head exclusively from the trusted workflow event. After validation it writes
+fresh canonical JSON, uses a full-SHA-pinned GitHub action and short-lived Sigstore
+certificate to attest those exact bytes, and uploads the JSON plus verification bundle.
+The result is always `neutral`, including for a BLOCK report, so it cannot serve as a
+policy gate. The publisher does not execute artifact contents or write comments, labels,
+source, releases, deployments, code-scanning results, or merge status. The attestation
+authenticates publisher workflow identity and report digest, not subject-runner claims or
+finding truth.
 
 Repository policy treats `.github/workflows/**` as a protected path requiring explicit
 local approval. Operators must not configure the neutral publisher Check Run as a
 required branch-protection check; doing so would confuse report delivery with approval.
 
-The subject's configured checks execute hostile repository code inside disposable bubblewrap workspaces on a GitHub-hosted runner. A trusted-base installer fetches one fixed Ubuntu Noble amd64 package, checks its published SHA-256 before installation, rejects setuid/wrong-version binaries, and smoke-tests namespace creation. Every check gets a fresh network namespace. The Next build uses pinned Geist v1.7.2 variable assets with fixed hashes and the SIL Open Font License stored in the repository, removing its former Google Fonts fetch. This remains suitable only for secretless, read-only reporting on GitHub-hosted disposable runners. It is not safe for self-hosted runners, privileged subject triggers, subject write tokens, secrets, or merge gating. GitHub repository settings can also opt into write tokens or secrets for fork workflows; operators must leave those options disabled. The unsigned artifact may be attacker-influenced despite the trusted verifier, which is why the privileged publisher emits only a bounded neutral summary. Live fork-PR validation remains required before the workflow is marked fully delivered.
+The subject's configured checks execute hostile repository code inside disposable bubblewrap workspaces on a GitHub-hosted runner. A trusted-base installer fetches one fixed Ubuntu Noble amd64 package, checks its published SHA-256 before installation, rejects setuid/wrong-version binaries, and smoke-tests namespace creation. Every check gets a fresh network namespace. The Next build uses pinned Geist v1.7.2 variable assets with fixed hashes and the SIL Open Font License stored in the repository, removing its former Google Fonts fetch. This remains suitable only for secretless, read-only reporting on GitHub-hosted disposable runners. It is not safe for self-hosted runners, privileged subject triggers, subject write tokens, secrets, or merge gating. GitHub repository settings can also opt into write tokens or secrets for fork workflows; operators must leave those options disabled. The incoming unsigned artifact may be attacker-influenced despite the trusted verifier, which is why the privileged publisher only validates and attests a fresh canonical copy and emits a bounded neutral summary. Live fork-PR validation remains required before the workflow is marked fully delivered.
 
 Base-owned `whenChanged` patterns select checks using only exact repository paths and trailing `/**` directory patterns. A non-applicable check is recorded as `skipped`, never as passing; a task that explicitly requires that check remains unsatisfied. Base-owned changed-file and diff-byte limits produce a blocker and skip repository commands before an oversized review executes. Per-check and workflow wall-clock timeouts are enforced. The official Linux policy additionally applies per-process CPU-time, file-size, and descriptor limits through `prlimit`, and bubblewrap supplies a bounded disposable copy plus PID/filesystem/network namespaces. A configurable address-space bound exists but is omitted for official Node checks because it is not a reliable resident-memory bound and breaks runtimes that reserve large virtual ranges. Aggregate process-tree accounting, reliable memory, disk-capacity, process-count, host-kernel isolation, and dependency installation with network access outside the worker remain residual risks.
 
@@ -200,7 +207,7 @@ Overrides are supplied as bounded JSON records after an initial unmodified revie
 
 A baseline is an optional prior AgentShip JSON report supplied through `--baseline`. AgentShip reads it as bounded data with a 5 MiB file limit, a 10,000-finding limit, required schema/run/commit metadata, bounded identity fields, and duplicate rejection. It binds results to the baseline SHA-256 and compares exact finding ID/kind pairs. The comparison labels findings new, existing, or resolved but does not suppress findings or affect the current verdict. Baseline selection, provenance, and retention are not yet automated or attested.
 
-Opt-in local history automates compatible baseline selection and retention. AgentShip accepts only a repository-child history directory, bounds it to 1,000 entries, rejects malformed or oversized reports, and selects the newest candidate with identical configuration SHA-256, task SHA-256, review scope, and base reference. It writes JSON, Markdown, and SARIF only after checks and repository-stability capture complete, so ignored history output is not part of the reviewed diff. CI restores only from a PR-scoped cache namespace under explicit read-only access. The separate publisher validates workflow, repository, PR/base, report scope, hash fields, and bounds before canonicalizing one report and saving it with explicit write-only access. Cache misses and incompatible history are non-fatal, and comparison remains unable to alter verdicts. This improves writer provenance but is not signing: cache bytes remain unsigned and namespace isolation also depends on repository workflow governance.
+Opt-in local history automates compatible baseline selection and retention. AgentShip accepts only a repository-child history directory, bounds it to 1,000 entries, rejects malformed or oversized reports, and selects the newest candidate with identical configuration SHA-256, task SHA-256, review scope, and base reference. It writes JSON, Markdown, and SARIF only after checks and repository-stability capture complete, so ignored history output is not part of the reviewed diff. CI restores only from a PR-scoped cache namespace under explicit read-only access. The separate publisher validates workflow, repository, PR/base, report scope, hash fields, and bounds before canonicalizing and attesting one report, then saving it with explicit write-only access. Cache misses and incompatible history are non-fatal, and comparison remains unable to alter verdicts. Cache restoration does not retrieve or verify the attestation, so restored bytes remain untrusted informational input and namespace isolation still depends on repository workflow governance.
 
 Finding outcome events bind an exact finding identity to the SHA-256 and execution context of its source report. Accepted and rejected events are explicitly human dispositions. Fixed events additionally require a compatible later report in which that identity is absent, while overridden events require the source finding to retain validated override evidence. Files are bounded and exclusively created inside the repository, but actor strings remain unauthenticated and local event files are unsigned. Metrics derived from them inherit that provenance limit and should use trusted artifact storage.
 

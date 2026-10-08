@@ -298,23 +298,40 @@ test("privileged publisher uses only trusted code and immutable actions", async 
   assert.ok("workflow_run" in (workflow.on as Record<string, unknown>));
   assert.deepEqual(workflow.permissions, {
     actions: "read",
+    attestations: "write",
     checks: "write",
     contents: "read",
+    "id-token": "write",
   });
   const uses = [...source.matchAll(/^\s*uses:\s*([^\s#]+)/gm)].map((match) => match[1]);
-  assert.equal(uses.length, 4);
+  assert.equal(uses.length, 6);
   for (const action of uses) assert.match(action, /^[^@]+@[a-f0-9]{40}$/);
   assert.match(source, /github\.event\.repository\.default_branch/);
   assert.match(source, /persist-credentials: false/);
   assert.match(source, /github\.event\.workflow_run\.pull_requests\[0\]\.number/);
   assert.match(source, /github\.event\.workflow_run\.id/);
   assert.match(source, /scripts\/build-check-run\.mjs/);
+  assert.match(
+    source,
+    /actions\/attest@1e69f48acb82d1966a394da916b4c1698aa569d6/
+  );
+  assert.match(source, /Attest validated canonical report/);
+  assert.match(
+    source,
+    /subject-path: \$\{\{ runner\.temp \}\}\/agentship-history\/\$\{\{ github\.event\.workflow_run\.id \}\}\.json/
+  );
+  assert.match(source, /steps\.attest\.outputs\.bundle-path/);
+  assert.match(source, /agentship-attested-evidence-/);
+  assert.match(source, /AGENTSHIP_ATTESTATION_URL/);
+  assert.match(source, /attestation\.hostname !== "github\.com"/);
   assert.match(source, /cache-mode: write-only/);
   assert.match(source, /actions\/cache\/save@[a-f0-9]{40}/);
   assert.doesNotMatch(source, /actions\/cache\/restore@/);
   assert.match(source, /agentship-history-v1-pr-/);
   assert.ok(
     source.indexOf("scripts/build-check-run.mjs") <
+      source.indexOf("actions/attest@") &&
+      source.indexOf("actions/attest@") <
       source.indexOf("actions/cache/save@")
   );
   assert.doesNotMatch(source, /pull_request_target/);

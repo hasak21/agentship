@@ -42,9 +42,12 @@ printed public-key SHA-256 to an owner.
 
 The checked-in pull-request workflow remains secretless and does not sign. Never place a
 private signing key in a job that executes pull-request code, even when bubblewrap is
-enabled. A future publisher may sign only after it validates the bounded artifact in a
-non-executing privileged job, and should use an HSM/KMS or workload-identity attestation
-rather than a long-lived file key.
+enabled. The separate publisher validates and canonicalizes the bounded artifact, then
+uses GitHub workload identity and a short-lived Sigstore certificate to attest the exact
+canonical JSON. The attestation authenticates the publisher workflow and digest; unlike
+the portable Ed25519 sidecar, it does not authenticate a key chosen by the operator, and
+it does not prove the subject runner or report claims were truthful.
 
 Current sidecars do not provide trusted time, key revocation, transparency logging,
-binary/runner-image attestation, or signatures for automatic history/cache copies.
+binary/runner-image attestation, or automatic verification of restored history/cache
+copies. The publisher attestation does not remove those limits from local signatures.
