@@ -5,8 +5,8 @@ limits:
   maxChangedFiles: 500
   maxDiffBytes: 5242880
 
-# Opt-in Linux policy for hosts with /usr/bin/bwrap. The Next build explicitly
-# needs network for next/font; every other project check stays network-denied.
+# Opt-in Linux policy for hosts with /usr/bin/bwrap. Vendored fonts keep every
+# project check network-denied.
 checks:
   - name: lint
     run: npm run lint
@@ -35,7 +35,7 @@ checks:
     required: true
     timeoutSeconds: 180
     isolation: bubblewrap
-    network: allowed
+    network: denied
     resources:
       cpuSeconds: 180
       maxFileSizeMiB: 64

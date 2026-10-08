@@ -35,6 +35,7 @@ checks:
     required: true
     timeoutSeconds: 180
     isolation: bubblewrap
+    network: denied
     resources:
       cpuSeconds: 180
       maxFileSizeMiB: 64
@@ -45,11 +46,6 @@ checks:
       - package-lock.json
       - next.config.mjs
       - tsconfig.json
-    network: allowed
-    environment:
-      - HTTP_PROXY
-      - HTTPS_PROXY
-      - NO_PROXY
 
   - name: cli-package
     run: npm run verify:cli

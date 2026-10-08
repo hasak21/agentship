@@ -44,10 +44,12 @@ The official GitHub workflow provisions a fixed Ubuntu Noble amd64 package from 
 security archive and verifies its published SHA-256 before installation. It rejects the
 wrong platform, package/runtime version, setuid mode, or failed namespace smoke test
 before any pull-request command runs. All official checks use this backend; lint, tests,
-and CLI packaging deny network, while the Next build has an explicit allowed exception.
+the Next build, and CLI packaging all deny network. The build uses repository-owned Geist
+v1.7.2 variable fonts whose source commit, hashes, and SIL OFL license are retained beside
+the assets.
 The installer itself remains trusted-base code and updating its package pin requires
 review like any other verifier change.
 
-AgentShip's own Linux policy is `.agentship.bubblewrap.yml`. It keeps lint, tests, and CLI
-packaging offline; the Next.js build has a visible `network: allowed` exception because
-`next/font` downloads Geist during production compilation.
+AgentShip's own Linux policy is `.agentship.bubblewrap.yml`; every check is offline. The
+portable and CI policies also declare every check denied, but only an isolation backend
+enforces that declaration rather than merely recording it as evidence.

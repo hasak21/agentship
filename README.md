@@ -333,6 +333,10 @@ backend fail closed. This is meaningful host-file, mutation, PID, and network na
 isolation, but not a VM or a defense against kernel vulnerabilities. See
 `docs/ISOLATED_CHECKS.md` for exact boundaries.
 
+Every checked-in AgentShip policy now declares `network: denied` for every check. The web
+UI uses pinned, SIL-OFL-licensed local Geist assets, so the production build no longer
+fetches Google Fonts. Dependency installation remains a separate pre-check network phase.
+
 This repository dogfoods the backend with:
 
 ```bash

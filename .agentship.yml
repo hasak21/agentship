@@ -10,11 +10,13 @@ checks:
     run: npm run lint
     required: true
     timeoutSeconds: 120
+    network: denied
 
   - name: test
     run: npm test
     required: true
     timeoutSeconds: 120
+    network: denied
 
   - name: build
     run: npm run build
@@ -26,16 +28,13 @@ checks:
       - package-lock.json
       - next.config.mjs
       - tsconfig.json
-    network: allowed
-    environment:
-      - HTTP_PROXY
-      - HTTPS_PROXY
-      - NO_PROXY
+    network: denied
 
   - name: cli-package
     run: npm run verify:cli
     required: true
     timeoutSeconds: 120
+    network: denied
     whenChanged:
       - src/cli/**
       - src/review/**
