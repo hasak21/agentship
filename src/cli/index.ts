@@ -3,6 +3,7 @@ import { writeSync } from "node:fs";
 import path from "node:path";
 import { measureCalibration } from "../review/calibration";
 import { runIntentBenchmark } from "../review/intent-benchmark";
+import { compileLeaderboard } from "../review/leaderboard";
 import {
   recordFindingOutcome,
   type FindingOutcomeStatus,
@@ -78,6 +79,7 @@ function printHelp(): void {
 Usage:
   agentship review [options]
   agentship benchmark --fixtures <path>
+  agentship leaderboard --submissions <directory>
   agentship outcome --report <path> --finding-id <id> --finding-kind <kind> --status <status> --actor <actor> --reason <reason>
   agentship metrics --outcomes <dir> --reports <dir> --benchmark-fixtures <path>
   agentship verify-signature --report <path> --signature <path> --public-key <path>
@@ -198,6 +200,13 @@ function parseBenchmarkArgs(args: string[]): string {
   return fixturePath;
 }
 
+function parseLeaderboardArgs(args: string[]): string {
+  if (args.length !== 2 || args[0] !== "--submissions" || !args[1]) {
+    throw new Error("leaderboard requires --submissions <directory>.");
+  }
+  return path.resolve(process.cwd(), args[1]);
+}
+
 function parseVerifySignatureArgs(args: string[]): {
   reportPath: string;
   signaturePath: string;
@@ -237,6 +246,11 @@ async function main() {
     const fixturePath = path.resolve(process.cwd(), parseBenchmarkArgs(args.slice(1)));
     const benchmark = await runIntentBenchmark(fixturePath);
     writeStdout(`${JSON.stringify(benchmark, null, 2)}\n`);
+    return;
+  }
+  if (args[0] === "leaderboard") {
+    const leaderboard = await compileLeaderboard(parseLeaderboardArgs(args.slice(1)));
+    writeStdout(`${JSON.stringify(leaderboard, null, 2)}\n`);
     return;
   }
   if (args[0] === "outcome") {

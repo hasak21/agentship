@@ -456,6 +456,17 @@ safe file oracles; it never executes corpus commands. It remains a synthetic reg
 baseline, not a claim of representative real-world accuracy. The earlier metadata-only
 scenario suite remains available through `npm run benchmark:intent:scenarios`.
 
+Compile multiple agents' hash-bound reports for one identical evaluation suite:
+
+```bash
+node dist/agentship.cjs leaderboard --submissions evaluations/submissions
+```
+
+The compiler rejects report tampering and mismatched suite, task-set, or task-hash inputs,
+then ranks deterministically by PASS rate, active blockers, and causal reproductions.
+It does not authenticate self-declared agent names or unsigned reports and does not make a
+synthetic suite representative. See `docs/LEADERBOARD.md`.
+
 ### 5. GitHub pull-request report mode
 
 The checked-in `.github/workflows/agentship-report.yml` runs on `pull_request` with

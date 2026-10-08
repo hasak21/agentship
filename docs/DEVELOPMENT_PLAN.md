@@ -89,7 +89,7 @@ Exit criterion: a malicious pull request cannot escape the runner, obtain secret
 - [x] Build a seeded-defect patch corpus with 12 declarative before/after patches, independently executed file oracles, and a standalone runner.
 - [x] Track accepted, rejected, fixed, and overridden findings with immutable, report-hash-bound outcome events and explicit evidence semantics.
 - [x] Measure disposition/evidence-backed precision, corpus recall, false blocks per review, override outcomes, and median triage time with hash-bound sample sets.
-- [ ] Publish a reproducible coding-agent trust leaderboard.
+- [~] Publish a reproducible coding-agent trust leaderboard (bounded hash-bound submission format, comparable-suite validation, deterministic ranking, and standalone compiler delivered; independently collected representative submissions and hosted publication pending).
 
 Exit criterion: product and model-comparison claims are supported by reproducible measurements.
 

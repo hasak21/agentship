@@ -221,6 +221,11 @@ Finding outcome events bind an exact finding identity to the SHA-256 and executi
 
 Calibration recomputes metrics from three bounded inputs: a complete review-report denominator, outcome events whose source and resolution bytes must occur in that denominator, and a freshly executed intent benchmark. Exact source-report and finding identities group lifecycle events; conflicting confirmed/rejected dispositions fail closed. Aggregate directory hashes, corpus hash, formulas, and sample sizes make the result reproducible. This does not authenticate actors, prove that the supplied report directory is complete, or make a synthetic corpus representative. Trusted append-only collection and representative external corpora remain operator and M3 responsibilities.
 
+Leaderboard compilation accepts bounded manifests that bind a declared agent/model and
+suite to exact task and report hashes. It rejects incomparable task sets and ranks without
+timestamps or model calls. This establishes reproducible aggregation, not agent identity,
+report authenticity, complete submission collection, or corpus representativeness.
+
 The fork workflow loads protected-path policy from the trusted base checkout, so pull-request changes cannot weaken the effective policy used for that run. Local working-tree reviews still trust the mutable checkout policy. Authenticated approvals and signed override records remain later provenance work.
 
 The trusted-policy boundary is covered by an executable regression: a subject modifies its own `.agentship.yml` from gate mode to permissive report mode, removes protected paths, and substitutes a passing check, while AgentShip loads an external base-owned configuration. The resulting report retains gate mode and emits both the trusted required-check failure and protected-path blocker. The official workflow separately asserts that it never passes subject-controlled `--approve-path` or `--override` inputs. This proves precedence for the checked-in workflow structure; GitHub settings and live fork behavior remain external deployment assumptions.

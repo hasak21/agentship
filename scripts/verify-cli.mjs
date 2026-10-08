@@ -31,6 +31,7 @@ try {
     "--history <dir>",
     "agentship outcome",
     "agentship metrics",
+    "agentship leaderboard",
     "agentship verify-signature",
     "--signing-key <path>",
     "--approve-path <pattern>",
@@ -128,6 +129,41 @@ try {
     metrics.recall.cases !== 12
   ) {
     throw new Error("Bundled CLI calibration metrics are incomplete.");
+  }
+
+  const leaderboardDirectory = path.join(temporaryDirectory, "leaderboard");
+  await mkdir(leaderboardDirectory);
+  const leaderboardTaskSha = createHash("sha256").update("task").digest("hex");
+  const leaderboardSuiteSha = createHash("sha256").update("suite").digest("hex");
+  const leaderboardReport = `${JSON.stringify({
+    schemaVersion: 1,
+    verdict: "PASS",
+    task: { sha256: leaderboardTaskSha },
+    checks: [],
+    findings: [],
+  })}\n`;
+  await writeFile(path.join(leaderboardDirectory, "report.json"), leaderboardReport);
+  await writeFile(path.join(leaderboardDirectory, "agent.submission.json"), `${JSON.stringify({
+    schemaVersion: 1,
+    type: "agentship.agent-evaluation",
+    submissionId: "standalone-agent",
+    agent: { name: "Standalone Agent", model: "fixture" },
+    suite: { id: "standalone-suite", sha256: leaderboardSuiteSha },
+    tasks: [{
+      id: "task",
+      taskSha256: leaderboardTaskSha,
+      report: "report.json",
+      reportSha256: createHash("sha256").update(leaderboardReport).digest("hex"),
+    }],
+  })}\n`);
+  const leaderboardRun = await execFileAsync(
+    process.execPath,
+    [isolatedCli, "leaderboard", "--submissions", leaderboardDirectory],
+    { cwd: temporaryDirectory, encoding: "utf8" }
+  );
+  const leaderboard = JSON.parse(leaderboardRun.stdout);
+  if (leaderboard.submissions?.[0]?.metrics?.passRate !== 1) {
+    throw new Error("Bundled CLI leaderboard output is incomplete.");
   }
 
   const reviewRepository = path.join(temporaryDirectory, "signed-review");
@@ -233,7 +269,7 @@ try {
   if (!verifiedSignature.stdout.includes("AgentShip signature: VALID")) {
     throw new Error("Bundled CLI did not verify detached signature evidence.");
   }
-  console.log("Bundled CLI review, benchmark, outcome, metrics, and signature commands run outside the repository without node_modules.");
+  console.log("Bundled CLI review, benchmark, leaderboard, outcome, metrics, and signature commands run outside the repository without node_modules.");
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
 }
