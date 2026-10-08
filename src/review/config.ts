@@ -11,6 +11,7 @@ import type {
 export const REVIEW_FINDING_KINDS = new Set<ReviewFindingKind>([
   "required_check_failed",
   "required_check_timed_out",
+  "causal_check_not_reproduced",
   "optional_check_failed",
   "repository_changed_during_review",
   "explicit_requirement_path_unchanged",
@@ -65,6 +66,27 @@ function assertCheck(value: unknown, index: number): asserts value is ReviewChec
   }
   if (check.isolation !== undefined && check.isolation !== "bubblewrap") {
     throw new Error(`checks[${index}].isolation must be 'bubblewrap'.`);
+  }
+  if (check.causal !== undefined) {
+    if (!check.causal || typeof check.causal !== "object" || Array.isArray(check.causal)) {
+      throw new Error(`checks[${index}].causal must be an object.`);
+    }
+    const causal = check.causal as Record<string, unknown>;
+    if (causal.expectation !== "fails_on_base") {
+      throw new Error(`checks[${index}].causal.expectation must be 'fails_on_base'.`);
+    }
+    if (!Array.isArray(causal.testPaths) || causal.testPaths.length === 0) {
+      throw new Error(`checks[${index}].causal.testPaths must contain path patterns.`);
+    }
+    causal.testPaths.forEach((pattern, patternIndex) =>
+      assertPathPattern(pattern, `checks[${index}].causal.testPaths[${patternIndex}]`)
+    );
+  }
+  if (check.causal && check.isolation !== "bubblewrap") {
+    throw new Error(`checks[${index}].causal requires isolation: bubblewrap.`);
+  }
+  if (check.causal && check.required === false) {
+    throw new Error(`checks[${index}].causal checks must be required.`);
   }
   assertCheckResources(check.resources, index);
 }

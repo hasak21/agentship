@@ -289,6 +289,11 @@ to a history-free review, and baseline comparison never changes the verdict. See
 Checks may declare `whenChanged` with exact repository paths or trailing `/**`
 directory patterns. A check with no matching changed path is recorded as `skipped`;
 an explicit `` `check:name` `` requirement still treats that status as unsatisfied.
+Checks may also opt into causal regression evidence with `causal.expectation:
+fails_on_base` and explicit `causal.testPaths`. With `--base`, AgentShip overlays only
+those changed test or fixture files onto the merge-base worktree and requires the
+isolated command to fail there after passing on the proposed revision. See
+`docs/CAUSAL_CHECKS.md`; this proves revision discrimination, not a complete specification.
 Repository-owned `limits.maxChangedFiles` and `limits.maxDiffBytes` stop command
 execution and emit blockers before an oversized review runs. `limits.maxCheckSeconds`
 sets a cumulative wall-clock deadline across check preparation and execution: AgentShip

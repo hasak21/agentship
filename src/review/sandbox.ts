@@ -33,7 +33,8 @@ export async function prepareBubblewrapSandbox(
   check: ReviewCheckConfig,
   repositoryRoot: string,
   platform: NodeJS.Platform = process.platform,
-  bubblewrapAvailable = existsSync(BUBBLEWRAP_PATH)
+  bubblewrapAvailable = existsSync(BUBBLEWRAP_PATH),
+  dependenciesRoot = repositoryRoot
 ): Promise<PreparedSandbox> {
   if (platform !== "linux" || !bubblewrapAvailable || !existsSync(GIT_PATH)) {
     throw new Error(
@@ -51,7 +52,7 @@ export async function prepareBubblewrapSandbox(
   const workspace = path.join(sandboxDirectory, "workspace");
   try {
     await copyWorkspace(absoluteRoot, workspace);
-    const nodeModules = path.join(absoluteRoot, "node_modules");
+    const nodeModules = path.join(path.resolve(dependenciesRoot), "node_modules");
     const nodeModulesAvailable = await isDirectory(nodeModules);
     if (nodeModulesAvailable) {
       await mkdir(path.join(workspace, "node_modules"), { recursive: true });

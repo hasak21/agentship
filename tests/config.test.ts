@@ -176,6 +176,47 @@ checks:
   );
 });
 
+test("causal checks require the bounded bubblewrap backend", async () => {
+  await withConfig(
+    `version: 1
+mode: report
+checks:
+  - name: regression
+    run: npm test
+    causal:
+      expectation: fails_on_base
+      testPaths:
+        - tests/**
+    isolation: bubblewrap
+`,
+    async (directory) => {
+      const { config } = await loadConfig(directory);
+      assert.deepEqual(config.checks[0]?.causal, {
+        expectation: "fails_on_base",
+        testPaths: ["tests/**"],
+      });
+    }
+  );
+  for (const [extra, expected] of [
+    ["causal: invalid", /causal must be an object/],
+    ["causal: { expectation: passes_on_base, testPaths: [tests/**] }", /causal\.expectation must be 'fails_on_base'/],
+    ["causal: { expectation: fails_on_base, testPaths: [] }", /causal\.testPaths must contain path patterns/],
+    ["causal: { expectation: fails_on_base, testPaths: [tests/**] }", /causal requires isolation: bubblewrap/],
+    ["causal: { expectation: fails_on_base, testPaths: [tests/**] }\n    isolation: bubblewrap\n    required: false", /causal checks must be required/],
+  ] as const) {
+    await withConfig(
+      `version: 1
+mode: report
+checks:
+  - name: regression
+    run: npm test
+    ${extra}
+`,
+      async (directory) => assert.rejects(loadConfig(directory), expected)
+    );
+  }
+});
+
 test("configuration rejects unsafe check paths and invalid budgets", async () => {
   await withConfig(
     `version: 1

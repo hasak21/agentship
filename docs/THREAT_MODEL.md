@@ -50,7 +50,7 @@ This model covers the local review CLI, public Next.js endpoints, provider clien
 | T11 | Prompt injection persuades a model to approve malicious code | LLM output cannot satisfy deterministic checks | Partially mitigated; inferred findings remain attackable |
 | T12 | Report is edited after generation | Optional detached Ed25519 statements bind local report bytes to a trusted-key fingerprint; the official publisher uses GitHub Sigstore attestation for exact post-validation canonical CI bytes | Incoming subject artifacts and unsigned local flows remain open; attestation proves publisher identity and digest, not report truth; key ownership, revocation, trusted time, and signer isolation remain operator responsibilities |
 | T13 | Task changes between approval and review | Task digest in report; optional detached signature covers the exact report bytes | Unsigned consumers must independently retain and compare the digest |
-| T14 | Generated test merely encodes implementation | No causal base/head validation yet | Open |
+| T14 | Generated test merely encodes implementation | Opt-in causal checks overlay explicit changed test/fixture paths onto the merge base and require the same isolated command to fail normally on base after passing on head | Test-path classification is trusted policy; semantic correctness, dependency causality, and specification completeness remain open |
 | T15 | In-memory or app-level rate limits fail across replicas | No distributed limiter is claimed | Host/control-plane limiter required |
 | T16 | Oversized pull-request input consumes excessive check resources | Base-owned input and bubblewrap-copy entry/byte limits block early; a cumulative check wall-clock deadline clamps active work and stops later checks; Linux per-process CPU/file-size/file-descriptor limits bound individual processes in official CI | Reliable aggregate CPU/memory/process-tree, disk-capacity, and process-count quotas remain open |
 | T17 | Contributor suppresses a finding in the same pull request | Fork CI loads exact-match, warning-only suppressions from the trusted base policy and retains suppression evidence | Local working-tree policy is developer-trusted; immutable policy and signed overrides remain open |
@@ -71,7 +71,7 @@ The secretless artifact-only GitHub-hosted report workflow is a constrained earl
 5. Effective policy is loaded from the trusted base revision or control plane, never solely from the pull request.
 6. Forked tasks, source, tests, filenames, and tool output are treated as prompt-injection content.
 7. Evidence manifests are signed and identify runner image, tool version, policy hash, base, and head.
-8. Generated regression tests are causally validated against base and proposed revisions.
+8. Generated regression tests use causal mode with narrowly reviewed test overlays; semantic adequacy still requires review.
 
 ## Review cadence
 

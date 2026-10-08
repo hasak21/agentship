@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { compareWithBaseline, loadBaseline } from "./baseline";
@@ -8,6 +8,7 @@ import {
   collectGitEvidence,
   getGitProvenance,
   getHead,
+  prepareBaseWorktree,
   resolveRepositoryRoot,
 } from "./git";
 import { runCheck } from "./runner";
@@ -86,6 +87,9 @@ export async function runReview(options: RunReviewOptions): Promise<{
     repositoryRoot,
     options.configPath
   );
+  if (config.checks.some((check) => check.causal) && !options.base) {
+    throw new Error("Causal checks require --base <ref>.");
+  }
   const gitEvidence = await collectGitEvidence(repositoryRoot, {
     staged: options.staged ?? false,
     base: options.base,
@@ -136,9 +140,41 @@ export async function runReview(options: RunReviewOptions): Promise<{
       checks.push(skippedCheckEvidence(check, "review_budget_exceeded"));
       continue;
     }
-    const evidence = await runCheck(check, repositoryRoot, {
+    let evidence = await runCheck(check, repositoryRoot, {
       maxTimeoutMs: remainingCheckMs,
     });
+    if (check.causal && evidence.status === "passed") {
+      const baseWorktree = await prepareBaseWorktree(repositoryRoot, options.base!);
+      try {
+        const overlaidFiles = await overlayCausalTestFiles(
+          repositoryRoot,
+          baseWorktree.directory,
+          gitEvidence.changedFiles,
+          check.causal.testPaths
+        );
+        const baseRemainingMs = checkDeadline === undefined
+          ? undefined
+          : checkDeadline - performance.now();
+        const baseEvidence = await runCheck(check, baseWorktree.directory, {
+          maxTimeoutMs: baseRemainingMs,
+          dependenciesRoot: repositoryRoot,
+        });
+        evidence = {
+          ...evidence,
+          causal: {
+            expectation: check.causal.expectation,
+            baseCommit: baseWorktree.commit,
+            testPaths: check.causal.testPaths,
+            overlaidFiles,
+            satisfied:
+              baseEvidence.status === "failed" && baseEvidence.exitCode !== null,
+            base: baseEvidence,
+          },
+        };
+      } finally {
+        await baseWorktree.cleanup();
+      }
+    }
     checks.push(
       check.whenChanged
         ? {
@@ -372,6 +408,36 @@ export async function runReview(options: RunReviewOptions): Promise<{
   };
 }
 
+async function overlayCausalTestFiles(
+  repositoryRoot: string,
+  baseWorktree: string,
+  changedFiles: string[],
+  patterns: string[]
+): Promise<string[]> {
+  const files = changedFiles.filter((file) =>
+    patterns.some((pattern) => pathMatches(pattern, file))
+  );
+  if (files.length === 0) {
+    throw new Error("Causal check testPaths did not match a changed file.");
+  }
+  for (const file of files) {
+    const source = path.join(repositoryRoot, ...file.split("/"));
+    const destination = path.join(baseWorktree, ...file.split("/"));
+    try {
+      const stats = await lstat(source);
+      if (!stats.isFile()) {
+        throw new Error(`Causal overlay '${file}' must be a regular file.`);
+      }
+      await mkdir(path.dirname(destination), { recursive: true });
+      await copyFile(source, destination);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await rm(destination, { force: true });
+    }
+  }
+  return files;
+}
+
 async function buildHistoryTarget(
   repositoryRoot: string,
   historyDirectory: string,
@@ -434,6 +500,21 @@ export function buildFindings(
   protectedPaths: ProtectedPathEvidence[] = []
 ): ReviewFinding[] {
   const findings = checks.flatMap((check, index): ReviewFinding[] => {
+    if (check.causal && !check.causal.satisfied) {
+      return [{
+        id: `causal-check-${index + 1}`,
+        severity: "blocker",
+        kind: "causal_check_not_reproduced",
+        title: `Causal check '${check.name}' did not fail normally on the base revision`,
+        evidence: {
+          check: check.name,
+          command: check.command,
+          baseCommit: check.causal.baseCommit,
+          baseStatus: check.causal.base.status,
+          baseExitCode: check.causal.base.exitCode,
+        },
+      }];
+    }
     if (check.status === "passed" || check.status === "skipped") return [];
     const required = check.required;
     const kind = required
@@ -884,6 +965,7 @@ export function renderMarkdown(report: ReviewReport): string {
               ? check.selection.matchedFiles.map(markdownCode).join(", ")
               : "no path match"
             : "all changes"
+        }${check.causal ? `; causal base=${check.causal.base.status} at ${markdownCode(check.causal.baseCommit)}` : ""
         } | ${markdownCode(check.command)} |`;
       }
     )

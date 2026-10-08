@@ -588,6 +588,78 @@ test("skipped path-filtered checks do not fail unless explicitly required by a t
   ]);
 });
 
+test("causal checks block unless the passing head check fails normally on base", () => {
+  const base = check({ status: "failed", exitCode: 1 });
+  const reproduced = check({
+    causal: {
+      expectation: "fails_on_base",
+      baseCommit: "a".repeat(40),
+      testPaths: ["tests/**"],
+      overlaidFiles: ["tests/regression.test.ts"],
+      satisfied: true,
+      base,
+    },
+  });
+  assert.deepEqual(buildFindings([reproduced]), []);
+
+  const notReproduced = check({
+    causal: {
+      expectation: "fails_on_base",
+      baseCommit: "b".repeat(40),
+      testPaths: ["tests/**"],
+      overlaidFiles: ["tests/regression.test.ts"],
+      satisfied: false,
+      base: check(),
+    },
+  });
+  const [finding] = buildFindings([notReproduced]);
+  assert.equal(finding?.kind, "causal_check_not_reproduced");
+  assert.equal(finding?.severity, "blocker");
+  assert.equal(finding?.evidence.baseStatus, "passed");
+});
+
+test("causal review records fail-on-base and pass-on-head evidence", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-causal-"));
+  try {
+    await execFileAsync("git", ["init", "-q"], { cwd: directory });
+    await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: directory });
+    await execFileAsync("git", ["config", "user.name", "AgentShip Test"], { cwd: directory });
+    await writeFile(path.join(directory, "value.txt"), "old\n", "utf8");
+    await writeFile(path.join(directory, "regression.sh"), "test \"$(cat value.txt)\" = old\n", "utf8");
+    await writeFile(path.join(directory, ".agentship.yml"), `version: 1
+mode: report
+checks:
+  - name: regression
+    run: sh regression.sh
+    causal:
+      expectation: fails_on_base
+      testPaths:
+        - regression.sh
+    isolation: bubblewrap
+    network: denied
+`, "utf8");
+    await execFileAsync("git", ["add", "."], { cwd: directory });
+    await execFileAsync("git", ["commit", "-qm", "base"], { cwd: directory });
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: directory, encoding: "utf8" });
+    const base = stdout.trim();
+    await writeFile(path.join(directory, "value.txt"), "new\n", "utf8");
+    await writeFile(path.join(directory, "regression.sh"), "test \"$(cat value.txt)\" = new\n", "utf8");
+    await execFileAsync("git", ["add", "value.txt", "regression.sh"], { cwd: directory });
+    await execFileAsync("git", ["commit", "-qm", "head"], { cwd: directory });
+
+    const result = await runReview({ cwd: directory, base, outputPath: ".agentship/reviews/causal.json" });
+    assert.equal(result.report.verdict, "PASS");
+    assert.equal(result.report.checks[0]?.status, "passed");
+    assert.equal(result.report.checks[0]?.causal?.baseCommit, base);
+    assert.equal(result.report.checks[0]?.causal?.base.status, "failed");
+    assert.equal(result.report.checks[0]?.causal?.satisfied, true);
+    assert.deepEqual(result.report.checks[0]?.causal?.overlaidFiles, ["regression.sh"]);
+    assert.match(await import("node:fs/promises").then(({ readFile }) => readFile(result.markdownPath, "utf8")), /causal base=failed/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("review input budgets produce evidence-backed blockers", () => {
   const excesses = evaluateReviewBudgets(
     { limits: { maxChangedFiles: 1, maxDiffBytes: 4 } },

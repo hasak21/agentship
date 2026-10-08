@@ -52,6 +52,7 @@ Exit criterion: changes to AgentShip routinely carry an independently produced v
 - [x] Require confirmation for task-marked ambiguity and requirements touching configured high-impact protected paths.
 - [x] Map requirements to files, symbols, tests, and documentation through explicit path/check/symbol evidence and labeled test/documentation role inference.
 - [x] Identify explicit/inferred omissions and opt-in strict unattributed changes while keeping semantic relevance claims out of deterministic evidence.
+- [x] Add opt-in causal regression checks that retain pass-on-head/fail-on-base evidence with explicit test overlays.
 - [~] Measure omission recall and false-positive rate (corpus-hashed 12-case executable baseline delivered at 0.667 precision/recall; representative external corpus pending).
 
 Exit criterion: omitted requirements are detected with measured, publishable accuracy.

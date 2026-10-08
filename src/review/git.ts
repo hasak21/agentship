@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { open, readFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { GitProvenance } from "./types";
@@ -144,6 +145,35 @@ export async function resolveRepositoryRoot(cwd: string): Promise<string> {
 
 export async function getHead(repositoryRoot: string): Promise<string> {
   return git(["rev-parse", "HEAD"], repositoryRoot);
+}
+
+export async function prepareBaseWorktree(
+  repositoryRoot: string,
+  baseRef: string
+): Promise<{ commit: string; directory: string; cleanup(): Promise<void> }> {
+  const commit = await git(["merge-base", baseRef, "HEAD"], repositoryRoot);
+  if (!/^[a-f0-9]{40,64}$/.test(commit)) {
+    throw new Error("Git returned an invalid merge-base commit.");
+  }
+  const parent = await mkdtemp(path.join(os.tmpdir(), "agentship-base-"));
+  const directory = path.join(parent, "worktree");
+  try {
+    await git(["worktree", "add", "--detach", directory, commit], repositoryRoot);
+  } catch (error) {
+    await rm(parent, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    commit,
+    directory,
+    cleanup: async () => {
+      try {
+        await git(["worktree", "remove", "--force", directory], repositoryRoot);
+      } finally {
+        await rm(parent, { recursive: true, force: true });
+      }
+    },
+  };
 }
 
 export async function collectGitEvidence(

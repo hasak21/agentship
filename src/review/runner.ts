@@ -49,7 +49,7 @@ interface CheckInvocation {
 export async function runCheck(
   check: ReviewCheckConfig,
   repositoryRoot: string,
-  options: { maxTimeoutMs?: number } = {}
+  options: { maxTimeoutMs?: number; dependenciesRoot?: string } = {}
 ): Promise<CheckEvidence> {
   const started = Date.now();
   const budgetStarted = performance.now();
@@ -69,7 +69,13 @@ export async function runCheck(
   let sandbox: PreparedSandbox | undefined;
   try {
     if (check.isolation === "bubblewrap") {
-      sandbox = await prepareBubblewrapSandbox(check, repositoryRoot);
+      sandbox = await prepareBubblewrapSandbox(
+        check,
+        repositoryRoot,
+        process.platform,
+        existsSync(BUBBLEWRAP_PATH),
+        options.dependenciesRoot ?? repositoryRoot
+      );
     }
     invocation = buildCheckInvocation(
       check,

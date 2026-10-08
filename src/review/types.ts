@@ -5,6 +5,7 @@ export type CheckStatus = "passed" | "failed" | "timed_out" | "skipped";
 export type ReviewFindingKind =
   | "required_check_failed"
   | "required_check_timed_out"
+  | "causal_check_not_reproduced"
   | "optional_check_failed"
   | "repository_changed_during_review"
   | "explicit_requirement_path_unchanged"
@@ -25,6 +26,10 @@ export interface ReviewCheckConfig {
   whenChanged?: string[];
   resources?: CheckResourceLimits;
   isolation?: "bubblewrap";
+  causal?: {
+    expectation: "fails_on_base";
+    testPaths: string[];
+  };
 }
 
 export interface CheckResourceLimits {
@@ -111,6 +116,14 @@ export interface CheckEvidence {
     matchedFiles: string[];
   };
   skipReason?: "no_changed_path_match" | "review_budget_exceeded";
+  causal?: {
+    expectation: "fails_on_base";
+    baseCommit: string;
+    testPaths: string[];
+    overlaidFiles: string[];
+    satisfied: boolean;
+    base: Omit<CheckEvidence, "causal" | "selection">;
+  };
 }
 
 export interface ReviewFinding {
@@ -122,6 +135,9 @@ export interface ReviewFinding {
     check?: string;
     command?: string;
     exitCode?: number | null;
+    baseCommit?: string;
+    baseStatus?: CheckStatus;
+    baseExitCode?: number | null;
     beforeHead?: string;
     afterHead?: string;
     beforeDiffSha256?: string;

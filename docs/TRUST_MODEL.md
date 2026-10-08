@@ -197,6 +197,14 @@ The subject's configured checks execute hostile repository code inside disposabl
 
 Base-owned `whenChanged` patterns select checks using only exact repository paths and trailing `/**` directory patterns. A non-applicable check is recorded as `skipped`, never as passing; a task that explicitly requires that check remains unsatisfied. Base-owned changed-file and diff-byte limits produce a blocker and skip repository commands before an oversized review executes. Per-check and workflow wall-clock timeouts are enforced. The official Linux policy additionally applies per-process CPU-time, file-size, and descriptor limits through `prlimit`, and bubblewrap supplies a bounded disposable copy plus PID/filesystem/network namespaces. A configurable address-space bound exists but is omitted for official Node checks because it is not a reliable resident-memory bound and breaks runtimes that reserve large virtual ranges. Aggregate process-tree accounting, reliable memory, disk-capacity, process-count, host-kernel isolation, and dependency installation with network access outside the worker remain residual risks.
 
+Opt-in causal checks require an explicit base revision and bubblewrap. After a head pass,
+AgentShip creates a detached merge-base worktree, overlays only changed regular files
+matching trusted `causal.testPaths`, and reruns the command in a fresh sandbox while
+sharing the head installation's dependencies. A normal base failure is retained as
+reproduced evidence; base pass, timeout, or infrastructure failure is a core blocker.
+This establishes revision discrimination for the declared overlay, not test semantics or
+dependency causality.
+
 Repository-owned suppressions match an exact finding ID and warning kind. Each entry has a stable suppression ID, owner, reason, and calendar-date expiry. An active suppression is attached to—not removed from—the finding, is represented as an accepted external SARIF suppression, and removes only that warning's verdict impact. Expired entries are ignored. The schema rejects blocker kinds, duplicate identities, duplicate targets, invalid dates, and unbounded ownership/reason text.
 
 Repository-owned `policy.blockOn` entries promote named warning finding kinds to blockers. The schema accepts only implemented finding kinds and rejects duplicates, and the effective configured list is captured in JSON and Markdown evidence. Promotion happens before suppression, so a configured blocker cannot be suppressed through the warning-exception mechanism. Findings that protect evidence integrity—required check failure or timeout, repository mutation, exceeded review budgets, and missing required confirmation—remain blockers independently of this list. Report mode records a `BLOCK` verdict without changing the process exit code; gate mode enforces the verdict.
