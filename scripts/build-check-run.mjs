@@ -75,6 +75,85 @@ export async function buildCheckRunPayload(options) {
     verifier.sha256,
     "AgentShip report tool verifier SHA-256"
   );
+  const runner = objectField(report.runner, "AgentShip report runner");
+  const runnerPlatform = boundedString(
+    runner.platform,
+    "AgentShip report runner platform",
+    32
+  );
+  if (runnerPlatform !== "linux") {
+    throw new Error("AgentShip CI report runner platform must be linux.");
+  }
+  boundedString(runner.architecture, "AgentShip report runner architecture", 64);
+  boundedString(runner.kernelRelease, "AgentShip report runner kernel release", 256);
+  const osRelease = objectField(
+    runner.osRelease,
+    "AgentShip report runner OS release"
+  );
+  const osPrettyName = boundedString(
+    osRelease.prettyName ?? osRelease.id,
+    "AgentShip report runner OS release identity",
+    256
+  );
+  sha256String(
+    osRelease.sha256,
+    "AgentShip report runner OS release SHA-256"
+  );
+  const node = objectField(runner.node, "AgentShip report runner Node");
+  const nodeVersion = boundedString(
+    node.version,
+    "AgentShip report runner Node version",
+    64
+  );
+  boundedString(
+    node.executable,
+    "AgentShip report runner Node executable",
+    4096
+  );
+  const nodeBytes = positiveInteger(
+    node.bytes,
+    "AgentShip report runner Node bytes"
+  );
+  if (nodeBytes > 256 * 1024 * 1024) {
+    throw new Error("AgentShip report runner Node exceeds 268435456 bytes.");
+  }
+  const nodeSha256 = sha256String(
+    node.sha256,
+    "AgentShip report runner Node SHA-256"
+  );
+  const githubRunner = objectField(
+    runner.github,
+    "AgentShip report GitHub runner"
+  );
+  if (
+    boundedString(
+      githubRunner.environment,
+      "AgentShip report GitHub runner environment",
+      256
+    ) !== "github-hosted" ||
+    boundedString(
+      githubRunner.runnerOs,
+      "AgentShip report GitHub runner OS",
+      256
+    ) !== "Linux" ||
+    boundedString(
+      githubRunner.runnerArch,
+      "AgentShip report GitHub runner architecture",
+      256
+    ) !== "X64"
+  ) {
+    throw new Error("AgentShip report must claim the expected GitHub-hosted Linux X64 runner.");
+  }
+  const imageOs = boundedString(
+    githubRunner.imageOs,
+    "AgentShip report GitHub image OS",
+    256
+  );
+  const imageVersion = boundedString(
+    githubRunner.imageVersion,
+    "AgentShip report GitHub image version",
+    256
+  );
   const verdict = report.verdict;
   if (verdict !== "PASS" && verdict !== "WARN" && verdict !== "BLOCK") {
     throw new Error("AgentShip report verdict is invalid.");
@@ -123,6 +202,9 @@ export async function buildCheckRunPayload(options) {
         `- Report run: \`${reportRunId}\``,
         `- Reviewed checkout: \`${reviewedCommit}\``,
         `- Verifier SHA-256: \`${verifierSha256}\``,
+        `- Runner image: \`${imageOs}/${imageVersion}\``,
+        `- Runner OS: \`${osPrettyName}\``,
+        `- Node: \`${nodeVersion}\` (SHA-256 \`${nodeSha256}\`)`,
         `- Source workflow run: ${runId}`,
         "",
         "Download the workflow artifact for the bounded JSON, Markdown, and SARIF evidence. This Check Run is always neutral and is not a merge gate.",
@@ -194,7 +276,12 @@ function objectField(value, field) {
 }
 
 function boundedString(value, field, maxLength) {
-  if (typeof value !== "string" || !value.trim() || value.length > maxLength || value.includes("\0")) {
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value.length > maxLength ||
+    /[\u0000-\u001f\u007f-\u009f]/.test(value)
+  ) {
     throw new Error(`${field} must be non-empty and at most ${maxLength} characters.`);
   }
   return value;

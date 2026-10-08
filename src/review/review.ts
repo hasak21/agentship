@@ -37,6 +37,7 @@ import type {
   ReviewFindingKind,
   ReviewReport,
   ReviewVerdict,
+  RunnerProvenance,
 } from "./types";
 
 interface BudgetExcess {
@@ -58,6 +59,7 @@ export interface RunReviewOptions {
   overridePath?: string;
   historyDirectory?: string;
   verifierEntrypoint?: string;
+  runnerProvenance?: RunnerProvenance;
 }
 
 export interface ProtectedPathEvidence {
@@ -247,6 +249,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
       git: gitProvenance,
       verifier: verifierProvenance,
     },
+    runner: options.runnerProvenance,
     mode: config.mode,
     verdict,
     startedAt: new Date(started).toISOString(),
@@ -982,8 +985,26 @@ export function renderMarkdown(report: ReviewReport): string {
   const verifier = report.tool.verifier
     ? `- Verifier entrypoint: ${markdownCode(report.tool.verifier.entrypoint)}\n- Verifier bytes: ${report.tool.verifier.bytes}\n- Verifier SHA-256: \`${report.tool.verifier.sha256}\``
     : "- Verifier entrypoint provenance: unavailable";
+  const runner = report.runner
+    ? [
+        `- Runner: ${markdownCode(`${report.runner.platform}/${report.runner.architecture}`)}`,
+        `- Kernel: ${markdownCode(report.runner.kernelRelease)}`,
+        ...(report.runner.osRelease
+          ? [
+              `- OS: ${markdownCode(report.runner.osRelease.prettyName ?? report.runner.osRelease.id ?? "unknown")}`,
+              `- OS manifest SHA-256: \`${report.runner.osRelease.sha256}\``,
+            ]
+          : []),
+        `- Node: ${markdownCode(report.runner.node.version)} at ${markdownCode(report.runner.node.executable)}`,
+        `- Node bytes: ${report.runner.node.bytes}`,
+        `- Node SHA-256: \`${report.runner.node.sha256}\``,
+        ...(report.runner.github?.imageOs
+          ? [`- GitHub image: ${markdownCode(`${report.runner.github.imageOs}${report.runner.github.imageVersion ? `/${report.runner.github.imageVersion}` : ""}`)}`]
+          : []),
+      ].join("\n")
+    : "- Runner provenance: unavailable";
 
-  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n${verifier}\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Override record\n\n${override}\n\nOverride actors are recorded claims until authenticated signing is implemented.\n\n## Report history\n\n${history}\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Execution | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
+  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n${verifier}\n${runner}\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Override record\n\n${override}\n\nOverride actors are recorded claims until authenticated signing is implemented.\n\n## Report history\n\n${history}\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Execution | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
 }
 
 function normalizeMarkdownValue(value: string): string {

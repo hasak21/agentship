@@ -200,6 +200,40 @@ test("Markdown evidence displays verifier entrypoint provenance", () => {
   assert.ok(markdown.includes(`Verifier SHA-256: \`${"9".repeat(64)}\``));
 });
 
+test("Markdown evidence displays runner and runtime provenance", () => {
+  const report = reportWithFindings([]);
+  report.runner = {
+    platform: "linux",
+    architecture: "x64",
+    kernelRelease: "6.11.0-test",
+    osRelease: {
+      id: "ubuntu",
+      versionId: "24.04",
+      prettyName: "Ubuntu 24.04 LTS",
+      sha256: "8".repeat(64),
+    },
+    node: {
+      version: "v20.19.5",
+      executable: "/opt/node/bin/node",
+      bytes: 123456789,
+      sha256: "7".repeat(64),
+    },
+    github: {
+      environment: "github-hosted",
+      runnerOs: "Linux",
+      runnerArch: "X64",
+      imageOs: "ubuntu24",
+      imageVersion: "20261005.1",
+    },
+  };
+
+  const markdown = renderMarkdown(report);
+  assert.match(markdown, /Runner: <code>linux\/x64<\/code>/);
+  assert.match(markdown, /OS: <code>Ubuntu 24\.04 LTS<\/code>/);
+  assert.ok(markdown.includes(`Node SHA-256: \`${"7".repeat(64)}\``));
+  assert.match(markdown, /GitHub image: <code>ubuntu24\/20261005\.1<\/code>/);
+});
+
 test("Linux resource limits produce an exact prlimit invocation", () => {
   const invocation = buildCheckInvocation(
     {

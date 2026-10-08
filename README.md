@@ -455,6 +455,10 @@ as untrusted data, validates the bounded report and event bindings, and creates 
 always-neutral Check Run on the pull-request head. Keep the subject workflow on
 GitHub-hosted runners and do not enable write tokens or secrets for fork workflows. The
 publisher never executes artifact contents and does not comment, label, or block merging.
+Reports hash the exact AgentShip entrypoint and launching Node executable and record
+bounded OS and GitHub runner-image metadata. The publisher requires the expected
+GitHub-hosted Linux X64 shape and includes the image/runtime identity in its neutral
+summary. This is recorded provenance, not authenticated runner or workload attestation.
 Do not configure the neutral `AgentShip evidence report` Check Run as a required check.
 See `docs/CI_REPORT_MODE.md` for the trust boundary.
 

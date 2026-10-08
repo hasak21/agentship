@@ -46,6 +46,30 @@ function report() {
         sha256: "9".repeat(64),
       },
     },
+    runner: {
+      platform: "linux",
+      architecture: "x64",
+      kernelRelease: "6.11.0-1018-azure",
+      osRelease: {
+        id: "ubuntu",
+        versionId: "24.04",
+        prettyName: "Ubuntu 24.04.3 LTS",
+        sha256: "8".repeat(64),
+      },
+      node: {
+        version: "v20.19.5",
+        executable: "/opt/hostedtoolcache/node/20.19.5/x64/bin/node",
+        bytes: 123456789,
+        sha256: "7".repeat(64),
+      },
+      github: {
+        environment: "github-hosted",
+        runnerOs: "Linux",
+        runnerArch: "X64",
+        imageOs: "ubuntu24",
+        imageVersion: "20261005.1",
+      },
+    },
     verdict: "BLOCK",
     repository: {
       head: MERGE_SHA,
@@ -91,7 +115,57 @@ test("Check Run payload is bound to the PR head and always neutral", async () =>
         `Verifier SHA-256: \`${"9".repeat(64)}\``
       )
     );
+    assert.match(payload.output.summary, /Runner image: `ubuntu24\/20261005\.1`/);
+    assert.ok(
+      payload.output.summary.includes(
+        `Node: \`v20.19.5\` (SHA-256 \`${"7".repeat(64)}\`)`
+      )
+    );
     assert.equal(payload.details_url, "https://github.com/example/agentship/actions/runs/1234");
+  });
+});
+
+test("Check Run payload requires bounded GitHub-hosted runner provenance", async () => {
+  await withPayloadFixture(async ({ root, eventPath, reportPath }) => {
+    const missing = report();
+    delete (missing as { runner?: unknown }).runner;
+    await writeFile(reportPath, JSON.stringify(missing), "utf8");
+    await assert.rejects(
+      buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
+      /report runner must be an object/
+    );
+
+    await writeFile(
+      reportPath,
+      JSON.stringify({
+        ...report(),
+        runner: {
+          ...report().runner,
+          github: { ...report().runner.github, environment: "self-hosted" },
+        },
+      }),
+      "utf8"
+    );
+    await assert.rejects(
+      buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
+      /expected GitHub-hosted Linux X64 runner/
+    );
+
+    await writeFile(
+      reportPath,
+      JSON.stringify({
+        ...report(),
+        runner: {
+          ...report().runner,
+          github: { ...report().runner.github, imageVersion: "forged\nsummary" },
+        },
+      }),
+      "utf8"
+    );
+    await assert.rejects(
+      buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
+      /image version must be non-empty/
+    );
   });
 });
 

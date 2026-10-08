@@ -27,6 +27,9 @@ Each report binds together:
 - exact commands, timing, exit status, and bounded output;
 - the canonical Git executable path and version used to calculate repository evidence;
 - the canonical AgentShip entrypoint path, exact byte length, and SHA-256;
+- platform, architecture, kernel release, optional bounded OS-release identity/hash, and the
+  canonical launching Node executable path, exact byte length, and SHA-256;
+- optional bounded GitHub runner and image environment metadata;
 - findings derived from that captured evidence;
 - the AgentShip schema and tool version.
 
@@ -42,8 +45,8 @@ the operator separately maps that public-key fingerprint to an owner. The ordina
 and GitHub report flows remain unsigned unless signing is explicitly configured. Current
 CI intentionally sends no signing secret into the pull-request job; a future privileged
 attestor must sign only after bounded artifact validation. Key rotation, HSM/KMS support,
-revocation, trusted timestamps, transparency logs, and runner image attestations remain
-open provenance work.
+revocation, trusted timestamps, transparency logs, and authenticated runner/workload
+attestations remain open provenance work.
 
 ## Verifier tool resolution
 
@@ -56,11 +59,14 @@ in its neutral Check Run summary. A detached report signature, when separately e
 also covers these fields because it signs the exact JSON bytes.
 
 In `npm run review` source mode, the entrypoint is `src/cli/index.ts`; its digest does not
-cover imported source files, installed dependencies, the Node runtime, or loader behavior.
-The field identifies bytes rather than authenticating them. Trust still comes from how the
-operator obtained the bundle and, for signed evidence, how the public key was established.
-Runner image, kernel, Node binary, dependency, and build-reproducibility attestations
-remain open.
+cover imported source files, installed dependencies, or loader behavior. Every CLI review
+separately hashes the exact launching Node executable, records bounded host/OS identity,
+and includes GitHub runner/image environment metadata when available. The privileged
+publisher requires the official report to claim GitHub-hosted Linux X64 execution and
+validates all those fields structurally. These fields identify bytes and claims rather than
+authenticating them. Trust still comes from how the operator obtained the runtime/bundle
+and, for signed evidence, how the public key was established. Signed runner-image,
+kernel/workload, dependency, and build-reproducibility attestations remain open.
 
 Repository evidence never resolves `git` through an unfiltered inherited `PATH`.
 AgentShip prefers canonical host-owned system locations on Linux, macOS, and Windows;

@@ -12,6 +12,7 @@ import {
   signEvidenceReport,
   verifyEvidenceSignature,
 } from "../review/signature";
+import { collectRunnerProvenance } from "../review/runner-provenance";
 
 interface CliOptions {
   taskPath?: string;
@@ -272,9 +273,11 @@ async function main() {
     return;
   }
   const options = parseArgs(args);
+  const runnerProvenance = await collectRunnerProvenance();
   const result = await runReview({
     cwd: process.cwd(),
     verifierEntrypoint: process.argv[1],
+    runnerProvenance,
     taskPath: options.taskPath,
     configPath: options.configPath,
     base: options.base,

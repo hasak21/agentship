@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, generateKeyPairSync } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -9,6 +10,12 @@ const execFileAsync = promisify(execFile);
 const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "agentship-cli-"));
 const isolatedCli = path.join(temporaryDirectory, "agentship.cjs");
 const intentFixture = path.resolve("fixtures/intent/executable-patch-corpus.json");
+
+async function sha256File(filePath) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+  return hash.digest("hex");
+}
 
 try {
   await copyFile(path.resolve("dist/agentship.cjs"), isolatedCli);
@@ -183,6 +190,19 @@ try {
     reviewEvidence.tool.verifier.sha256 !== expectedVerifierSha256
   ) {
     throw new Error("Bundled CLI report is not bound to the exact standalone artifact.");
+  }
+  const nodeExecutable = await realpath(process.execPath);
+  const nodeStats = await stat(nodeExecutable);
+  const expectedNodeSha256 = await sha256File(nodeExecutable);
+  if (
+    reviewEvidence.runner?.node?.version !== process.version ||
+    reviewEvidence.runner.node.executable !== nodeExecutable ||
+    reviewEvidence.runner.node.bytes !== nodeStats.size ||
+    reviewEvidence.runner.node.sha256 !== expectedNodeSha256 ||
+    reviewEvidence.runner.platform !== process.platform ||
+    reviewEvidence.runner.architecture !== process.arch
+  ) {
+    throw new Error("Bundled CLI report is not bound to the launching Node runtime.");
   }
   const verifiedSignature = await execFileAsync(
     process.execPath,

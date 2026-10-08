@@ -173,6 +173,31 @@ export interface BaselineComparison {
   resolvedFindings: FindingIdentity[];
 }
 
+export interface RunnerProvenance {
+  platform: NodeJS.Platform;
+  architecture: string;
+  kernelRelease: string;
+  osRelease?: {
+    id?: string;
+    versionId?: string;
+    prettyName?: string;
+    sha256: string;
+  };
+  node: {
+    version: string;
+    executable: string;
+    bytes: number;
+    sha256: string;
+  };
+  github?: {
+    environment?: string;
+    runnerOs?: string;
+    runnerArch?: string;
+    imageOs?: string;
+    imageVersion?: string;
+  };
+}
+
 export interface ReviewReport {
   schemaVersion: 1;
   runId: string;
@@ -182,6 +207,7 @@ export interface ReviewReport {
     git?: { executable: string; version: string };
     verifier?: { entrypoint: string; bytes: number; sha256: string };
   };
+  runner?: RunnerProvenance;
   mode: ReviewMode;
   verdict: ReviewVerdict;
   startedAt: string;
