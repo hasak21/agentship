@@ -16,7 +16,7 @@ Only observed, reproduced, or explicitly attested evidence may satisfy a require
 
 The first local runner executes commands from the repository's trusted `.agentship.yml`. It is intended for a developer's own checkout. It is not yet safe for hostile pull requests because repository commands execute on the host.
 
-Before privileged maintainer-side execution, AgentShip must add aggregate kernel-enforced worker budgets, authenticated policy/approval provenance, and privileged evidence attestation. The current hosted report workflow now provisions a digest-pinned bubblewrap package and combines disposable-copy, filesystem, PID, default network isolation, a cumulative check wall-clock deadline, and per-process limits, but remains secretless, neutral, unsigned, and non-gating.
+Before privileged maintainer-side execution, AgentShip must add aggregate kernel-enforced worker budgets and authenticated policy/approval provenance. The current hosted report workflow provisions a digest-pinned bubblewrap package and combines disposable-copy, filesystem, PID, default network isolation, a cumulative check wall-clock deadline, and per-process limits. It remains secretless, neutral, and non-gating; the publisher attests the validated canonical report, but the subject execution itself is not workload-attested.
 
 ## Evidence manifest
 
