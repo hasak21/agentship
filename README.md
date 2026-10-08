@@ -224,9 +224,12 @@ node dist/agentship.cjs review --task task.md
 ```
 
 The review writes JSON, Markdown, and SARIF evidence under `.agentship/reviews/`.
-JSON evidence includes the canonical host Git executable and its bounded version string;
-AgentShip refuses repository-controlled and `node_modules/.bin` Git replacements before
-calculating the reviewed head or diff.
+JSON and Markdown bind the canonical AgentShip entrypoint path, byte length, and SHA-256.
+For the standalone CLI and official CI, this is the exact self-contained bundle; source
+mode honestly identifies only the TypeScript entrypoint, not every imported module. JSON
+also includes the canonical host Git executable and its bounded version string; AgentShip
+refuses repository-controlled and `node_modules/.bin` Git replacements before calculating
+the reviewed head or diff.
 
 Optionally sign the exact JSON report with an Ed25519 private key stored outside the
 reviewed repository:

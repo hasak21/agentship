@@ -16,7 +16,7 @@ Only observed, reproduced, or explicitly attested evidence may satisfy a require
 
 The first local runner executes commands from the repository's trusted `.agentship.yml`. It is intended for a developer's own checkout. It is not yet safe for hostile pull requests because repository commands execute on the host.
 
-Before privileged maintainer-side execution, AgentShip must add reproducibly provisioned process isolation, aggregate worker budgets, immutable policy loading, and signed evidence manifests. An opt-in Linux bubblewrap backend now provides disposable-copy, filesystem, PID, and default network isolation, but the current hosted report workflow does not provision it and still has narrower per-process Linux limits only.
+Before privileged maintainer-side execution, AgentShip must add aggregate worker budgets, authenticated policy/approval provenance, and privileged evidence attestation. The current hosted report workflow now provisions a digest-pinned bubblewrap package and combines disposable-copy, filesystem, PID, default network isolation, and per-process limits, but remains secretless, neutral, unsigned, and non-gating.
 
 ## Evidence manifest
 
@@ -26,6 +26,7 @@ Each report binds together:
 - task and configuration digests;
 - exact commands, timing, exit status, and bounded output;
 - the canonical Git executable path and version used to calculate repository evidence;
+- the canonical AgentShip entrypoint path, exact byte length, and SHA-256;
 - findings derived from that captured evidence;
 - the AgentShip schema and tool version.
 
@@ -41,10 +42,25 @@ the operator separately maps that public-key fingerprint to an owner. The ordina
 and GitHub report flows remain unsigned unless signing is explicitly configured. Current
 CI intentionally sends no signing secret into the pull-request job; a future privileged
 attestor must sign only after bounded artifact validation. Key rotation, HSM/KMS support,
-revocation, trusted timestamps, transparency logs, AgentShip binary digests, and runner
-image attestations remain open provenance work.
+revocation, trusted timestamps, transparency logs, and runner image attestations remain
+open provenance work.
 
 ## Verifier tool resolution
+
+Every CLI review canonicalizes its actual `process.argv[1]` entrypoint, bounds it to 32
+MiB, reads it through one open file handle, rejects concurrent size/mtime/inode changes,
+and records its byte length and SHA-256. In standalone and official CI operation this is
+the exact self-contained `agentship.cjs` bundle. The privileged publisher requires
+well-formed bounded verifier provenance before accepting an artifact and shows the digest
+in its neutral Check Run summary. A detached report signature, when separately enabled,
+also covers these fields because it signs the exact JSON bytes.
+
+In `npm run review` source mode, the entrypoint is `src/cli/index.ts`; its digest does not
+cover imported source files, installed dependencies, the Node runtime, or loader behavior.
+The field identifies bytes rather than authenticating them. Trust still comes from how the
+operator obtained the bundle and, for signed evidence, how the public key was established.
+Runner image, kernel, Node binary, dependency, and build-reproducibility attestations
+remain open.
 
 Repository evidence never resolves `git` through an unfiltered inherited `PATH`.
 AgentShip prefers canonical host-owned system locations on Linux, macOS, and Windows;
@@ -55,8 +71,8 @@ the bounded `git --version` result are retained in JSON evidence.
 
 This protects the common `npm run review` case where npm injects repository package bins
 ahead of system paths. It does not authenticate the host operating system or protect
-against an administrator replacing a system Git binary. Binary hashing and signed runner
-image provenance remain part of the unfinished evidence-attestation work.
+against an administrator replacing a system Git binary. Hashing the Git binary and signed
+runner image provenance remain unfinished evidence-attestation work.
 
 ## Public provider boundary
 

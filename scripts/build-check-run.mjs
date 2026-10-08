@@ -50,6 +50,31 @@ export async function buildCheckRunPayload(options) {
   if (report.schemaVersion !== 1) {
     throw new Error("AgentShip report must declare schemaVersion: 1.");
   }
+  const reportTool = objectField(report.tool, "AgentShip report tool");
+  if (boundedString(reportTool.name, "AgentShip report tool name", 128) !== "AgentShip Verify") {
+    throw new Error("AgentShip report tool name is invalid.");
+  }
+  boundedString(reportTool.version, "AgentShip report tool version", 64);
+  const verifier = objectField(
+    reportTool.verifier,
+    "AgentShip report tool verifier"
+  );
+  boundedString(
+    verifier.entrypoint,
+    "AgentShip report tool verifier entrypoint",
+    4096
+  );
+  const verifierBytes = positiveInteger(
+    verifier.bytes,
+    "AgentShip report tool verifier bytes"
+  );
+  if (verifierBytes > 32 * 1024 * 1024) {
+    throw new Error("AgentShip report tool verifier exceeds 33554432 bytes.");
+  }
+  const verifierSha256 = sha256String(
+    verifier.sha256,
+    "AgentShip report tool verifier SHA-256"
+  );
   const verdict = report.verdict;
   if (verdict !== "PASS" && verdict !== "WARN" && verdict !== "BLOCK") {
     throw new Error("AgentShip report verdict is invalid.");
@@ -97,6 +122,7 @@ export async function buildCheckRunPayload(options) {
         `- Findings: ${report.findings.length}`,
         `- Report run: \`${reportRunId}\``,
         `- Reviewed checkout: \`${reviewedCommit}\``,
+        `- Verifier SHA-256: \`${verifierSha256}\``,
         `- Source workflow run: ${runId}`,
         "",
         "Download the workflow artifact for the bounded JSON, Markdown, and SARIF evidence. This Check Run is always neutral and is not a merge gate.",

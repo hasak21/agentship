@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -169,6 +169,20 @@ try {
   );
   if (!signedReview.stdout.includes("Signature: .agentship/reviews/signed.sig.json")) {
     throw new Error("Bundled CLI did not emit detached signature evidence.");
+  }
+  const reviewEvidence = JSON.parse(
+    await readFile(path.join(reviewRepository, ".agentship/reviews/signed.json"), "utf8")
+  );
+  const isolatedCliBytes = await readFile(isolatedCli);
+  const expectedVerifierSha256 = createHash("sha256")
+    .update(isolatedCliBytes)
+    .digest("hex");
+  if (
+    reviewEvidence.tool?.verifier?.entrypoint !== isolatedCli ||
+    reviewEvidence.tool.verifier.bytes !== isolatedCliBytes.length ||
+    reviewEvidence.tool.verifier.sha256 !== expectedVerifierSha256
+  ) {
+    throw new Error("Bundled CLI report is not bound to the exact standalone artifact.");
   }
   const verifiedSignature = await execFileAsync(
     process.execPath,

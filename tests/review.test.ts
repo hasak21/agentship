@@ -186,6 +186,20 @@ test("Markdown evidence cannot be structurally forged by report text", () => {
   assert.match(markdown, /&lt;img src\\=x onerror\\=alert\\\(1\\\)&gt;/);
 });
 
+test("Markdown evidence displays verifier entrypoint provenance", () => {
+  const report = reportWithFindings([]);
+  report.tool.verifier = {
+    entrypoint: "/trusted/agentship.cjs",
+    bytes: 415000,
+    sha256: "9".repeat(64),
+  };
+
+  const markdown = renderMarkdown(report);
+  assert.match(markdown, /Verifier entrypoint: <code>\/trusted\/agentship\.cjs<\/code>/);
+  assert.match(markdown, /Verifier bytes: 415000/);
+  assert.ok(markdown.includes(`Verifier SHA-256: \`${"9".repeat(64)}\``));
+});
+
 test("Linux resource limits produce an exact prlimit invocation", () => {
   const invocation = buildCheckInvocation(
     {

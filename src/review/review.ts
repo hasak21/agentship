@@ -10,6 +10,7 @@ import {
   resolveRepositoryRoot,
 } from "./git";
 import { runCheck } from "./runner";
+import { collectVerifierProvenance } from "./provenance";
 import { applyOverride, loadOverride } from "./override";
 import {
   findLatestCompatibleHistory,
@@ -56,6 +57,7 @@ export interface RunReviewOptions {
   approvedProtectedPathPatterns?: string[];
   overridePath?: string;
   historyDirectory?: string;
+  verifierEntrypoint?: string;
 }
 
 export interface ProtectedPathEvidence {
@@ -74,6 +76,9 @@ export async function runReview(options: RunReviewOptions): Promise<{
   const started = Date.now();
   const repositoryRoot = await resolveRepositoryRoot(options.cwd);
   const gitProvenance = await getGitProvenance(repositoryRoot);
+  const verifierProvenance = options.verifierEntrypoint
+    ? await collectVerifierProvenance(options.verifierEntrypoint)
+    : undefined;
   const { config, absolutePath: configPath, source: configSource } = await loadConfig(
     repositoryRoot,
     options.configPath
@@ -240,6 +245,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
       name: "AgentShip Verify",
       version: "0.1.0",
       git: gitProvenance,
+      verifier: verifierProvenance,
     },
     mode: config.mode,
     verdict,
@@ -973,7 +979,11 @@ export function renderMarkdown(report: ReviewReport): string {
       ].join("\n")
     : "History recording was not enabled.";
 
-  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Override record\n\n${override}\n\nOverride actors are recorded claims until authenticated signing is implemented.\n\n## Report history\n\n${history}\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Execution | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
+  const verifier = report.tool.verifier
+    ? `- Verifier entrypoint: ${markdownCode(report.tool.verifier.entrypoint)}\n- Verifier bytes: ${report.tool.verifier.bytes}\n- Verifier SHA-256: \`${report.tool.verifier.sha256}\``
+    : "- Verifier entrypoint provenance: unavailable";
+
+  return `# AgentShip Verification Report\n\n${icon} **${report.verdict}**\n\n- Run: \`${report.runId}\`\n- Commit: \`${report.repository.head}\`\n- Scope: ${report.repository.reviewScope}\n- Diff SHA-256: \`${report.repository.diffSha256}\`\n${verifier}\n- Repository stable during checks: ${report.repository.stableDuringChecks ? "yes" : "no"}\n- Duration: ${report.durationMs} ms\n\n## Blocking policy\n\nConfigured finding kinds promoted to blockers:\n\n${blockingPolicy}\n\nCore integrity blockers remain non-configurable.\n\n## Protected paths\n\n${protectedPaths}\n\nApprovals are local operator assertions bound to this report's diff hash; they are not authenticated signatures.\n\n## Override record\n\n${override}\n\nOverride actors are recorded claims until authenticated signing is implemented.\n\n## Report history\n\n${history}\n\n## Task requirements\n\n${requirements}\n\n## Requirement mapping\n\n${mappings}\n\n## Changed-file attribution\n\n${changeCoverage}\n\nUnattributed means no explicit \`change:path\` requirement matched the file; it does not mean the change is unrelated.\n\n## Review budgets\n\n${budget}\n\n## Baseline comparison\n\n${baseline}\n\n## Executed checks\n\n| Check | Status | Exit | Duration | Execution | Selection | Command |\n| --- | --- | ---: | ---: | --- | --- | --- |\n${checks}\n\n## Findings\n\n${findings}\n`;
 }
 
 function normalizeMarkdownValue(value: string): string {

@@ -274,6 +274,7 @@ async function main() {
   const options = parseArgs(args);
   const result = await runReview({
     cwd: process.cwd(),
+    verifierEntrypoint: process.argv[1],
     taskPath: options.taskPath,
     configPath: options.configPath,
     base: options.base,

@@ -37,6 +37,15 @@ function report() {
   return {
     schemaVersion: 1,
     runId: "report-run",
+    tool: {
+      name: "AgentShip Verify",
+      version: "0.1.0",
+      verifier: {
+        entrypoint: "/home/runner/work/agentship/verifier/dist/agentship.cjs",
+        bytes: 415000,
+        sha256: "9".repeat(64),
+      },
+    },
     verdict: "BLOCK",
     repository: {
       head: MERGE_SHA,
@@ -77,7 +86,40 @@ test("Check Run payload is bound to the PR head and always neutral", async () =>
     assert.equal(payload.conclusion, "neutral");
     assert.equal(payload.output.title, "AgentShip report: BLOCK");
     assert.match(payload.output.summary, /not a merge gate/);
+    assert.ok(
+      payload.output.summary.includes(
+        `Verifier SHA-256: \`${"9".repeat(64)}\``
+      )
+    );
     assert.equal(payload.details_url, "https://github.com/example/agentship/actions/runs/1234");
+  });
+});
+
+test("Check Run payload rejects missing or malformed verifier provenance", async () => {
+  await withPayloadFixture(async ({ root, eventPath, reportPath }) => {
+    const missing = report();
+    delete (missing as { tool?: unknown }).tool;
+    await writeFile(reportPath, JSON.stringify(missing), "utf8");
+    await assert.rejects(
+      buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
+      /report tool must be an object/
+    );
+
+    await writeFile(
+      reportPath,
+      JSON.stringify({
+        ...report(),
+        tool: {
+          ...report().tool,
+          verifier: { ...report().tool.verifier, sha256: "untrusted" },
+        },
+      }),
+      "utf8"
+    );
+    await assert.rejects(
+      buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
+      /verifier SHA-256 must be a lowercase SHA-256 digest/
+    );
   });
 });
 

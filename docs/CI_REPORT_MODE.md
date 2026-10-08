@@ -23,6 +23,13 @@ artifact into an always-neutral Check Run without granting merge authority.
 
 All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review. The publisher has only `actions: read`, `contents: read`, and `checks: write`; the subject workflow retains only `contents: read`.
 
+The JSON and Markdown reports record the canonical path, byte length, and SHA-256 of the
+actual AgentShip entrypoint. In this workflow that entrypoint is the trusted base checkout's
+self-contained `dist/agentship.cjs` bundle. The privileged publisher rejects missing,
+oversized, or malformed verifier provenance and displays the digest in the neutral Check
+Run summary. This identifies the claimed verifier bytes but does not authenticate the
+unsigned artifact or attest the runner image, Node executable, or bundle build process.
+
 Task prose, repository paths, check labels, commands, finding titles, and human-entered
 reasons are encoded before Markdown rendering. Control characters cannot create new
 headings, and table/code values cannot introduce columns or raw HTML. JSON and SARIF

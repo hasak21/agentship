@@ -180,6 +180,7 @@ export interface ReviewReport {
     name: "AgentShip Verify";
     version: string;
     git?: { executable: string; version: string };
+    verifier?: { entrypoint: string; bytes: number; sha256: string };
   };
   mode: ReviewMode;
   verdict: ReviewVerdict;
