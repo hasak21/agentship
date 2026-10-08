@@ -60,7 +60,7 @@ Exit criterion: omitted requirements are detected with measured, publishable acc
 
 - [~] Build a fork-safe GitHub Action (trusted-base, read-only, artifact-only report workflow delivered; live fork-PR validation pending).
 - [~] Publish Check Run, Markdown, JSON, and SARIF outputs (artifact/job-summary outputs and a separate bounded, always-neutral `workflow_run` Check Run publisher are delivered; live fork-PR validation remains pending).
-- [~] Add changed-path filtering and execution budgets (deterministic check selection, pre-execution changed-file/diff limits, wall-clock timeouts, Linux per-process limits, and opt-in disposable bubblewrap workers delivered; aggregate cgroup accounting, disk-capacity quotas, and official CI worker provisioning remain pending).
+- [~] Add changed-path filtering and execution budgets (deterministic check selection, pre-execution changed-file/diff limits, wall-clock timeouts, Linux per-process limits, and digest-pinned disposable bubblewrap workers in official CI delivered; aggregate cgroup accounting and disk-capacity quotas remain pending).
 - [x] Add baselines, suppressions with ownership, and report history (bounded comparison, owned suppressions, compatible local history, and validated publisher-written/read-only PR cache restoration delivered).
 
 Exit criterion: a team can install AgentShip without granting merge-blocking authority.
@@ -76,8 +76,8 @@ Exit criterion: teams can enable gate mode without trusting an LLM verdict.
 
 ## M6 — Adversarial maintainer mode
 
-- [~] Execute untrusted checks in isolated, resource-limited workers (opt-in Linux bubblewrap disposable-copy backend composes with `prlimit`; official hosted-runner provisioning and stronger kernel/container boundaries remain pending).
-- [~] Enforce network denial and secret isolation (bubblewrap checks default to a fresh network namespace and minimal filesystem with no host home or `/etc`; non-isolated checks still only record network capability, and explicitly allowed networking shares the host namespace).
+- [~] Execute untrusted checks in isolated, resource-limited workers (Linux bubblewrap disposable-copy backend composes with `prlimit`, and official CI installs a fixed SHA-256-verified Ubuntu package; stronger kernel/VM and aggregate cgroup boundaries remain pending).
+- [~] Enforce network denial and secret isolation (official lint, test, and CLI-package checks use fresh network namespaces and minimal filesystems with no host home or `/etc`; the Next build retains an explicit host-network exception, and non-isolated local checks still only record network capability).
 - [~] Treat source, task text, tests, and repository instructions as hostile inputs (structured parsing and Markdown report anti-forgery escaping delivered; model prompt isolation and broader adversarial corpus remain pending).
 - [~] Sign evidence manifests and preserve verifier provenance (trusted Git executable/version evidence and detached Ed25519 report signatures delivered; AgentShip binary digest, runner image identity, authenticated key ownership, and official CI signing remain pending).
 

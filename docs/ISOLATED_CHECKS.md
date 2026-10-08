@@ -40,9 +40,13 @@ Copying occurs before sandbox entry, so the entry/byte bounds protect availabili
 not eliminate all filesystem race or decompression-style risks. User-installed toolchains
 outside `/usr` and the active Node distribution are not mounted automatically.
 
-The official GitHub workflow does not enable this backend until bubblewrap can be pinned
-and provisioned reproducibly on its hosted runner. Do not infer official CI isolation from
-the existence of this opt-in local backend.
+The official GitHub workflow provisions a fixed Ubuntu Noble amd64 package from the
+security archive and verifies its published SHA-256 before installation. It rejects the
+wrong platform, package/runtime version, setuid mode, or failed namespace smoke test
+before any pull-request command runs. All official checks use this backend; lint, tests,
+and CLI packaging deny network, while the Next build has an explicit allowed exception.
+The installer itself remains trusted-base code and updating its package pin requires
+review like any other verifier change.
 
 AgentShip's own Linux policy is `.agentship.bubblewrap.yml`. It keeps lint, tests, and CLI
 packaging offline; the Next.js build has a visible `network: allowed` exception because

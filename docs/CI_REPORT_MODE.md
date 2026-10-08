@@ -11,14 +11,15 @@ artifact into an always-neutral Check Run without granting merge authority.
 3. The pull-request subject is checked out separately under `subject/`.
 4. AgentShip is built from `verifier/`; `.agentship.ci.yml` is also loaded from that trusted checkout.
 5. A base-owned script reads the GitHub event JSON and writes the PR body to a bounded temporary task document without shell interpolation.
-6. The trusted executable enforces base-owned changed-file/diff limits, selects checks through base-owned `whenChanged` patterns, runs applicable checks against `subject/`, and records skipped checks explicitly.
-7. The pull-request job has explicit read-only cache access and restores the newest PR-scoped, publisher-validated report into `.agentship/history`; a miss simply starts without a baseline.
-8. JSON, Markdown, and SARIF reports are uploaded as workflow artifacts even when verification blocks.
-9. The fixed Markdown report is appended to the workflow job summary without granting write permission to the repository.
-10. A `workflow_run` job starts only after the named report workflow completes and GitHub associates exactly one pull request with it.
-11. The publisher checks out only the default branch, downloads the named artifact from the exact triggering run, and parses event/report JSON under byte and finding-count bounds. Artifact contents are never executed.
-12. After validation, the publisher canonicalizes the JSON into a fresh directory and saves it under a unique PR/run cache key using write-only cache access. Validation failure prevents the cache-save step.
-13. The publisher binds the report base to the event's PR base and creates a Check Run on the event's PR head with `conclusion: neutral`, regardless of PASS, WARN, or BLOCK.
+6. A trusted-base provisioner downloads one fixed Ubuntu Noble bubblewrap package over HTTPS, verifies its pinned SHA-256 before installation, rejects a setuid or wrong-version executable, and smoke-tests namespace creation.
+7. The trusted executable enforces base-owned changed-file/diff limits, selects checks through base-owned `whenChanged` patterns, runs applicable checks in disposable bubblewrap workspaces with per-process limits, and records skipped checks explicitly. Network is denied except for the explicitly declared Next build.
+8. The pull-request job has explicit read-only cache access and restores the newest PR-scoped, publisher-validated report into `.agentship/history`; a miss simply starts without a baseline.
+9. JSON, Markdown, and SARIF reports are uploaded as workflow artifacts even when verification blocks.
+10. The fixed Markdown report is appended to the workflow job summary without granting write permission to the repository.
+11. A `workflow_run` job starts only after the named report workflow completes and GitHub associates exactly one pull request with it.
+12. The publisher checks out only the default branch, downloads the named artifact from the exact triggering run, and parses event/report JSON under byte and finding-count bounds. Artifact contents are never executed.
+13. After validation, the publisher canonicalizes the JSON into a fresh directory and saves it under a unique PR/run cache key using write-only cache access. Validation failure prevents the cache-save step.
+14. The publisher binds the report base to the event's PR base and creates a Check Run on the event's PR head with `conclusion: neutral`, regardless of PASS, WARN, or BLOCK.
 
 All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review. The publisher has only `actions: read`, `contents: read`, and `checks: write`; the subject workflow retains only `contents: read`.
 
@@ -28,17 +29,16 @@ headings, and table/code values cannot introduce columns or raw HTML. JSON and S
 remain structured data; any downstream renderer must apply its own context-appropriate
 encoding rather than trusting display strings.
 
-AgentShip now has an opt-in Linux bubblewrap backend, but the checked-in GitHub workflow
-does not enable it yet. The current GitHub-hosted Ubuntu 24.04 image manifest does not
-list bubblewrap as a guaranteed installed package, and fetching a floating package during
-each review would weaken verifier reproducibility. Until a pinned backend is provisioned,
-the workflow continues to rely on the disposable hosted runner plus per-process limits;
-it must remain secretless, read-only, non-gating, and unsuitable for self-hosted runners.
-This availability assessment was checked against the
-[GitHub Ubuntu 24.04 runner manifest](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md)
-on 2026-09-30.
+The GitHub-hosted Ubuntu 24.04 image does not guarantee bubblewrap, so the trusted base
+checkout provisions version `0.9.0-1ubuntu0.3` directly from Ubuntu's Noble security
+archive. The script pins and checks the package's published SHA-256, installs without a
+floating package-index update, verifies the package/runtime versions and non-setuid mode,
+and exercises namespace creation before any pull-request command runs. The pin and digest
+were checked against the
+[Ubuntu Noble package record](https://packages.ubuntu.com/noble/amd64/bubblewrap/download)
+on 2026-10-08. A package update is an explicit reviewed policy change.
 
-`limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. Every check also has its own timeout and the job has a workflow timeout. The official Ubuntu policy uses `/usr/bin/prlimit` for per-process CPU time, maximum output-file size, and open-file counts; the workflow verifies that backend exists before review. AgentShip can also configure a virtual-address-space bound, but the official Node checks omit it because JavaScript/Wasm runtimes reserve large address ranges unrelated to resident memory. Limits are inherited by child processes but are not aggregated across the process tree. They do not impose a reliable memory or disk-capacity bound, process-count, network, filesystem, or container isolation.
+`limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. Every check also has its own timeout and the job has a workflow timeout. The official Ubuntu policy uses `/usr/bin/prlimit` for per-process CPU time, maximum output-file size, and open-file counts; the workflow verifies that backend exists before review. AgentShip can also configure a virtual-address-space bound, but the official Node checks omit it because JavaScript/Wasm runtimes reserve large address ranges unrelated to resident memory. Limits are inherited by child processes but are not aggregated across the process tree. Bubblewrap adds PID/filesystem/network namespaces and a disposable workspace, but does not impose reliable memory, aggregate CPU, process-count, or disk-capacity quotas.
 
 Warning suppressions are also loaded from the base revision. A pull request cannot add a suppression that takes effect in its own report. Matching is exact on finding ID and kind; active owner, reason, and expiry evidence remains visible in every report format. Blocker kinds cannot be configured as suppressible.
 
@@ -67,7 +67,7 @@ The cache split follows GitHub's low-trust guidance: the `pull_request` job decl
 
 ## Residual risk
 
-Untrusted checks can use the hosted runner's network and inspect files or ephemeral Actions runtime state available to their process. The workflow blanks common GitHub CLI token variables, but this is not OS-level network or credential isolation. Artifacts and caches are unsigned and may be attacker-influenced despite structural validation, so the privileged publisher never executes their content and the restored baseline remains informational. A repository-level workflow outside this design could populate the same key namespace in a PR scope; workflow protection and namespace ownership remain operator responsibilities. SARIF remains an artifact rather than a code-scanning upload. A live fork pull request has not yet validated the two-stage workflow end to end. Do not reuse the subject workflow on a self-hosted runner or add secrets, deployments, package publishing, comments, labels, write permissions, or merge gating.
+Dependency installation still processes attacker-selected package metadata outside the sandbox, although lifecycle scripts are disabled. The Next build's explicit network exception shares the hosted runner network and can reach runner-local services; other checks receive a fresh network namespace. Bubblewrap shares the host kernel and is not a VM, and its writable tmpfs/disposable copy still lack hard disk-capacity and cgroup-wide resource quotas. Artifacts and caches are unsigned and may be attacker-influenced despite structural validation, so the privileged publisher never executes their content and the restored baseline remains informational. A repository-level workflow outside this design could populate the same key namespace in a PR scope; workflow protection and namespace ownership remain operator responsibilities. SARIF remains an artifact rather than a code-scanning upload. A live fork pull request has not yet validated the two-stage workflow end to end. Do not reuse the subject workflow on a self-hosted runner or add secrets, deployments, package publishing, comments, labels, write permissions, or merge gating.
 
 ## Pull-request task format
 

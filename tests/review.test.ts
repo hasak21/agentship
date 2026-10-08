@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -363,25 +362,37 @@ test("bubblewrap discards mutations, hides host files, and denies network by def
     context.skip("/usr/bin/bwrap is unavailable");
     return;
   }
+  try {
+    await execFileAsync("/usr/bin/bwrap", [
+      "--die-with-parent",
+      "--new-session",
+      "--unshare-all",
+      "--ro-bind",
+      "/",
+      "/",
+      "--proc",
+      "/proc",
+      "--dev",
+      "/dev",
+      "--",
+      "/usr/bin/true",
+    ]);
+  } catch {
+    context.skip("host policy denies bubblewrap namespace creation");
+    return;
+  }
 
   const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-isolation-"));
-  const server = createServer((_request, response) => response.end("reachable"));
   try {
     await writeFile(path.join(directory, "subject.txt"), "original\n", "utf8");
     await writeFile(path.join(directory, ".gitignore"), "ignored-secret\n", "utf8");
     await writeFile(path.join(directory, "ignored-secret"), "host-only\n", "utf8");
     await execFileAsync("git", ["init"], { cwd: directory });
     await execFileAsync("git", ["add", ".gitignore", "subject.txt"], { cwd: directory });
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", resolve);
-    });
-    const address = server.address();
-    assert.ok(address && typeof address === "object");
     const evidence = await runCheck(
       {
         name: "isolated",
-        run: `test ! -e /etc/passwd && test ! -e ignored-secret && touch sandbox-only && node -e "fetch('http://127.0.0.1:${address.port}').then(() => process.exit(1), () => process.exit(0))"`,
+        run: `test ! -e /etc/passwd && test ! -e ignored-secret && touch sandbox-only && node -e "const source = require('node:fs').readFileSync('/proc/net/dev', 'utf8'); const names = source.split('\\n').slice(2).map((line) => line.split(':')[0].trim()).filter(Boolean); if (names.some((name) => name !== 'lo')) process.exit(1)"`,
         timeoutSeconds: 10,
         isolation: "bubblewrap",
       },
@@ -399,7 +410,6 @@ test("bubblewrap discards mutations, hides host files, and denies network by def
     });
     await assert.rejects(access(path.join(directory, "sandbox-only")));
   } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
   }
 });

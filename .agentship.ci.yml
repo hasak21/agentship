@@ -5,13 +5,15 @@ limits:
   maxChangedFiles: 500
   maxDiffBytes: 5242880
 
-# The official Ubuntu workflow validates /usr/bin/prlimit before loading this
-# trusted, base-owned policy. These are per-process kernel limits, not a sandbox.
+# The official Ubuntu workflow provisions a digest-pinned /usr/bin/bwrap and validates
+# /usr/bin/prlimit before loading this trusted, base-owned policy.
 checks:
   - name: lint
     run: npm run lint
     required: true
     timeoutSeconds: 120
+    isolation: bubblewrap
+    network: denied
     resources:
       cpuSeconds: 120
       maxFileSizeMiB: 64
@@ -21,6 +23,8 @@ checks:
     run: npm test
     required: true
     timeoutSeconds: 120
+    isolation: bubblewrap
+    network: denied
     resources:
       cpuSeconds: 120
       maxFileSizeMiB: 64
@@ -30,6 +34,7 @@ checks:
     run: npm run build
     required: true
     timeoutSeconds: 180
+    isolation: bubblewrap
     resources:
       cpuSeconds: 180
       maxFileSizeMiB: 64
@@ -50,6 +55,8 @@ checks:
     run: npm run verify:cli
     required: true
     timeoutSeconds: 120
+    isolation: bubblewrap
+    network: denied
     resources:
       cpuSeconds: 120
       maxFileSizeMiB: 64

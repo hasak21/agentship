@@ -54,6 +54,10 @@ jobs:
         working-directory: subject
         run: npm ci --ignore-scripts
 
+      - name: Provision pinned isolation worker
+        working-directory: verifier
+        run: scripts/install-ci-bubblewrap.sh
+
       - name: Require Linux resource limiter
         run: test -x /usr/bin/prlimit
 

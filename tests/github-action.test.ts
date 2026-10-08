@@ -8,6 +8,7 @@ const workflowUrl = new URL(
   import.meta.url
 );
 const ciPolicyUrl = new URL("../.agentship.ci.yml", import.meta.url);
+const installerUrl = new URL("../scripts/install-ci-bubblewrap.sh", import.meta.url);
 
 test("CI report workflow keeps untrusted pull requests in a read-only context", async () => {
   const source = await readFile(workflowUrl, "utf8");
@@ -36,6 +37,7 @@ test("CI report uses immutable actions and separate trusted and subject checkout
   assert.equal((source.match(/persist-credentials: false/g) ?? []).length, 2);
   assert.match(source, /node \.\.\/verifier\/dist\/agentship\.cjs review/);
   assert.match(source, /--config \.\.\/verifier\/\.agentship\.ci\.yml/);
+  assert.match(source, /working-directory: verifier\n\s+run: scripts\/install-ci-bubblewrap\.sh/);
   assert.match(source, /test -x \/usr\/bin\/prlimit/);
   assert.doesNotMatch(source, /--approve-path/);
   assert.doesNotMatch(source, /--override/);
@@ -49,9 +51,14 @@ test("CI report uses immutable actions and separate trusted and subject checkout
   assert.match(source, /--history \.agentship\/history/);
 });
 
-test("CI policy bounds checks without claiming a Node memory limit", async () => {
+test("CI policy isolates checks without claiming a Node memory limit", async () => {
   const policy = parse(await readFile(ciPolicyUrl, "utf8")) as {
-    checks?: Array<{ resources?: Record<string, number>; isolation?: string }>;
+    checks?: Array<{
+      name: string;
+      network?: string;
+      resources?: Record<string, number>;
+      isolation?: string;
+    }>;
   };
 
   assert.ok(policy.checks?.length);
@@ -60,6 +67,23 @@ test("CI policy bounds checks without claiming a Node memory limit", async () =>
     assert.ok(check.resources?.maxFileSizeMiB);
     assert.ok(check.resources?.maxOpenFiles);
     assert.equal(check.resources?.memoryMiB, undefined);
-    assert.equal(check.isolation, undefined);
+    assert.equal(check.isolation, "bubblewrap");
+    assert.equal(check.network, check.name === "build" ? "allowed" : "denied");
   }
+});
+
+test("CI provisions a fixed digest-verified bubblewrap worker", async () => {
+  const source = await readFile(installerUrl, "utf8");
+
+  assert.match(source, /BUBBLEWRAP_VERSION="0\.9\.0-1ubuntu0\.3"/);
+  assert.match(source, /BUBBLEWRAP_SHA256="[a-f0-9]{64}"/);
+  assert.match(
+    source,
+    /https:\/\/security\.ubuntu\.com\/ubuntu\/pool\/main\/b\/bubblewrap\//
+  );
+  assert.match(source, /sha256sum --check --strict/);
+  assert.match(source, /sudo dpkg --install/);
+  assert.match(source, /test ! -u \/usr\/bin\/bwrap/);
+  assert.match(source, /--unshare-all/);
+  assert.doesNotMatch(source, /apt(?:-get)?\s+(?:update|install)/);
 });
