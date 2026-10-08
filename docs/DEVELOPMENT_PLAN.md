@@ -33,6 +33,7 @@ Exit criterion: no AgentShip report presents model output as executed evidence.
 - [x] Add environment allowlisting and secret redaction.
 - [x] Detect and block repository mutation during verification checks.
 - [x] Package a standalone executable.
+- [x] Add non-destructive local policy initialization and read-only environment diagnostics.
 
 Exit criterion: a developer can prove whether configured checks actually ran and passed without starting a server or calling a model.
 

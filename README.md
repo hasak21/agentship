@@ -169,11 +169,21 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ### 4. Run the evidence-based preflight
 
-From a source checkout:
+Build the standalone CLI from this source checkout, then run it in the repository being
+reviewed:
 
 ```bash
-npm run review -- --task task.md
+npm run build:cli
+cd /path/to/your/project
+node /path/to/agentship/dist/agentship.cjs init
+node /path/to/agentship/dist/agentship.cjs doctor
+node /path/to/agentship/dist/agentship.cjs review --task task.md
 ```
+
+`init` creates a conservative local `.agentship.yml` from explicit npm lint/test/build
+scripts and never overwrites an existing policy. `doctor` validates the policy and local
+isolation prerequisites while explaining unenforced direct-execution boundaries. This is
+local onboarding, not automatic GitHub workflow installation. See `docs/ONBOARDING.md`.
 
 Task requirements may opt into explicit operator confirmation with a `[confirm]`
 prefix. Supply their stable IDs when reviewing:

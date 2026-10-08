@@ -4,6 +4,7 @@ import path from "node:path";
 import { measureCalibration } from "../review/calibration";
 import { runIntentBenchmark } from "../review/intent-benchmark";
 import { compileLeaderboard } from "../review/leaderboard";
+import { diagnoseRepository, initializeRepository } from "../review/onboarding";
 import {
   recordFindingOutcome,
   type FindingOutcomeStatus,
@@ -78,6 +79,8 @@ function printHelp(): void {
 
 Usage:
   agentship review [options]
+  agentship init
+  agentship doctor
   agentship benchmark --fixtures <path>
   agentship leaderboard --submissions <directory>
   agentship outcome --report <path> --finding-id <id> --finding-kind <kind> --status <status> --actor <actor> --reason <reason>
@@ -246,6 +249,19 @@ async function main() {
     const fixturePath = path.resolve(process.cwd(), parseBenchmarkArgs(args.slice(1)));
     const benchmark = await runIntentBenchmark(fixturePath);
     writeStdout(`${JSON.stringify(benchmark, null, 2)}\n`);
+    return;
+  }
+  if (args[0] === "init") {
+    if (args.length !== 1) throw new Error("init does not accept arguments.");
+    const initialized = await initializeRepository(process.cwd());
+    writeStdout(`AgentShip initialized: ${path.relative(process.cwd(), initialized.configPath) || ".agentship.yml"}\nChecks: ${initialized.checks.join(", ")}\nNext: agentship doctor\n`);
+    return;
+  }
+  if (args[0] === "doctor") {
+    if (args.length !== 1) throw new Error("doctor does not accept arguments.");
+    const diagnosis = await diagnoseRepository(process.cwd());
+    writeStdout(`${JSON.stringify(diagnosis, null, 2)}\n`);
+    if (!diagnosis.ready) process.exitCode = 1;
     return;
   }
   if (args[0] === "leaderboard") {

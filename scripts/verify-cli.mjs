@@ -25,6 +25,8 @@ try {
   });
   const requiredHelp = [
     "AgentShip Verify",
+    "agentship init",
+    "agentship doctor",
     "--task <path>",
     "--baseline <path>",
     "--override <path>",
@@ -54,6 +56,24 @@ try {
     report.corpus.cases !== 12
   ) {
     throw new Error("Bundled CLI benchmark output is incomplete.");
+  }
+  const initializedRepository = path.join(temporaryDirectory, "initialized");
+  await mkdir(initializedRepository);
+  await execFileAsync("git", ["init", "-q"], { cwd: initializedRepository });
+  await writeFile(path.join(initializedRepository, "package.json"), JSON.stringify({
+    scripts: { test: "node --test" },
+  }));
+  await execFileAsync(process.execPath, [isolatedCli, "init"], {
+    cwd: initializedRepository,
+    encoding: "utf8",
+  });
+  const doctorRun = await execFileAsync(process.execPath, [isolatedCli, "doctor"], {
+    cwd: initializedRepository,
+    encoding: "utf8",
+  });
+  const diagnosis = JSON.parse(doctorRun.stdout);
+  if (!diagnosis.ready || diagnosis.checks?.[0]?.name !== "test") {
+    throw new Error("Bundled CLI init/doctor output is incomplete.");
   }
   const sourceReport = {
     schemaVersion: 1,
@@ -269,7 +289,7 @@ try {
   if (!verifiedSignature.stdout.includes("AgentShip signature: VALID")) {
     throw new Error("Bundled CLI did not verify detached signature evidence.");
   }
-  console.log("Bundled CLI review, benchmark, leaderboard, outcome, metrics, and signature commands run outside the repository without node_modules.");
+  console.log("Bundled CLI init, doctor, review, benchmark, leaderboard, outcome, metrics, and signature commands run outside the repository without node_modules.");
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
 }
