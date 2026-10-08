@@ -316,6 +316,11 @@ test("bubblewrap invocation exposes only the disposable workspace and runtime", 
 
   assert.ok(args.includes("--unshare-all"));
   assert.equal(args.includes("--share-net"), false);
+  assert.ok(args.includes("CAP_NET_ADMIN"));
+  assert.ok(args.includes("CAP_SETPCAP"));
+  assert.ok(args.includes("--bounding-set=-net_admin,-setpcap"));
+  assert.ok(args.includes("--inh-caps=-all"));
+  assert.ok(args.includes("--ambient-caps=-all"));
   assert.deepEqual(args.slice(-3), ["/bin/sh", "-c", "npm test"]);
   assert.ok(args.some((value, index) =>
     value === "--bind" && args[index + 1] === "/tmp/copy" && args[index + 2] === "/work/subject"
@@ -455,7 +460,7 @@ test("bubblewrap discards mutations, hides host files, and denies network by def
     const evidence = await runCheck(
       {
         name: "isolated",
-        run: `test ! -e /etc/passwd && test ! -e ignored-secret && touch sandbox-only && node -e "const source = require('node:fs').readFileSync('/proc/net/dev', 'utf8'); const names = source.split('\\n').slice(2).map((line) => line.split(':')[0].trim()).filter(Boolean); if (names.some((name) => name !== 'lo')) process.exit(1)"`,
+        run: `test ! -e /etc/passwd && test ! -e ignored-secret && touch sandbox-only && node -e "const fs = require('node:fs'); const source = fs.readFileSync('/proc/net/dev', 'utf8'); const names = source.split('\\n').slice(2).map((line) => line.split(':')[0].trim()).filter(Boolean); const caps = fs.readFileSync('/proc/self/status', 'utf8').match(/^CapEff:\\s+([0-9a-f]+)$/m)?.[1]; if (names.some((name) => name !== 'lo') || !caps || !/^0+$/.test(caps)) process.exit(1)"`,
         timeoutSeconds: 10,
         isolation: "bubblewrap",
       },

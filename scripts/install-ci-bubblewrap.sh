@@ -29,12 +29,20 @@ test ! -u /usr/bin/bwrap
 test "$(dpkg-query --showformat='${Version}' --show bubblewrap)" = "$BUBBLEWRAP_VERSION"
 test "$(/usr/bin/bwrap --version)" = "bubblewrap 0.9.0"
 
-# Exercise user/PID namespace creation before any pull-request command runs.
+# Exercise the exact denied-network capability lifecycle before pull-request code runs.
+# Hosted kernels may require CAP_NET_ADMIN to initialize loopback; the trusted setpriv
+# wrapper drops it and CAP_SETPCAP before executing the smoke-test command.
 /usr/bin/bwrap \
   --die-with-parent \
   --new-session \
   --unshare-all \
+  --cap-add CAP_NET_ADMIN \
+  --cap-add CAP_SETPCAP \
   --ro-bind / / \
   --proc /proc \
   --dev /dev \
+  -- /usr/bin/setpriv \
+  --bounding-set=-net_admin,-setpcap \
+  --inh-caps=-all \
+  --ambient-caps=-all \
   -- /usr/bin/true

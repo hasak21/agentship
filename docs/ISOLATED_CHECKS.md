@@ -23,6 +23,12 @@ The default effective network mode is `denied`, even when `network` is omitted. 
 resolver configuration, and host networking. This can reach runner-local services and
 must be used only when the check genuinely requires it.
 
+For denied-network workers, bubblewrap transiently receives `CAP_NET_ADMIN` to initialize
+loopback on hosted kernels and `CAP_SETPCAP` solely to drop that capability. The trusted
+`/usr/bin/setpriv` wrapper clears both from the bounding, inheritable, ambient, effective,
+and permitted sets before the repository shell starts. Checks retain neither capability
+and see only their private loopback interface.
+
 ## Evidence
 
 JSON and Markdown reports record `linux-bubblewrap`, `disposable-copy`,

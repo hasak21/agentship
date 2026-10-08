@@ -95,7 +95,14 @@ export function buildBubblewrapArguments(options: {
     "--new-session",
     "--unshare-all",
   ];
-  if (options.network === "allowed") args.push("--share-net");
+  if (options.network === "allowed") {
+    args.push("--share-net");
+  } else {
+    // Some hosted kernels require CAP_NET_ADMIN to initialize loopback in a fresh
+    // network namespace. CAP_SETPCAP exists only so the trusted setpriv wrapper can
+    // drop both capabilities before repository code starts.
+    args.push("--cap-add", "CAP_NET_ADMIN", "--cap-add", "CAP_SETPCAP");
+  }
 
   const runtimePaths = minimalRuntimePaths();
   for (const runtimePath of runtimePaths) {
@@ -105,6 +112,18 @@ export function buildBubblewrapArguments(options: {
   for (const directory of parentDirectories(options.repositoryRoot)) {
     args.push("--dir", directory);
   }
+  const command = options.network === "denied"
+    ? [
+        "/usr/bin/setpriv",
+        "--bounding-set=-net_admin,-setpcap",
+        "--inh-caps=-all",
+        "--ambient-caps=-all",
+        "--",
+        "/bin/sh",
+        "-c",
+        options.command,
+      ]
+    : ["/bin/sh", "-c", options.command];
   args.push(
     "--dir",
     "/tmp/agentship-home",
@@ -152,9 +171,7 @@ export function buildBubblewrapArguments(options: {
     "AGENTSHIP_SANDBOX",
     "bubblewrap",
     "--",
-    "/bin/sh",
-    "-c",
-    options.command
+    ...command
   );
   return args;
 }

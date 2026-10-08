@@ -87,5 +87,10 @@ test("CI provisions a fixed digest-verified bubblewrap worker", async () => {
   assert.match(source, /sudo dpkg --install/);
   assert.match(source, /test ! -u \/usr\/bin\/bwrap/);
   assert.match(source, /--unshare-all/);
+  assert.match(source, /--cap-add CAP_NET_ADMIN/);
+  assert.match(source, /--cap-add CAP_SETPCAP/);
+  assert.match(source, /--bounding-set=-net_admin,-setpcap/);
+  assert.match(source, /--inh-caps=-all/);
+  assert.match(source, /--ambient-caps=-all/);
   assert.doesNotMatch(source, /apt(?:-get)?\s+(?:update|install)/);
 });
