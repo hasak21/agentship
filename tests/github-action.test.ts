@@ -24,39 +24,18 @@ test("CI report workflow keeps untrusted pull requests in a read-only context", 
   assert.doesNotMatch(source, /\bsecrets\./);
   assert.doesNotMatch(source, /actions\/attest@/);
   assert.doesNotMatch(source, /\b(?:attestations|id-token):/);
-  assert.match(source, /GITHUB_TOKEN: ""/);
-  assert.match(source, /GH_TOKEN: ""/);
 });
 
-test("CI report uses immutable actions and separate trusted and subject checkouts", async () => {
+test("CI report caller pins the reusable verifier to one immutable revision", async () => {
   const source = await readFile(workflowUrl, "utf8");
   const uses = [...source.matchAll(/^\s*uses:\s*([^\s#]+)/gm)].map(
     (match) => match[1]
   );
-  assert.equal(uses.length, 5);
-  for (const action of uses) {
-    assert.match(action, /^[^@]+@[a-f0-9]{40}$/);
-  }
-  assert.match(source, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
-  assert.match(source, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
-  assert.match(source, /path: verifier/);
-  assert.match(source, /path: subject/);
-  assert.equal((source.match(/persist-credentials: false/g) ?? []).length, 2);
-  assert.match(source, /node \.\.\/verifier\/dist\/agentship\.cjs review/);
-  assert.match(source, /--config \.\.\/verifier\/\.agentship\.ci\.yml/);
-  assert.match(source, /working-directory: verifier\n\s+run: scripts\/install-ci-bubblewrap\.sh/);
-  assert.match(source, /AGENTSHIP_USE_SUDO_NETNS: "1"/);
-  assert.match(source, /test -x \/usr\/bin\/prlimit/);
-  assert.doesNotMatch(source, /--approve-path/);
-  assert.doesNotMatch(source, /--override/);
-  assert.match(source, /subject\/\.agentship\/reviews\/ci\.\*/);
-  assert.match(source, /GITHUB_STEP_SUMMARY/);
-  assert.match(source, /subject\/\.agentship\/reviews\/ci\.md/);
-  assert.match(source, /cache-mode: read/);
-  assert.match(source, /actions\/cache\/restore@[a-f0-9]{40}/);
-  assert.doesNotMatch(source, /actions\/cache\/save@/);
-  assert.match(source, /agentship-history-v1-pr-/);
-  assert.match(source, /--history \.agentship\/history/);
+  assert.deepEqual(uses, [
+    "hasak21/agentship/.github/workflows/agentship-report-reusable.yml@cc4d26eab4519ae0527b32ec23bb1da4b33ff161",
+  ]);
+  assert.match(source, /verifier_repository: hasak21\/agentship/);
+  assert.match(source, /verifier_ref: cc4d26eab4519ae0527b32ec23bb1da4b33ff161/);
 });
 
 test("reusable CI report separates verifier, base policy, and subject trust roots", async () => {

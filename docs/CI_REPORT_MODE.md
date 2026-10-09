@@ -4,7 +4,8 @@ AgentShip uses a two-stage report workflow. The first stage is intentionally sec
 and read-only while it executes pull-request code. A separate trusted publisher turns the
 artifact into an always-neutral Check Run without granting merge authority.
 
-The repository's full workflows dogfood this design directly. Other npm repositories can
+AgentShip's own minimal callers dogfood the same reusable workflows produced for other
+repositories. Other npm repositories can
 run `agentship ci-init --ref <full-commit-sha>` to generate a base-owned policy and two
 minimal caller workflows. Those callers invoke the reusable report and publisher at the
 same immutable AgentShip commit. The reusable report adds a separate target-base checkout
@@ -14,21 +15,22 @@ origins.
 ## Architecture
 
 1. `pull_request` starts a GitHub-hosted disposable runner with `contents: read`.
-2. The pull request's base SHA is checked out under `verifier/`.
-3. The pull-request subject's exact head SHA is checked out separately under `subject/`.
-4. AgentShip is built from `verifier/`; `.agentship.ci.yml` is also loaded from that trusted checkout.
-5. A base-owned script reads the GitHub event JSON and writes the PR body to a bounded temporary task document without shell interpolation.
-6. A trusted-base provisioner downloads one fixed Ubuntu Noble bubblewrap package over HTTPS, verifies its pinned SHA-256 before installation, rejects a setuid or wrong-version executable, and smoke-tests namespace creation.
-7. The trusted executable enforces base-owned changed-file/diff limits, selects checks through base-owned `whenChanged` patterns, runs applicable checks in disposable bubblewrap workspaces with per-process limits and fresh network namespaces, and records skipped checks explicitly. Pinned local fonts keep the production build offline too.
-8. The pull-request job has explicit read-only cache access and restores the newest PR-scoped, publisher-validated report into `.agentship/history`; a miss simply starts without a baseline.
-9. JSON, Markdown, and SARIF reports are uploaded as workflow artifacts even when verification blocks.
-10. The fixed Markdown report is appended to the workflow job summary without granting write permission to the repository.
-11. A `workflow_run` job starts only after the named report workflow completes and GitHub associates exactly one pull request with it.
-12. The publisher checks out only the default branch, downloads the named artifact from the exact triggering run, and parses event/report JSON under byte and finding-count bounds. Artifact contents are never executed.
-13. After validation, the publisher canonicalizes the JSON into a fresh directory. Validation failure stops publication.
-14. A full-SHA-pinned `actions/attest` v4.2.2 step uses GitHub OIDC and a short-lived Sigstore certificate to attest those exact canonical bytes. The publisher uploads the JSON and verification bundle together with 30-day retention.
-15. The publisher saves the canonical JSON under a unique PR/run cache key using write-only cache access.
-16. The publisher requires the report's reviewed head and base to equal the event's PR head and base, then creates a Check Run on that exact head with `conclusion: neutral`, regardless of PASS, WARN, or BLOCK, including a validated GitHub attestation URL.
+2. The immutable AgentShip revision named by the base-owned caller is checked out under `verifier/`.
+3. The pull request's base SHA is checked out separately under `policy/`.
+4. The pull-request subject's exact head SHA is checked out separately under `subject/`.
+5. AgentShip is built from `verifier/`, while `.agentship.ci.yml` is loaded only from `policy/`.
+6. A pinned verifier script reads the GitHub event JSON and writes the PR body to a bounded temporary task document without shell interpolation.
+7. A pinned verifier provisioner downloads one fixed Ubuntu Noble bubblewrap package over HTTPS, verifies its pinned SHA-256 before installation, rejects a setuid or wrong-version executable, and smoke-tests namespace creation.
+8. The trusted executable enforces base-owned changed-file/diff limits, selects checks through base-owned `whenChanged` patterns, runs applicable checks in disposable bubblewrap workspaces with per-process limits and fresh network namespaces, and records skipped checks explicitly. Pinned local fonts keep the production build offline too.
+9. The pull-request job has explicit read-only cache access and restores the newest PR-scoped, publisher-validated report into `.agentship/history`; a miss simply starts without a baseline.
+10. JSON, Markdown, and SARIF reports are uploaded as workflow artifacts even when verification blocks.
+11. The fixed Markdown report is appended to the workflow job summary without granting write permission to the repository.
+12. A `workflow_run` job starts only after the named report workflow completes and GitHub associates exactly one pull request with it.
+13. The publisher checks out the same immutable AgentShip revision named by the base-owned caller, downloads the named artifact from the exact triggering run, and parses event/report JSON under byte and finding-count bounds. Artifact contents are never executed.
+14. After validation, the publisher canonicalizes the JSON into a fresh directory. Validation failure stops publication.
+15. A full-SHA-pinned `actions/attest` v4.2.2 step uses GitHub OIDC and a short-lived Sigstore certificate to attest those exact canonical bytes. The publisher uploads the JSON and verification bundle together with 30-day retention.
+16. The publisher saves the canonical JSON under a unique PR/run cache key using write-only cache access.
+17. The publisher requires the report's reviewed head and base to equal the event's PR head and base, then creates a Check Run on that exact head with `conclusion: neutral`, regardless of PASS, WARN, or BLOCK, including a validated GitHub attestation URL.
 
 All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review. The publisher has `actions: read`, `contents: read`, `checks: write`, `attestations: write`, and `id-token: write`; the subject workflow retains only `contents: read` and cannot request an attestation identity.
 
@@ -36,7 +38,7 @@ The JSON and Markdown reports record the canonical path, byte length, and SHA-25
 actual AgentShip entrypoint, Git executable, and launching Node executable. They also record bounded
 platform, architecture, kernel, optional `/etc/os-release` identity/hash, and GitHub's
 `RUNNER_ENVIRONMENT`, `RUNNER_OS`, `RUNNER_ARCH`, `ImageOS`, and `ImageVersion` fields when
-present. In this workflow the entrypoint is the trusted base checkout's self-contained
+present. In this workflow the entrypoint is the immutable verifier checkout's self-contained
 `dist/agentship.cjs` bundle. The privileged publisher rejects missing, oversized, malformed,
 or non-GitHub-hosted Linux X64 runner provenance and displays the Git, verifier, image, OS,
 and Node identities in the neutral Check Run summary. These fields identify claimed bytes and
@@ -67,7 +69,7 @@ headings, and table/code values cannot introduce columns or raw HTML. JSON and S
 remain structured data; any downstream renderer must apply its own context-appropriate
 encoding rather than trusting display strings.
 
-The GitHub-hosted Ubuntu 24.04 image does not guarantee bubblewrap, so the trusted base
+The GitHub-hosted Ubuntu 24.04 image does not guarantee bubblewrap, so the pinned verifier
 checkout provisions version `0.9.0-1ubuntu0.3` directly from Ubuntu's Noble security
 archive. The script pins and checks the package's published SHA-256, installs without a
 floating package-index update, verifies the package/runtime versions and non-setuid mode,
@@ -108,7 +110,7 @@ remain deployment checks rather than live-validated claims.
 Warning suppressions are also loaded from the base revision. A pull request cannot add a suppression that takes effect in its own report. Matching is exact on finding ID and kind; active owner, reason, and expiry evidence remains visible in every report format. Blocker kinds cannot be configured as suppressible.
 
 The same boundary applies to blocking rules and protected paths: the workflow passes
-`--config ../verifier/.agentship.ci.yml` and never supplies `--approve-path` or
+`--config ../policy/.agentship.ci.yml` and never supplies `--approve-path` or
 `--override`. A pull request can edit its own `.agentship.yml` or add approval-shaped
 files, but neither becomes effective policy for that run. An executable regression
 reviews a subject that replaces gate policy with a permissive report configuration and

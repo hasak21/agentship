@@ -60,7 +60,7 @@ Exit criterion: omitted requirements are detected with measured, publishable acc
 
 ## M4 — CI report mode
 
-- [~] Add non-destructive team onboarding (npm lockfile validation, conservative CI policy, immutable verifier pin, minimal reusable-workflow callers, unit coverage, and disposable-repository installation delivered; live cross-repository reusable-workflow validation pending).
+- [~] Add non-destructive team onboarding (npm lockfile validation, conservative CI policy, immutable verifier pin, minimal reusable-workflow callers, unit coverage, disposable-repository installation, and first-party caller dogfooding delivered; live reusable execution and cross-repository validation pending).
 - [~] Build a fork-safe GitHub Action (trusted-base, exact-head, read-only, artifact-only report workflow delivered and live same-repository PR validated; live fork-PR validation pending).
 - [~] Publish Check Run, Markdown, JSON, and SARIF outputs (artifact/job-summary outputs and a separate bounded, always-neutral `workflow_run` Check Run publisher with attested canonical JSON and Sigstore bundle are live-validated for a same-repository PR; live fork-PR validation remains pending).
 - [~] Add changed-path filtering and execution budgets (deterministic check selection, pre-execution changed-file/diff limits, per-check plus cumulative check wall-clock deadlines, Linux per-process limits, and digest-pinned disposable bubblewrap workers in official CI delivered; aggregate cgroup accounting and disk-capacity quotas remain pending).
