@@ -8,7 +8,7 @@ artifact into an always-neutral Check Run without granting merge authority.
 
 1. `pull_request` starts a GitHub-hosted disposable runner with `contents: read`.
 2. The pull request's base SHA is checked out under `verifier/`.
-3. The pull-request subject is checked out separately under `subject/`.
+3. The pull-request subject's exact head SHA is checked out separately under `subject/`.
 4. AgentShip is built from `verifier/`; `.agentship.ci.yml` is also loaded from that trusted checkout.
 5. A base-owned script reads the GitHub event JSON and writes the PR body to a bounded temporary task document without shell interpolation.
 6. A trusted-base provisioner downloads one fixed Ubuntu Noble bubblewrap package over HTTPS, verifies its pinned SHA-256 before installation, rejects a setuid or wrong-version executable, and smoke-tests namespace creation.
@@ -21,7 +21,7 @@ artifact into an always-neutral Check Run without granting merge authority.
 13. After validation, the publisher canonicalizes the JSON into a fresh directory. Validation failure stops publication.
 14. A full-SHA-pinned `actions/attest` v4.2.2 step uses GitHub OIDC and a short-lived Sigstore certificate to attest those exact canonical bytes. The publisher uploads the JSON and verification bundle together with 30-day retention.
 15. The publisher saves the canonical JSON under a unique PR/run cache key using write-only cache access.
-16. The publisher binds the report base to the event's PR base and creates a Check Run on the event's PR head with `conclusion: neutral`, regardless of PASS, WARN, or BLOCK, including a validated GitHub attestation URL.
+16. The publisher requires the report's reviewed head and base to equal the event's PR head and base, then creates a Check Run on that exact head with `conclusion: neutral`, regardless of PASS, WARN, or BLOCK, including a validated GitHub attestation URL.
 
 All official actions are pinned to full commit SHAs. Dependency lifecycle scripts are disabled during installation. Subject checks still execute repository scripts because reproducing them is the purpose of the review. The publisher has `actions: read`, `contents: read`, `checks: write`, `attestations: write`, and `id-token: write`; the subject workflow retains only `contents: read` and cannot request an attestation identity.
 
@@ -68,6 +68,28 @@ and exercises namespace creation before any pull-request command runs. The pin a
 were checked against the
 [Ubuntu Noble package record](https://packages.ubuntu.com/noble/amd64/bubblewrap/download)
 on 2026-10-08. A package update is an explicit reviewed policy change.
+
+## Live validation
+
+The deployed two-stage flow was validated on 2026-10-09 with same-repository pull request
+[#1](https://github.com/hasak21/agentship/pull/1). The subject
+[report run](https://github.com/hasak21/agentship/actions/runs/37871746370) reviewed exact
+head `3fc146750346b712d176bfd9e134335120c40826` against base
+`8d1735ee1fbabe182f8b20a4f6dc34e0fff8a25d`, returned `PASS`, retained zero findings,
+and passed the selected lint and test checks through `linux-bubblewrap` with denied
+networking. The docs-only fixture caused the path-filtered build and CLI-package checks to
+be recorded as skipped.
+
+The trusted [publisher run](https://github.com/hasak21/agentship/actions/runs/37871835545)
+validated the incoming artifact, published the always-neutral `AgentShip evidence report`
+Check Run on that exact head, uploaded canonical artifact
+`agentship-attested-evidence-1-37871746370`, and issued GitHub attestation
+[`54162271`](https://github.com/hasak21/agentship/attestations/54162271). Downloading the
+canonical JSON and running `gh attestation verify` against `hasak21/agentship` succeeded.
+This proves the deployed same-repository path, including the GitHub-hosted isolation
+worker, exact-head binding, artifact handoff, publisher, Check Run, and attestation. It
+does not prove fork-specific token, cache-scope, approval, or secret behavior; a live fork
+PR remains required before claiming that boundary is empirically validated.
 
 `limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. The official policy also sets `limits.maxCheckSeconds: 480`; AgentShip applies that cumulative wall-clock deadline to check preparation and execution, initiates active-check termination at the remaining limit, skips later applicable checks, and emits a blocker on exhaustion. Forced termination has a one-second grace and sandbox cleanup may complete after the deadline; actual elapsed time remains evidence. Every check retains its own timeout and the job retains an outer workflow timeout. The official Ubuntu policy uses `/usr/bin/prlimit` for per-process CPU time, maximum output-file size, and open-file counts; the workflow verifies that backend exists before review. AgentShip can also configure a virtual-address-space bound, but the official Node checks omit it because JavaScript/Wasm runtimes reserve large address ranges unrelated to resident memory. Kernel limits are inherited by child processes but are not aggregated across the process tree. Bubblewrap adds PID/filesystem/network namespaces and a disposable workspace, but does not impose reliable memory, aggregate CPU, process-count, or disk-capacity quotas.
 
