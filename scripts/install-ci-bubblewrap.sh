@@ -27,17 +27,29 @@ sudo dpkg --install "$package_path"
 test -x /usr/bin/bwrap
 test -x /usr/bin/unshare
 test -x /usr/bin/setpriv
+test -x /usr/bin/sudo
 test ! -u /usr/bin/bwrap
 test "$(dpkg-query --showformat='${Version}' --show bubblewrap)" = "$BUBBLEWRAP_VERSION"
 test "$(/usr/bin/bwrap --version)" = "bubblewrap 0.9.0"
 
-# Create the empty network namespace without configuring loopback, then make bubblewrap
-# share that already-private namespace. This avoids hosted-kernel RTM_NEWADDR restrictions.
-# The trusted setpriv wrapper clears every namespace capability before code executes.
-/usr/bin/unshare \
-  --user \
-  --map-root-user \
+# GitHub's Ubuntu policy prevents unprivileged unshare from writing a uid_map. Use the
+# runner's trusted passwordless sudo only to create the empty network namespace, then
+# restore the runner identity and clear every capability before bubblewrap or code runs.
+runner_uid="$(id -u)"
+runner_gid="$(id -g)"
+test "$runner_uid" -gt 0
+test "$runner_gid" -gt 0
+/usr/bin/sudo -n -E /usr/bin/unshare \
   --net \
+  -- \
+  /usr/bin/setpriv \
+  --reuid="$runner_uid" \
+  --regid="$runner_gid" \
+  --clear-groups \
+  --bounding-set=-all \
+  --inh-caps=-all \
+  --ambient-caps=-all \
+  -- \
   /usr/bin/bwrap \
   --die-with-parent \
   --new-session \
@@ -46,8 +58,4 @@ test "$(/usr/bin/bwrap --version)" = "bubblewrap 0.9.0"
   --ro-bind / / \
   --proc /proc \
   --dev /dev \
-  -- /usr/bin/setpriv \
-  --bounding-set=-all \
-  --inh-caps=-all \
-  --ambient-caps=-all \
   -- /usr/bin/true

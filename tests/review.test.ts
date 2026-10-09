@@ -21,6 +21,7 @@ import {
 import { mapRequirementsToChangedFiles } from "../src/review/requirement-mapper";
 import {
   buildBubblewrapArguments,
+  buildPrivilegedBubblewrapInvocation,
   prepareBubblewrapSandbox,
 } from "../src/review/sandbox";
 import {
@@ -339,6 +340,39 @@ test("bubblewrap invocation exposes only the disposable workspace and runtime", 
   assert.ok(allowed.includes("/etc/ssl"));
 });
 
+test("hosted denied-network invocation drops privilege before bubblewrap", () => {
+  const invocation = buildPrivilegedBubblewrapInvocation({
+    repositoryRoot: "/workspace/project",
+    workspace: "/tmp/sandbox/workspace",
+    network: "denied",
+    command: "npm test",
+  }, 1001, 121);
+
+  assert.equal(invocation.file, "/usr/bin/sudo");
+  assert.deepEqual(invocation.args.slice(0, 18), [
+    "-n",
+    "-E",
+    "/usr/bin/unshare",
+    "--net",
+    "--",
+    "/usr/bin/setpriv",
+    "--reuid=1001",
+    "--regid=121",
+    "--clear-groups",
+    "--bounding-set=-all",
+    "--inh-caps=-all",
+    "--ambient-caps=-all",
+    "--",
+    "/usr/bin/bwrap",
+    "--die-with-parent",
+    "--new-session",
+    "--unshare-all",
+    "--share-net",
+  ]);
+  assert.deepEqual(invocation.args.slice(-3), ["/bin/sh", "-c", "npm test"]);
+  assert.equal(invocation.args.filter((value) => value === "/usr/bin/setpriv").length, 1);
+});
+
 test("isolated resource limits wrap bubblewrap and unsupported hosts fail closed", async () => {
   const execution = {
     backend: "linux-bubblewrap" as const,
@@ -469,7 +503,7 @@ test("bubblewrap discards mutations, hides host files, and denies network by def
     const evidence = await runCheck(
       {
         name: "isolated",
-        run: `test ! -e /etc/passwd && test ! -e ignored-secret && touch sandbox-only && node -e "const fs = require('node:fs'); const network = fs.readFileSync('/proc/net/dev', 'utf8'); const names = network.split('\\n').slice(2).map((line) => line.split(':')[0].trim()).filter(Boolean); const status = fs.readFileSync('/proc/self/status', 'utf8').split('\\n'); const wanted = new Set(['CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb']); const capabilities = status.map((line) => line.split(':')).filter(([name]) => wanted.has(name)).map(([, value]) => value.trim()); if (names.some((name) => name !== 'lo') || capabilities.length !== wanted.size || capabilities.some((value) => !/^0+$/.test(value))) process.exit(1)"`,
+        run: `test ! -e /etc/passwd && test ! -e ignored-secret && touch sandbox-only && node -e "const fs = require('node:fs'); const network = fs.readFileSync('/proc/net/dev', 'utf8'); const names = network.split('\\n').slice(2).map((line) => line.split(':')[0].trim()).filter(Boolean); const status = fs.readFileSync('/proc/self/status', 'utf8').split('\\n'); const wanted = new Set(['CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb']); const capabilities = status.map((line) => line.split(':')).filter(([name]) => wanted.has(name)).map(([, value]) => value.trim()); const leaked = Object.keys(process.env).some((name) => name.startsWith('SUDO_') || name.startsWith('XDG_SESSION_') || name === 'XDG_RUNTIME_DIR' || name === 'USER' || name === 'LOGNAME'); if (names.some((name) => name !== 'lo') || capabilities.length !== wanted.size || capabilities.some((value) => !/^0+$/.test(value)) || leaked) process.exit(1)"`,
         timeoutSeconds: 10,
         isolation: "bubblewrap",
       },

@@ -19,10 +19,23 @@ import type { CheckEvidence, ReviewCheckConfig } from "./types";
 export const BUBBLEWRAP_PATH = "/usr/bin/bwrap";
 export const UNSHARE_PATH = "/usr/bin/unshare";
 export const SETPRIV_PATH = "/usr/bin/setpriv";
+export const SUDO_PATH = "/usr/bin/sudo";
 const GIT_PATH = "/usr/bin/git";
 const MAX_WORKSPACE_ENTRIES = 200_000;
 const MAX_WORKSPACE_BYTES = 2 * 1024 * 1024 * 1024;
 const OMITTED_ROOT_ENTRIES = new Set([".agentship", ".git", "node_modules"]);
+const SUDO_INJECTED_ENVIRONMENT = [
+  "LOGNAME",
+  "SUDO_COMMAND",
+  "SUDO_GID",
+  "SUDO_UID",
+  "SUDO_USER",
+  "USER",
+  "XDG_RUNTIME_DIR",
+  "XDG_SESSION_CLASS",
+  "XDG_SESSION_ID",
+  "XDG_SESSION_TYPE",
+];
 const execFileAsync = promisify(execFile);
 
 export interface PreparedSandbox {
@@ -37,17 +50,20 @@ export async function prepareBubblewrapSandbox(
   repositoryRoot: string,
   platform: NodeJS.Platform = process.platform,
   bubblewrapAvailable = existsSync(BUBBLEWRAP_PATH),
-  dependenciesRoot = repositoryRoot
+  dependenciesRoot = repositoryRoot,
+  environmentPath = process.env.PATH ?? "/usr/bin:/bin",
+  privilegedNetworkNamespace = process.env.AGENTSHIP_USE_SUDO_NETNS === "1"
 ): Promise<PreparedSandbox> {
   if (
     platform !== "linux" ||
     !bubblewrapAvailable ||
     !existsSync(UNSHARE_PATH) ||
     !existsSync(SETPRIV_PATH) ||
-    !existsSync(GIT_PATH)
+    !existsSync(GIT_PATH) ||
+    (privilegedNetworkNamespace && !existsSync(SUDO_PATH))
   ) {
     throw new Error(
-      "Configured bubblewrap isolation requires Linux with /usr/bin/bwrap, /usr/bin/unshare, /usr/bin/setpriv, and /usr/bin/git; the check was not executed."
+      `Configured bubblewrap isolation requires Linux with /usr/bin/bwrap, /usr/bin/unshare, /usr/bin/setpriv, ${privilegedNetworkNamespace ? "/usr/bin/git, and /usr/bin/sudo" : "and /usr/bin/git"}; the check was not executed.`
     );
   }
 
@@ -66,16 +82,23 @@ export async function prepareBubblewrapSandbox(
     if (nodeModulesAvailable) {
       await mkdir(path.join(workspace, "node_modules"), { recursive: true });
     }
-    const args = buildBubblewrapArguments({
+    const options = {
       repositoryRoot: absoluteRoot,
       workspace,
       nodeModules: nodeModulesAvailable ? await realpath(nodeModules) : undefined,
       network: check.network === "allowed" ? "allowed" : "denied",
       command: check.run,
-    });
+      environmentPath,
+    } as const;
+    const usePrivilegedLauncher = options.network === "denied" && privilegedNetworkNamespace;
+    const invocation = usePrivilegedLauncher
+      ? buildPrivilegedBubblewrapInvocation({ ...options, network: "denied" })
+      : {
+          file: options.network === "allowed" ? BUBBLEWRAP_PATH : UNSHARE_PATH,
+          args: buildBubblewrapArguments(options),
+        };
     return {
-      file: check.network === "allowed" ? BUBBLEWRAP_PATH : UNSHARE_PATH,
-      args,
+      ...invocation,
       execution: {
         backend: "linux-bubblewrap",
         ...(check.resources ? { resourceLimits: check.resources } : {}),
@@ -99,13 +122,65 @@ export function buildBubblewrapArguments(options: {
   nodeModules?: string;
   network: "allowed" | "denied";
   command: string;
+  environmentPath?: string;
 }): string[] {
+  const args = buildBubblewrapCoreArguments(options, true);
+  return options.network === "denied"
+    ? ["--user", "--map-root-user", "--net", BUBBLEWRAP_PATH, ...args]
+    : args;
+}
+
+export function buildPrivilegedBubblewrapInvocation(options: {
+  repositoryRoot: string;
+  workspace: string;
+  nodeModules?: string;
+  network: "denied";
+  command: string;
+  environmentPath?: string;
+}, uid = process.getuid?.(), gid = process.getgid?.()): { file: string; args: string[] } {
+  if (uid === undefined || gid === undefined || uid === 0 || gid === 0) {
+    throw new Error("Privileged network namespace setup requires a non-root POSIX runner identity.");
+  }
+  return {
+    file: SUDO_PATH,
+    args: [
+      "-n",
+      "-E",
+      UNSHARE_PATH,
+      "--net",
+      "--",
+      SETPRIV_PATH,
+      `--reuid=${uid}`,
+      `--regid=${gid}`,
+      "--clear-groups",
+      "--bounding-set=-all",
+      "--inh-caps=-all",
+      "--ambient-caps=-all",
+      "--",
+      BUBBLEWRAP_PATH,
+      ...buildBubblewrapCoreArguments(options, false, true),
+    ],
+  };
+}
+
+function buildBubblewrapCoreArguments(options: {
+  repositoryRoot: string;
+  workspace: string;
+  nodeModules?: string;
+  network: "allowed" | "denied";
+  command: string;
+  environmentPath?: string;
+}, dropCapabilitiesInside: boolean, removeSudoEnvironment = false): string[] {
   const args = [
     "--die-with-parent",
     "--new-session",
     "--unshare-all",
     "--share-net",
   ];
+  if (removeSudoEnvironment) {
+    for (const name of SUDO_INJECTED_ENVIRONMENT) args.push("--unsetenv", name);
+  }
+  if (options.environmentPath) args.push("--setenv", "PATH", options.environmentPath);
 
   const runtimePaths = minimalRuntimePaths();
   for (const runtimePath of runtimePaths) {
@@ -115,7 +190,7 @@ export function buildBubblewrapArguments(options: {
   for (const directory of parentDirectories(options.repositoryRoot)) {
     args.push("--dir", directory);
   }
-  const command = options.network === "denied"
+  const command = options.network === "denied" && dropCapabilitiesInside
     ? [
         SETPRIV_PATH,
         "--bounding-set=-all",
@@ -176,9 +251,7 @@ export function buildBubblewrapArguments(options: {
     "--",
     ...command
   );
-  return options.network === "denied"
-    ? ["--user", "--map-root-user", "--net", BUBBLEWRAP_PATH, ...args]
-    : args;
+  return args;
 }
 
 async function copyWorkspace(sourceRoot: string, destinationRoot: string): Promise<void> {

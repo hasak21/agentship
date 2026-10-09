@@ -74,7 +74,8 @@ export async function runCheck(
         repositoryRoot,
         process.platform,
         existsSync(BUBBLEWRAP_PATH),
-        options.dependenciesRoot ?? repositoryRoot
+        options.dependenciesRoot ?? repositoryRoot,
+        environment.PATH ?? "/usr/bin:/bin"
       );
     }
     invocation = buildCheckInvocation(

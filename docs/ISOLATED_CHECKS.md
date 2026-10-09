@@ -24,11 +24,17 @@ resolver configuration, and host networking. This can reach runner-local service
 must be used only when the check genuinely requires it.
 
 For denied-network workers, trusted `/usr/bin/unshare` first creates an empty network
-namespace without configuring loopback. Bubblewrap shares that already-private namespace,
-and trusted `/usr/bin/setpriv` clears the entire capability bounding, inheritable, and
-ambient sets before the repository shell starts. Normal executable capability calculation
-therefore leaves the check with empty effective and permitted sets. Repository code sees
-only the private, unconfigured loopback interface.
+namespace without configuring loopback. Bubblewrap shares that already-private namespace.
+On ordinary Linux hosts this happens through an unprivileged user namespace and trusted
+`/usr/bin/setpriv` clears the capability sets inside it. GitHub's Ubuntu runner policy
+blocks the equivalent `unshare` UID mapping, so the official workflow uses passwordless
+`sudo` only to create the empty network namespace. Before bubblewrap starts, `setpriv`
+restores the numeric runner UID/GID, clears supplementary groups, and clears the entire
+bounding, inheritable, and ambient capability sets. Repository code therefore starts with
+empty effective and permitted sets and sees only private, unconfigured loopback.
+The sudo hop preserves the verifier's already allowlisted and credential-filtered check
+environment so runner-installed tools remain addressable; it never receives the raw host
+environment.
 
 ## Evidence
 
@@ -49,7 +55,8 @@ outside `/usr` and the active Node distribution are not mounted automatically.
 
 The official GitHub workflow provisions a fixed Ubuntu Noble amd64 package from the
 security archive and verifies its published SHA-256 before installation. It rejects the
-wrong platform, package/runtime version, setuid mode, or failed namespace smoke test
+wrong platform, package/runtime version, setuid mode, unavailable non-interactive sudo,
+or failed namespace smoke test
 before any pull-request command runs. All official checks use this backend; lint, tests,
 the Next build, and CLI packaging all deny network. The build uses repository-owned Geist
 v1.7.2 variable fonts whose source commit, hashes, and SIL OFL license are retained beside

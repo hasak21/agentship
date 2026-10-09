@@ -71,6 +71,7 @@ jobs:
         env:
           AGENTSHIP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           AGENTSHIP_TASK_PATH: ${{ runner.temp }}/agentship-pr-task.md
+          AGENTSHIP_USE_SUDO_NETNS: "1"
           GITHUB_TOKEN: ""
           GH_TOKEN: ""
         run: >-

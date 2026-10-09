@@ -40,6 +40,7 @@ test("CI report uses immutable actions and separate trusted and subject checkout
   assert.match(source, /node \.\.\/verifier\/dist\/agentship\.cjs review/);
   assert.match(source, /--config \.\.\/verifier\/\.agentship\.ci\.yml/);
   assert.match(source, /working-directory: verifier\n\s+run: scripts\/install-ci-bubblewrap\.sh/);
+  assert.match(source, /AGENTSHIP_USE_SUDO_NETNS: "1"/);
   assert.match(source, /test -x \/usr\/bin\/prlimit/);
   assert.doesNotMatch(source, /--approve-path/);
   assert.doesNotMatch(source, /--override/);
@@ -87,8 +88,11 @@ test("CI provisions a fixed digest-verified bubblewrap worker", async () => {
   assert.match(source, /sudo dpkg --install/);
   assert.match(source, /test ! -u \/usr\/bin\/bwrap/);
   assert.match(source, /--unshare-all/);
+  assert.match(source, /\/usr\/bin\/sudo -n -E \/usr\/bin\/unshare/);
   assert.match(source, /\/usr\/bin\/unshare/);
-  assert.match(source, /--map-root-user/);
+  assert.match(source, /--reuid="\$runner_uid"/);
+  assert.match(source, /--regid="\$runner_gid"/);
+  assert.match(source, /--clear-groups/);
   assert.match(source, /--bounding-set=-all/);
   assert.match(source, /--inh-caps=-all/);
   assert.match(source, /--ambient-caps=-all/);
