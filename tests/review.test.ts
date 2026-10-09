@@ -315,10 +315,9 @@ test("bubblewrap invocation exposes only the disposable workspace and runtime", 
   });
 
   assert.ok(args.includes("--unshare-all"));
-  assert.equal(args.includes("--share-net"), false);
-  assert.ok(args.includes("CAP_NET_ADMIN"));
-  assert.ok(args.includes("CAP_SETPCAP"));
-  assert.ok(args.includes("--bounding-set=-net_admin,-setpcap"));
+  assert.ok(args.includes("--share-net"));
+  assert.deepEqual(args.slice(0, 4), ["--user", "--map-root-user", "--net", "/usr/bin/bwrap"]);
+  assert.ok(args.includes("--bounding-set=-all"));
   assert.ok(args.includes("--inh-caps=-all"));
   assert.ok(args.includes("--ambient-caps=-all"));
   assert.deepEqual(args.slice(-3), ["/bin/sh", "-c", "npm test"]);
@@ -359,14 +358,14 @@ test("isolated resource limits wrap bubblewrap and unsupported hosts fail closed
     },
     "linux",
     true,
-    { args: ["--unshare-all", "--", "/bin/sh", "-c", "npm test"], execution, cleanup: async () => {} }
+    { file: "/usr/bin/unshare", args: ["--unshare-all", "--", "/bin/sh", "-c", "npm test"], execution, cleanup: async () => {} }
   );
   assert.equal(invocation.file, "/usr/bin/prlimit");
   assert.deepEqual(invocation.args, [
     "--core=0:0",
     "--cpu=5:5",
     "--",
-    "/usr/bin/bwrap",
+    "/usr/bin/unshare",
     "--unshare-all",
     "--",
     "/bin/sh",
@@ -382,7 +381,7 @@ test("isolated resource limits wrap bubblewrap and unsupported hosts fail closed
       "darwin",
       false
     ),
-    /requires Linux with \/usr\/bin\/bwrap and \/usr\/bin\/git; the check was not executed/
+    /requires Linux with \/usr\/bin\/bwrap, \/usr\/bin\/unshare, \/usr\/bin\/setpriv, and \/usr\/bin\/git; the check was not executed/
   );
 });
 
@@ -431,10 +430,15 @@ test("bubblewrap discards mutations, hides host files, and denies network by def
     return;
   }
   try {
-    await execFileAsync("/usr/bin/bwrap", [
+    await execFileAsync("/usr/bin/unshare", [
+      "--user",
+      "--map-root-user",
+      "--net",
+      "/usr/bin/bwrap",
       "--die-with-parent",
       "--new-session",
       "--unshare-all",
+      "--share-net",
       "--ro-bind",
       "/",
       "/",
@@ -442,6 +446,11 @@ test("bubblewrap discards mutations, hides host files, and denies network by def
       "/proc",
       "--dev",
       "/dev",
+      "--",
+      "/usr/bin/setpriv",
+      "--bounding-set=-all",
+      "--inh-caps=-all",
+      "--ambient-caps=-all",
       "--",
       "/usr/bin/true",
     ]);
@@ -460,14 +469,14 @@ test("bubblewrap discards mutations, hides host files, and denies network by def
     const evidence = await runCheck(
       {
         name: "isolated",
-        run: `test ! -e /etc/passwd && test ! -e ignored-secret && touch sandbox-only && node -e "const fs = require('node:fs'); const source = fs.readFileSync('/proc/net/dev', 'utf8'); const names = source.split('\\n').slice(2).map((line) => line.split(':')[0].trim()).filter(Boolean); const caps = fs.readFileSync('/proc/self/status', 'utf8').match(/^CapEff:\\s+([0-9a-f]+)$/m)?.[1]; if (names.some((name) => name !== 'lo') || !caps || !/^0+$/.test(caps)) process.exit(1)"`,
+        run: `test ! -e /etc/passwd && test ! -e ignored-secret && touch sandbox-only && node -e "const fs = require('node:fs'); const network = fs.readFileSync('/proc/net/dev', 'utf8'); const names = network.split('\\n').slice(2).map((line) => line.split(':')[0].trim()).filter(Boolean); const status = fs.readFileSync('/proc/self/status', 'utf8').split('\\n'); const wanted = new Set(['CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb']); const capabilities = status.map((line) => line.split(':')).filter(([name]) => wanted.has(name)).map(([, value]) => value.trim()); if (names.some((name) => name !== 'lo') || capabilities.length !== wanted.size || capabilities.some((value) => !/^0+$/.test(value))) process.exit(1)"`,
         timeoutSeconds: 10,
         isolation: "bubblewrap",
       },
       directory
     );
 
-    assert.equal(evidence.status, "passed", evidence.stderr);
+    assert.equal(evidence.status, "passed", evidence.stdout + evidence.stderr);
     assert.deepEqual(evidence.execution, {
       backend: "linux-bubblewrap",
       isolation: {
@@ -623,7 +632,11 @@ test("causal checks block unless the passing head check fails normally on base",
   assert.equal(finding?.evidence.baseStatus, "passed");
 });
 
-test("causal review records fail-on-base and pass-on-head evidence", async () => {
+test("causal review records fail-on-base and pass-on-head evidence", async (context) => {
+  if (process.env.AGENTSHIP_SANDBOX === "bubblewrap") {
+    context.skip("nested bubblewrap is outside this integration test");
+    return;
+  }
   const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-causal-"));
   try {
     await execFileAsync("git", ["init", "-q"], { cwd: directory });

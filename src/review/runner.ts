@@ -238,7 +238,7 @@ export function buildCheckInvocation(
   }
   const base: CheckInvocation = sandbox
     ? {
-        file: BUBBLEWRAP_PATH,
+        file: sandbox.file,
         args: sandbox.args,
         shell: false,
         execution: sandbox.execution,

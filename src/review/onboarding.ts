@@ -90,7 +90,12 @@ export async function diagnoseRepository(cwd: string): Promise<DoctorResult> {
         issues.push(`Check '${check.name}' requires Linux bubblewrap isolation.`);
         ready = false;
       }
-      for (const executable of ["/usr/bin/bwrap", "/usr/bin/git"]) {
+      for (const executable of [
+        "/usr/bin/bwrap",
+        "/usr/bin/unshare",
+        "/usr/bin/setpriv",
+        "/usr/bin/git",
+      ]) {
         if (!existsSync(executable)) {
           issues.push(`Check '${check.name}' requires ${executable}.`);
           ready = false;

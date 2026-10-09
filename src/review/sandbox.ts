@@ -17,6 +17,8 @@ import { promisify } from "node:util";
 import type { CheckEvidence, ReviewCheckConfig } from "./types";
 
 export const BUBBLEWRAP_PATH = "/usr/bin/bwrap";
+export const UNSHARE_PATH = "/usr/bin/unshare";
+export const SETPRIV_PATH = "/usr/bin/setpriv";
 const GIT_PATH = "/usr/bin/git";
 const MAX_WORKSPACE_ENTRIES = 200_000;
 const MAX_WORKSPACE_BYTES = 2 * 1024 * 1024 * 1024;
@@ -24,6 +26,7 @@ const OMITTED_ROOT_ENTRIES = new Set([".agentship", ".git", "node_modules"]);
 const execFileAsync = promisify(execFile);
 
 export interface PreparedSandbox {
+  file: string;
   args: string[];
   execution: NonNullable<CheckEvidence["execution"]>;
   cleanup(): Promise<void>;
@@ -36,9 +39,15 @@ export async function prepareBubblewrapSandbox(
   bubblewrapAvailable = existsSync(BUBBLEWRAP_PATH),
   dependenciesRoot = repositoryRoot
 ): Promise<PreparedSandbox> {
-  if (platform !== "linux" || !bubblewrapAvailable || !existsSync(GIT_PATH)) {
+  if (
+    platform !== "linux" ||
+    !bubblewrapAvailable ||
+    !existsSync(UNSHARE_PATH) ||
+    !existsSync(SETPRIV_PATH) ||
+    !existsSync(GIT_PATH)
+  ) {
     throw new Error(
-      "Configured bubblewrap isolation requires Linux with /usr/bin/bwrap and /usr/bin/git; the check was not executed."
+      "Configured bubblewrap isolation requires Linux with /usr/bin/bwrap, /usr/bin/unshare, /usr/bin/setpriv, and /usr/bin/git; the check was not executed."
     );
   }
 
@@ -65,6 +74,7 @@ export async function prepareBubblewrapSandbox(
       command: check.run,
     });
     return {
+      file: check.network === "allowed" ? BUBBLEWRAP_PATH : UNSHARE_PATH,
       args,
       execution: {
         backend: "linux-bubblewrap",
@@ -94,15 +104,8 @@ export function buildBubblewrapArguments(options: {
     "--die-with-parent",
     "--new-session",
     "--unshare-all",
+    "--share-net",
   ];
-  if (options.network === "allowed") {
-    args.push("--share-net");
-  } else {
-    // Some hosted kernels require CAP_NET_ADMIN to initialize loopback in a fresh
-    // network namespace. CAP_SETPCAP exists only so the trusted setpriv wrapper can
-    // drop both capabilities before repository code starts.
-    args.push("--cap-add", "CAP_NET_ADMIN", "--cap-add", "CAP_SETPCAP");
-  }
 
   const runtimePaths = minimalRuntimePaths();
   for (const runtimePath of runtimePaths) {
@@ -114,8 +117,8 @@ export function buildBubblewrapArguments(options: {
   }
   const command = options.network === "denied"
     ? [
-        "/usr/bin/setpriv",
-        "--bounding-set=-net_admin,-setpcap",
+        SETPRIV_PATH,
+        "--bounding-set=-all",
         "--inh-caps=-all",
         "--ambient-caps=-all",
         "--",
@@ -173,7 +176,9 @@ export function buildBubblewrapArguments(options: {
     "--",
     ...command
   );
-  return args;
+  return options.network === "denied"
+    ? ["--user", "--map-root-user", "--net", BUBBLEWRAP_PATH, ...args]
+    : args;
 }
 
 async function copyWorkspace(sourceRoot: string, destinationRoot: string): Promise<void> {

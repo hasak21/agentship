@@ -25,24 +25,29 @@ printf '%s  %s\n' "$BUBBLEWRAP_SHA256" "$package_path" | sha256sum --check --str
 sudo dpkg --install "$package_path"
 
 test -x /usr/bin/bwrap
+test -x /usr/bin/unshare
+test -x /usr/bin/setpriv
 test ! -u /usr/bin/bwrap
 test "$(dpkg-query --showformat='${Version}' --show bubblewrap)" = "$BUBBLEWRAP_VERSION"
 test "$(/usr/bin/bwrap --version)" = "bubblewrap 0.9.0"
 
-# Exercise the exact denied-network capability lifecycle before pull-request code runs.
-# Hosted kernels may require CAP_NET_ADMIN to initialize loopback; the trusted setpriv
-# wrapper drops it and CAP_SETPCAP before executing the smoke-test command.
-/usr/bin/bwrap \
+# Create the empty network namespace without configuring loopback, then make bubblewrap
+# share that already-private namespace. This avoids hosted-kernel RTM_NEWADDR restrictions.
+# The trusted setpriv wrapper clears every namespace capability before code executes.
+/usr/bin/unshare \
+  --user \
+  --map-root-user \
+  --net \
+  /usr/bin/bwrap \
   --die-with-parent \
   --new-session \
   --unshare-all \
-  --cap-add CAP_NET_ADMIN \
-  --cap-add CAP_SETPCAP \
+  --share-net \
   --ro-bind / / \
   --proc /proc \
   --dev /dev \
   -- /usr/bin/setpriv \
-  --bounding-set=-net_admin,-setpcap \
+  --bounding-set=-all \
   --inh-caps=-all \
   --ambient-caps=-all \
   -- /usr/bin/true
