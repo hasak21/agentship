@@ -87,7 +87,10 @@ test("CI provisions a fixed digest-verified bubblewrap worker", async () => {
   assert.match(source, /sha256sum --check --strict/);
   assert.match(source, /sudo dpkg --install/);
   assert.match(source, /test ! -u \/usr\/bin\/bwrap/);
-  assert.match(source, /--unshare-all/);
+  assert.match(source, /--unshare-pid/);
+  assert.match(source, /--unshare-ipc/);
+  assert.match(source, /--unshare-uts/);
+  assert.match(source, /--unshare-cgroup/);
   assert.match(source, /\/usr\/bin\/sudo -n -E \/usr\/bin\/unshare/);
   assert.match(source, /\/usr\/bin\/unshare/);
   assert.match(source, /--reuid="\$runner_uid"/);

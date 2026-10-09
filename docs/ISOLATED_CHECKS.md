@@ -13,7 +13,9 @@ and `/usr/bin/bwrap` exists.
 - `/proc`, `/dev`, `/tmp`, and `HOME` are new sandbox-local instances.
 - The host home and `/etc` are absent in the default denied-network profile.
 - Credential-, token-, cookie-, password-, and secret-shaped environment names are removed; proxy variables survive only when their URLs contain no credentials, path, query, or fragment.
-- PID, IPC, UTS, cgroup, user, and network namespaces are unshared.
+- PID, IPC, UTS, cgroup, and network namespaces are unshared. The ordinary unprivileged
+  backend also unshares the user namespace; the hosted privileged setup instead restores
+  the runner's host UID/GID and clears all capabilities before repository code.
 - Repository mutations and generated artifacts disappear when the worker exits.
 - The copy rejects special files and is capped at 200,000 entries and 2 GiB.
 - Configured `prlimit` bounds wrap bubblewrap itself and are inherited by worker processes.
@@ -28,10 +30,11 @@ namespace without configuring loopback. Bubblewrap shares that already-private n
 On ordinary Linux hosts this happens through an unprivileged user namespace and trusted
 `/usr/bin/setpriv` clears the capability sets inside it. GitHub's Ubuntu runner policy
 blocks the equivalent `unshare` UID mapping, so the official workflow uses passwordless
-`sudo` only to create the empty network namespace. Before bubblewrap starts, `setpriv`
-restores the numeric runner UID/GID, clears supplementary groups, and clears the entire
-bounding, inheritable, and ambient capability sets. Repository code therefore starts with
-empty effective and permitted sets and sees only private, unconfigured loopback.
+`sudo` for trusted namespace and mount setup. Before the repository shell starts,
+trusted `setpriv` restores the numeric runner UID/GID, clears supplementary groups, and
+clears the bounding, inheritable, and ambient sets. Repository code therefore starts with
+empty bounding, inheritable, ambient, effective, and permitted capability sets and sees
+only private, unconfigured loopback.
 The sudo hop preserves the verifier's already allowlisted and credential-filtered check
 environment so runner-installed tools remain addressable; it never receives the raw host
 environment.

@@ -33,8 +33,8 @@ test "$(dpkg-query --showformat='${Version}' --show bubblewrap)" = "$BUBBLEWRAP_
 test "$(/usr/bin/bwrap --version)" = "bubblewrap 0.9.0"
 
 # GitHub's Ubuntu policy prevents unprivileged unshare from writing a uid_map. Use the
-# runner's trusted passwordless sudo only to create the empty network namespace, then
-# restore the runner identity and clear every capability before bubblewrap or code runs.
+# runner's trusted passwordless sudo for namespace and mount setup. Trusted setpriv then
+# restores the runner identity and clears every capability before repository code starts.
 runner_uid="$(id -u)"
 runner_gid="$(id -g)"
 test "$runner_uid" -gt 0
@@ -42,20 +42,22 @@ test "$runner_gid" -gt 0
 /usr/bin/sudo -n -E /usr/bin/unshare \
   --net \
   -- \
-  /usr/bin/setpriv \
+  /usr/bin/bwrap \
+  --die-with-parent \
+  --new-session \
+  --unshare-ipc \
+  --unshare-pid \
+  --unshare-uts \
+  --unshare-cgroup \
+  --share-net \
+  --ro-bind / / \
+  --proc /proc \
+  --dev /dev \
+  -- /usr/bin/setpriv \
   --reuid="$runner_uid" \
   --regid="$runner_gid" \
   --clear-groups \
   --bounding-set=-all \
   --inh-caps=-all \
   --ambient-caps=-all \
-  -- \
-  /usr/bin/bwrap \
-  --die-with-parent \
-  --new-session \
-  --unshare-all \
-  --share-net \
-  --ro-bind / / \
-  --proc /proc \
-  --dev /dev \
   -- /usr/bin/true

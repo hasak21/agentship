@@ -349,26 +349,30 @@ test("hosted denied-network invocation drops privilege before bubblewrap", () =>
   }, 1001, 121);
 
   assert.equal(invocation.file, "/usr/bin/sudo");
-  assert.deepEqual(invocation.args.slice(0, 18), [
+  assert.deepEqual(invocation.args.slice(0, 17), [
     "-n",
     "-E",
     "/usr/bin/unshare",
     "--net",
     "--",
-    "/usr/bin/setpriv",
-    "--reuid=1001",
-    "--regid=121",
-    "--clear-groups",
-    "--bounding-set=-all",
-    "--inh-caps=-all",
-    "--ambient-caps=-all",
-    "--",
     "/usr/bin/bwrap",
     "--die-with-parent",
     "--new-session",
-    "--unshare-all",
+    "--unshare-ipc",
+    "--unshare-pid",
+    "--unshare-uts",
+    "--unshare-cgroup",
     "--share-net",
+    "--unsetenv",
+    "LOGNAME",
+    "--unsetenv",
+    "SUDO_COMMAND",
   ]);
+  assert.ok(invocation.args.includes("--reuid=1001"));
+  assert.ok(invocation.args.includes("--regid=121"));
+  assert.ok(invocation.args.includes("--clear-groups"));
+  assert.ok(invocation.args.includes("--bounding-set=-all"));
+  assert.equal(invocation.args.includes("--unshare-all"), false);
   assert.deepEqual(invocation.args.slice(-3), ["/bin/sh", "-c", "npm test"]);
   assert.equal(invocation.args.filter((value) => value === "/usr/bin/setpriv").length, 1);
 });

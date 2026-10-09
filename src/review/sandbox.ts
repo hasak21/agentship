@@ -74,6 +74,11 @@ export async function prepareBubblewrapSandbox(
   const sandboxDirectory = await mkdtemp(
     path.join(os.tmpdir(), "agentship-sandbox-")
   );
+  if (privilegedNetworkNamespace) {
+    // Root inside bubblewrap's user namespace cannot override host DAC checks for the
+    // runner-owned source tree. The disposable parent contains only the bounded copy.
+    await chmod(sandboxDirectory, 0o755);
+  }
   const workspace = path.join(sandboxDirectory, "workspace");
   try {
     await copyWorkspace(absoluteRoot, workspace);
@@ -149,16 +154,8 @@ export function buildPrivilegedBubblewrapInvocation(options: {
       UNSHARE_PATH,
       "--net",
       "--",
-      SETPRIV_PATH,
-      `--reuid=${uid}`,
-      `--regid=${gid}`,
-      "--clear-groups",
-      "--bounding-set=-all",
-      "--inh-caps=-all",
-      "--ambient-caps=-all",
-      "--",
       BUBBLEWRAP_PATH,
-      ...buildBubblewrapCoreArguments(options, false, true),
+      ...buildBubblewrapCoreArguments(options, false, true, { uid, gid }),
     ],
   };
 }
@@ -170,13 +167,21 @@ function buildBubblewrapCoreArguments(options: {
   network: "allowed" | "denied";
   command: string;
   environmentPath?: string;
-}, dropCapabilitiesInside: boolean, removeSudoEnvironment = false): string[] {
-  const args = [
-    "--die-with-parent",
-    "--new-session",
-    "--unshare-all",
-    "--share-net",
-  ];
+}, dropCapabilitiesInside: boolean, removeSudoEnvironment = false, identity?: {
+  uid: number;
+  gid: number;
+}): string[] {
+  const args = identity
+    ? [
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-ipc",
+        "--unshare-pid",
+        "--unshare-uts",
+        "--unshare-cgroup",
+        "--share-net",
+      ]
+    : ["--die-with-parent", "--new-session", "--unshare-all", "--share-net"];
   if (removeSudoEnvironment) {
     for (const name of SUDO_INJECTED_ENVIRONMENT) args.push("--unsetenv", name);
   }
@@ -190,18 +195,29 @@ function buildBubblewrapCoreArguments(options: {
   for (const directory of parentDirectories(options.repositoryRoot)) {
     args.push("--dir", directory);
   }
-  const command = options.network === "denied" && dropCapabilitiesInside
+  const shellCommand = ["/bin/sh", "-c", options.command];
+  const command = identity
+    ? [
+        SETPRIV_PATH,
+        `--reuid=${identity.uid}`,
+        `--regid=${identity.gid}`,
+        "--clear-groups",
+        "--bounding-set=-all",
+        "--inh-caps=-all",
+        "--ambient-caps=-all",
+        "--",
+        ...shellCommand,
+      ]
+    : options.network === "denied" && dropCapabilitiesInside
     ? [
         SETPRIV_PATH,
         "--bounding-set=-all",
         "--inh-caps=-all",
         "--ambient-caps=-all",
         "--",
-        "/bin/sh",
-        "-c",
-        options.command,
+        ...shellCommand,
       ]
-    : ["/bin/sh", "-c", options.command];
+    : shellCommand;
   args.push(
     "--dir",
     "/tmp/agentship-home",
