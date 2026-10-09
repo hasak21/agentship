@@ -317,11 +317,11 @@ test("privileged publisher caller pins the reusable workflow and narrow permissi
   });
   const uses = [...source.matchAll(/^\s*uses:\s*([^\s#]+)/gm)].map((match) => match[1]);
   assert.deepEqual(uses, [
-    "hasak21/agentship/.github/workflows/agentship-publish-check-reusable.yml@cc4d26eab4519ae0527b32ec23bb1da4b33ff161",
+    "hasak21/agentship/.github/workflows/agentship-publish-check-reusable.yml@7e68cb44d67d66ac8cb00a4b84ae3e3a5994e41b",
   ]);
   assert.match(source, /github\.event\.workflow_run\.pull_requests\[0\]\.number/);
   assert.match(source, /verifier_repository: hasak21\/agentship/);
-  assert.match(source, /verifier_ref: cc4d26eab4519ae0527b32ec23bb1da4b33ff161/);
+  assert.match(source, /verifier_ref: 7e68cb44d67d66ac8cb00a4b84ae3e3a5994e41b/);
   assert.doesNotMatch(source, /pull_request_target/);
 });
 
