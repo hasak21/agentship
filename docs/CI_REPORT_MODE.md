@@ -53,7 +53,7 @@ After downloading `RUN_ID.json` and its bundle from the
 ```bash
 gh attestation verify RUN_ID.json \
   --repo OWNER/REPOSITORY \
-  --signer-workflow OWNER/REPOSITORY/.github/workflows/agentship-publish-check.yml \
+  --signer-workflow hasak21/agentship/.github/workflows/agentship-publish-check-reusable.yml \
   --deny-self-hosted-runners
 ```
 
@@ -101,9 +101,31 @@ does not prove fork-specific token, cache-scope, approval, or secret behavior; a
 PR remains required before claiming that boundary is empirically validated.
 
 The generated caller files and all three trust-root checkouts have unit and disposable
-repository coverage. The reusable workflows have not yet run from a second GitHub
-repository, so cross-repository access, event-context propagation, and attestation identity
-remain deployment checks rather than live-validated claims.
+repository coverage.
+
+The reusable callers were then validated live on 2026-10-09 with temporary same-repository
+pull request [#2](https://github.com/hasak21/agentship/pull/2). The reusable
+[report run](https://github.com/hasak21/agentship/actions/runs/37876801635) checked out the
+immutable verifier, base-owned policy, and exact subject into separate roots. It reviewed
+head `7d4c2fd46ce7da68e89db3f9943480abacd48469` against base
+`2338ff7ace0885235ed0654f40c76d9cd9502b4c`, passed lint and test through denied-network
+bubblewrap workers, skipped the path-filtered build and CLI-package checks, and returned
+PASS with zero findings.
+
+The reusable [publisher run](https://github.com/hasak21/agentship/actions/runs/37876886389)
+validated the artifact, published the neutral `AgentShip evidence report` Check Run on the
+exact PR head, saved validated history, uploaded canonical artifact
+`agentship-attested-evidence-2-37876801635`, and issued GitHub attestation
+[`54174096`](https://github.com/hasak21/agentship/attestations/54174096). Offline bundle
+verification succeeded against the reusable publisher workflow identity and rejected the
+caller identity, confirming that the reusable workflow is the certificate signer while
+the caller remains the attestation build configuration. The temporary PR was closed and
+its branch deleted without merging.
+
+This validates reusable event-context propagation and attestation identity in the
+first-party repository. The reusable workflows have not yet run from a second GitHub
+repository, so cross-repository access remains a deployment check rather than a
+live-validated claim.
 
 `limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. The official policy also sets `limits.maxCheckSeconds: 480`; AgentShip applies that cumulative wall-clock deadline to check preparation and execution, initiates active-check termination at the remaining limit, skips later applicable checks, and emits a blocker on exhaustion. Forced termination has a one-second grace and sandbox cleanup may complete after the deadline; actual elapsed time remains evidence. Every check retains its own timeout and the job retains an outer workflow timeout. The official Ubuntu policy uses `/usr/bin/prlimit` for per-process CPU time, maximum output-file size, and open-file counts; the workflow verifies that backend exists before review. AgentShip can also configure a virtual-address-space bound, but the official Node checks omit it because JavaScript/Wasm runtimes reserve large address ranges unrelated to resident memory. Kernel limits are inherited by child processes but are not aggregated across the process tree. Bubblewrap adds PID/filesystem/network namespaces and a disposable workspace, but does not impose reliable memory, aggregate CPU, process-count, or disk-capacity quotas.
 
