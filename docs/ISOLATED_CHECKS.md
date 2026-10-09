@@ -10,7 +10,9 @@ and `/usr/bin/bwrap` exists.
 - `.git`, `.agentship`, and `node_modules` are not copied.
 - An existing `node_modules` directory is mounted at the expected path read-only.
 - `/usr`, essential shared-library paths, and the active Node distribution are read-only.
-- `/proc`, `/dev`, `/tmp`, and `HOME` are new sandbox-local instances.
+- `/proc`, `/dev`, `/tmp`, and `HOME` are new sandbox-local instances. The hosted
+  privileged backend binds a runner-owned disposable temporary directory so the restored
+  runner UID can write it; the ordinary backend uses tmpfs.
 - The host home and `/etc` are absent in the default denied-network profile.
 - Credential-, token-, cookie-, password-, and secret-shaped environment names are removed; proxy variables survive only when their URLs contain no credentials, path, query, or fragment.
 - PID, IPC, UTS, cgroup, and network namespaces are unshared. The ordinary unprivileged
@@ -49,7 +51,7 @@ skipped check records the requested isolation policy but remains `not_executed`.
 
 Bubblewrap is namespace isolation, not a virtual machine. It shares the host kernel and
 does not currently apply seccomp, cgroup-wide CPU/memory/process accounting, or a strict
-tmpfs/disk-capacity quota. Read-only runtime and dependency files are still visible.
+temporary-storage/disk-capacity quota. Read-only runtime and dependency files are still visible.
 Name-based environment filtering cannot recognize a secret stored under an innocuous
 custom variable name; trusted policies must not request such values for hostile checks.
 Copying occurs before sandbox entry, so the entry/byte bounds protect availability but do

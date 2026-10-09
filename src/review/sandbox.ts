@@ -80,7 +80,13 @@ export async function prepareBubblewrapSandbox(
     await chmod(sandboxDirectory, 0o755);
   }
   const workspace = path.join(sandboxDirectory, "workspace");
+  const writableTmp = privilegedNetworkNamespace
+    ? path.join(sandboxDirectory, "tmp")
+    : undefined;
   try {
+    if (writableTmp) {
+      await mkdir(path.join(writableTmp, "agentship-home"), { recursive: true });
+    }
     await copyWorkspace(absoluteRoot, workspace);
     const nodeModules = path.join(path.resolve(dependenciesRoot), "node_modules");
     const nodeModulesAvailable = await isDirectory(nodeModules);
@@ -94,6 +100,7 @@ export async function prepareBubblewrapSandbox(
       network: check.network === "allowed" ? "allowed" : "denied",
       command: check.run,
       environmentPath,
+      writableTmp,
     } as const;
     const usePrivilegedLauncher = options.network === "denied" && privilegedNetworkNamespace;
     const invocation = usePrivilegedLauncher
@@ -128,6 +135,7 @@ export function buildBubblewrapArguments(options: {
   network: "allowed" | "denied";
   command: string;
   environmentPath?: string;
+  writableTmp?: string;
 }): string[] {
   const args = buildBubblewrapCoreArguments(options, true);
   return options.network === "denied"
@@ -142,6 +150,7 @@ export function buildPrivilegedBubblewrapInvocation(options: {
   network: "denied";
   command: string;
   environmentPath?: string;
+  writableTmp?: string;
 }, uid = process.getuid?.(), gid = process.getgid?.()): { file: string; args: string[] } {
   if (uid === undefined || gid === undefined || uid === 0 || gid === 0) {
     throw new Error("Privileged network namespace setup requires a non-root POSIX runner identity.");
@@ -167,6 +176,7 @@ function buildBubblewrapCoreArguments(options: {
   network: "allowed" | "denied";
   command: string;
   environmentPath?: string;
+  writableTmp?: string;
 }, dropCapabilitiesInside: boolean, removeSudoEnvironment = false, identity?: {
   uid: number;
   gid: number;
@@ -191,7 +201,12 @@ function buildBubblewrapCoreArguments(options: {
   for (const runtimePath of runtimePaths) {
     args.push("--ro-bind", runtimePath, runtimePath);
   }
-  args.push("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
+  args.push("--proc", "/proc", "--dev", "/dev");
+  if (options.writableTmp) {
+    args.push("--bind", options.writableTmp, "/tmp");
+  } else {
+    args.push("--tmpfs", "/tmp");
+  }
   for (const directory of parentDirectories(options.repositoryRoot)) {
     args.push("--dir", directory);
   }
@@ -219,8 +234,7 @@ function buildBubblewrapCoreArguments(options: {
       ]
     : shellCommand;
   args.push(
-    "--dir",
-    "/tmp/agentship-home",
+    ...(options.writableTmp ? [] : ["--dir", "/tmp/agentship-home"]),
     "--dir",
     options.repositoryRoot,
     "--bind",

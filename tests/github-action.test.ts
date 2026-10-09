@@ -34,6 +34,7 @@ test("CI report uses immutable actions and separate trusted and subject checkout
     assert.match(action, /^[^@]+@[a-f0-9]{40}$/);
   }
   assert.match(source, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
+  assert.match(source, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
   assert.match(source, /path: verifier/);
   assert.match(source, /path: subject/);
   assert.equal((source.match(/persist-credentials: false/g) ?? []).length, 2);

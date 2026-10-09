@@ -175,6 +175,9 @@ export async function buildCheckRunPayload(options) {
     throw new Error("AgentShip report base does not match the pull request base.");
   }
   const reviewedCommit = gitObjectId(reportRepository.head, "AgentShip report repository head");
+  if (reviewedCommit !== headSha) {
+    throw new Error("AgentShip report head does not match the pull request head.");
+  }
   if (reportRepository.reviewScope !== "base") {
     throw new Error("AgentShip CI report must use base review scope.");
   }

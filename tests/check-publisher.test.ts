@@ -78,7 +78,7 @@ function report() {
     },
     verdict: "BLOCK",
     repository: {
-      head: MERGE_SHA,
+      head: HEAD_SHA,
       base: BASE_SHA,
       reviewScope: "base",
       diffSha256: "d".repeat(64),
@@ -254,6 +254,18 @@ test("Check Run payload rejects mismatched context and report bindings", async (
     await assert.rejects(
       buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
       /base does not match/
+    );
+    await writeFile(
+      reportPath,
+      JSON.stringify({
+        ...report(),
+        repository: { ...report().repository, head: MERGE_SHA },
+      }),
+      "utf8"
+    );
+    await assert.rejects(
+      buildCheckRunPayload({ eventPath, reportPath, artifactRoot: root }),
+      /head does not match/
     );
   });
 });
