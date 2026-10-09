@@ -4,6 +4,13 @@ AgentShip uses a two-stage report workflow. The first stage is intentionally sec
 and read-only while it executes pull-request code. A separate trusted publisher turns the
 artifact into an always-neutral Check Run without granting merge authority.
 
+The repository's full workflows dogfood this design directly. Other npm repositories can
+run `agentship ci-init --ref <full-commit-sha>` to generate a base-owned policy and two
+minimal caller workflows. Those callers invoke the reusable report and publisher at the
+same immutable AgentShip commit. The reusable report adds a separate target-base checkout
+for policy, so verifier code, target policy, and pull-request subject have distinct trust
+origins.
+
 ## Architecture
 
 1. `pull_request` starts a GitHub-hosted disposable runner with `contents: read`.
@@ -90,6 +97,11 @@ This proves the deployed same-repository path, including the GitHub-hosted isola
 worker, exact-head binding, artifact handoff, publisher, Check Run, and attestation. It
 does not prove fork-specific token, cache-scope, approval, or secret behavior; a live fork
 PR remains required before claiming that boundary is empirically validated.
+
+The generated caller files and all three trust-root checkouts have unit and disposable
+repository coverage. The reusable workflows have not yet run from a second GitHub
+repository, so cross-repository access, event-context propagation, and attestation identity
+remain deployment checks rather than live-validated claims.
 
 `limits.maxChangedFiles` and `limits.maxDiffBytes` are pre-execution input bounds: exceeding either produces a blocker without running repository checks. The official policy also sets `limits.maxCheckSeconds: 480`; AgentShip applies that cumulative wall-clock deadline to check preparation and execution, initiates active-check termination at the remaining limit, skips later applicable checks, and emits a blocker on exhaustion. Forced termination has a one-second grace and sandbox cleanup may complete after the deadline; actual elapsed time remains evidence. Every check retains its own timeout and the job retains an outer workflow timeout. The official Ubuntu policy uses `/usr/bin/prlimit` for per-process CPU time, maximum output-file size, and open-file counts; the workflow verifies that backend exists before review. AgentShip can also configure a virtual-address-space bound, but the official Node checks omit it because JavaScript/Wasm runtimes reserve large address ranges unrelated to resident memory. Kernel limits are inherited by child processes but are not aggregated across the process tree. Bubblewrap adds PID/filesystem/network namespaces and a disposable workspace, but does not impose reliable memory, aggregate CPU, process-count, or disk-capacity quotas.
 

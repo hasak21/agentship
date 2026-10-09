@@ -182,8 +182,18 @@ node /path/to/agentship/dist/agentship.cjs review --task task.md
 
 `init` creates a conservative local `.agentship.yml` from explicit npm lint/test/build
 scripts and never overwrites an existing policy. `doctor` validates the policy and local
-isolation prerequisites while explaining unenforced direct-execution boundaries. This is
-local onboarding, not automatic GitHub workflow installation. See `docs/ONBOARDING.md`.
+isolation prerequisites while explaining unenforced direct-execution boundaries.
+
+To add the neutral two-stage GitHub report flow to an npm project, use an immutable,
+reviewed AgentShip commit:
+
+```bash
+node /path/to/agentship/dist/agentship.cjs ci-init \
+  --ref <full-40-character-agentship-commit-sha>
+```
+
+The installer creates but never overwrites a report-mode CI policy and two minimal caller
+workflows. See `docs/ONBOARDING.md` for the trust model, permissions, and upgrade process.
 
 Task requirements may opt into explicit operator confirmation with a `[confirm]`
 prefix. Supply their stable IDs when reviewing:

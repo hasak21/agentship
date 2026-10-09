@@ -5,6 +5,7 @@ import { measureCalibration } from "../review/calibration";
 import { runIntentBenchmark } from "../review/intent-benchmark";
 import { compileLeaderboard } from "../review/leaderboard";
 import { diagnoseRepository, initializeRepository } from "../review/onboarding";
+import { initializeCi } from "../review/ci-onboarding";
 import {
   recordFindingOutcome,
   type FindingOutcomeStatus,
@@ -80,6 +81,7 @@ function printHelp(): void {
 Usage:
   agentship review [options]
   agentship init
+  agentship ci-init --ref <full-commit-sha> [--repository <owner/repository>]
   agentship doctor
   agentship benchmark --fixtures <path>
   agentship leaderboard --submissions <directory>
@@ -107,6 +109,22 @@ Options:
 
 function writeStdout(output: string): void {
   writeSync(1, output);
+}
+
+function parseCiInitArgs(args: string[]): { repository: string; ref: string } {
+  const values = new Map<string, string>();
+  const supported = new Set(["--repository", "--ref"]);
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (!supported.has(arg)) throw new Error(`Unknown ci-init argument: ${arg}`);
+    const value = args[++index];
+    if (!value) throw new Error(`${arg} requires a value.`);
+    if (values.has(arg)) throw new Error(`${arg} may only be provided once.`);
+    values.set(arg, value);
+  }
+  const ref = values.get("--ref");
+  if (!ref) throw new Error("ci-init requires --ref <full-commit-sha>.");
+  return { repository: values.get("--repository") ?? "hasak21/agentship", ref };
 }
 
 function parseMetricsArgs(args: string[]): {
@@ -255,6 +273,19 @@ async function main() {
     if (args.length !== 1) throw new Error("init does not accept arguments.");
     const initialized = await initializeRepository(process.cwd());
     writeStdout(`AgentShip initialized: ${path.relative(process.cwd(), initialized.configPath) || ".agentship.yml"}\nChecks: ${initialized.checks.join(", ")}\nNext: agentship doctor\n`);
+    return;
+  }
+  if (args[0] === "ci-init") {
+    const options = parseCiInitArgs(args.slice(1));
+    const initialized = await initializeCi(process.cwd(), options.repository, options.ref);
+    writeStdout([
+      "AgentShip CI initialized in report mode.",
+      `Verifier: ${initialized.verifier.repository}@${initialized.verifier.ref}`,
+      `Checks: ${initialized.checks.join(", ")}`,
+      `Created: ${initialized.files.join(", ")}`,
+      "Next: review and commit these trust files, then open a pull request.",
+      "",
+    ].join("\n"));
     return;
   }
   if (args[0] === "doctor") {

@@ -26,6 +26,7 @@ try {
   const requiredHelp = [
     "AgentShip Verify",
     "agentship init",
+    "agentship ci-init",
     "agentship doctor",
     "--task <path>",
     "--baseline <path>",
@@ -63,6 +64,7 @@ try {
   await writeFile(path.join(initializedRepository, "package.json"), JSON.stringify({
     scripts: { test: "node --test" },
   }));
+  await writeFile(path.join(initializedRepository, "package-lock.json"), "{}\n");
   await execFileAsync(process.execPath, [isolatedCli, "init"], {
     cwd: initializedRepository,
     encoding: "utf8",
@@ -74,6 +76,22 @@ try {
   const diagnosis = JSON.parse(doctorRun.stdout);
   if (!diagnosis.ready || diagnosis.checks?.[0]?.name !== "test") {
     throw new Error("Bundled CLI init/doctor output is incomplete.");
+  }
+  const verifierRef = "c".repeat(40);
+  const ciInitialization = await execFileAsync(
+    process.execPath,
+    [isolatedCli, "ci-init", "--repository", "example/agentship", "--ref", verifierRef],
+    { cwd: initializedRepository, encoding: "utf8" }
+  );
+  if (!ciInitialization.stdout.includes(`Verifier: example/agentship@${verifierRef}`)) {
+    throw new Error("Bundled CLI ci-init output is incomplete.");
+  }
+  const reportCaller = await readFile(
+    path.join(initializedRepository, ".github/workflows/agentship-report.yml"),
+    "utf8"
+  );
+  if (!reportCaller.includes(`agentship-report-reusable.yml@${verifierRef}`)) {
+    throw new Error("Bundled CLI ci-init did not pin its reusable report workflow.");
   }
   const sourceReport = {
     schemaVersion: 1,
@@ -289,7 +307,7 @@ try {
   if (!verifiedSignature.stdout.includes("AgentShip signature: VALID")) {
     throw new Error("Bundled CLI did not verify detached signature evidence.");
   }
-  console.log("Bundled CLI init, doctor, review, benchmark, leaderboard, outcome, metrics, and signature commands run outside the repository without node_modules.");
+  console.log("Bundled CLI init, ci-init, doctor, review, benchmark, leaderboard, outcome, metrics, and signature commands run outside the repository without node_modules.");
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
 }

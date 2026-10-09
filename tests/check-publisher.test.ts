@@ -349,3 +349,30 @@ test("privileged publisher uses only trusted code and immutable actions", async 
   assert.doesNotMatch(source, /pull_request_target/);
   assert.doesNotMatch(source, /checkout[^\n]*head_sha/);
 });
+
+test("reusable publisher loads only the pinned verifier and bounded artifact data", async () => {
+  const workflowPath = new URL(
+    "../.github/workflows/agentship-publish-check-reusable.yml",
+    import.meta.url
+  );
+  const source = await readFile(workflowPath, "utf8");
+  const workflow = parse(source) as Record<string, unknown>;
+  assert.ok(workflow.on && typeof workflow.on === "object");
+  assert.ok("workflow_call" in (workflow.on as Record<string, unknown>));
+  assert.deepEqual(workflow.permissions, {
+    actions: "read",
+    attestations: "write",
+    checks: "write",
+    contents: "read",
+    "id-token": "write",
+  });
+  assert.match(source, /repository: \$\{\{ inputs\.verifier_repository \}\}/);
+  assert.match(source, /ref: \$\{\{ inputs\.verifier_ref \}\}/);
+  assert.match(source, /path: publisher/);
+  assert.match(source, /scripts\/build-check-run\.mjs/);
+  assert.doesNotMatch(source, /pull_request_target/);
+  assert.doesNotMatch(source, /checkout[^\n]*head_sha/);
+  const uses = [...source.matchAll(/^\s*uses:\s*([^\s#]+)/gm)].map((match) => match[1]);
+  assert.equal(uses.length, 6);
+  for (const action of uses) assert.match(action, /^[^@]+@[a-f0-9]{40}$/);
+});

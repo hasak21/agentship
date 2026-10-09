@@ -7,6 +7,10 @@ const workflowUrl = new URL(
   "../.github/workflows/agentship-report.yml",
   import.meta.url
 );
+const reusableWorkflowUrl = new URL(
+  "../.github/workflows/agentship-report-reusable.yml",
+  import.meta.url
+);
 const ciPolicyUrl = new URL("../.agentship.ci.yml", import.meta.url);
 const installerUrl = new URL("../scripts/install-ci-bubblewrap.sh", import.meta.url);
 
@@ -53,6 +57,29 @@ test("CI report uses immutable actions and separate trusted and subject checkout
   assert.doesNotMatch(source, /actions\/cache\/save@/);
   assert.match(source, /agentship-history-v1-pr-/);
   assert.match(source, /--history \.agentship\/history/);
+});
+
+test("reusable CI report separates verifier, base policy, and subject trust roots", async () => {
+  const source = await readFile(reusableWorkflowUrl, "utf8");
+  const workflow = parse(source) as Record<string, unknown>;
+  assert.ok(workflow.on && typeof workflow.on === "object");
+  assert.ok("workflow_call" in (workflow.on as Record<string, unknown>));
+  assert.deepEqual(workflow.permissions, { contents: "read" });
+  assert.match(source, /repository: \$\{\{ inputs\.verifier_repository \}\}/);
+  assert.match(source, /ref: \$\{\{ inputs\.verifier_ref \}\}/);
+  assert.match(source, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
+  assert.match(source, /path: policy/);
+  assert.match(source, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+  assert.match(source, /path: subject/);
+  assert.match(source, /--config \.\.\/policy\/\.agentship\.ci\.yml/);
+  assert.equal((source.match(/persist-credentials: false/g) ?? []).length, 3);
+  assert.doesNotMatch(source, /\bsecrets\./);
+  assert.doesNotMatch(source, /pull_request_target/);
+  const uses = [...source.matchAll(/^\s*uses:\s*([^\s#]+)/gm)].map(
+    (match) => match[1]
+  );
+  assert.equal(uses.length, 6);
+  for (const action of uses) assert.match(action, /^[^@]+@[a-f0-9]{40}$/);
 });
 
 test("CI policy isolates checks without claiming a Node memory limit", async () => {
