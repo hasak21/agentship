@@ -463,6 +463,20 @@ still exists, or human dispositions conflict. Metrics retain sample sizes and re
 `null` for precision without an adjudicated denominator. See `docs/CALIBRATION.md` for
 formulas and provenance limits.
 
+For an audited set of individual missed findings, use `agentship missed` to bind each
+label to a report, then aggregate those labels separately:
+
+```bash
+node dist/agentship.cjs outcome-metrics \
+  --outcomes .agentship/outcomes \
+  --reports .agentship/history \
+  --missed-findings .agentship/missed-findings
+```
+
+This reports recall from accepted/fixed emitted findings and supplied missed labels.
+Human labels are not reproduced facts or representative by default. See
+`docs/OUTCOMES.md` for the label command and its limits.
+
 Run the checked-in omission calibration corpus, or supply another compatible corpus:
 
 ```bash

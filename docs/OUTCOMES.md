@@ -39,6 +39,26 @@ not prove semantic correctness. Keep outcome directories in a trusted artifact s
 they are used for organizational metrics, because local records have no provenance
 signature yet.
 
+## Missed-finding labels
+
+An independent audit can label a finding that the bound report did not emit:
+
+```bash
+node dist/agentship.cjs missed \
+  --report .agentship/reviews/review.json \
+  --finding-id audit-authorization-gap \
+  --finding-kind missing_security_validation \
+  --severity blocker \
+  --title "Authorization validation was missed" \
+  --actor auditor@example.com \
+  --reason "Confirmed by an independent patch audit."
+```
+
+The command rejects an identity already present in the report and writes an immutable,
+hash-bound label under `.agentship/missed-findings`. This proves only that a human made the
+label against those exact report bytes. Actor identity, independence, correctness, and
+sampling representativeness are not authenticated by schema version 1.
+
 ## Calibration metrics
 
 Combine outcomes with a complete review denominator and an independently labeled omission
@@ -57,3 +77,19 @@ outcomes. Outcome events alone cannot measure recall, so the command executes th
 corpus and binds its hash and case count. Source and resolution report bytes must occur in
 the report set; duplicate lifecycle events are grouped, while conflicting confirmed and
 rejected dispositions fail closed. See `CALIBRATION.md` for formulas and limitations.
+
+To aggregate human missed-finding labels against the same review corpus, run:
+
+```bash
+node dist/agentship.cjs outcome-metrics \
+  --outcomes .agentship/outcomes \
+  --reports .agentship/history \
+  --missed-findings .agentship/missed-findings
+```
+
+This separate report includes disposition precision and coverage, rejected blocker
+share, median/p90 triage duration, false-blocked reviews per 100 reports, and recall
+from accepted/fixed findings and supplied missed labels. Each missed label is checked
+against exact report bytes in the corpus. The result represents the supplied sample;
+population recall requires a representative review and audit set. Duplicate dispositions
+and missed labels for the same source-report finding fail closed.

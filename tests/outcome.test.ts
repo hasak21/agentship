@@ -4,7 +4,11 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { measureFindingOutcomes, recordFindingOutcome } from "../src/review/outcome";
+import {
+  measureFindingOutcomes,
+  recordFindingOutcome,
+  recordMissedFinding,
+} from "../src/review/outcome";
 
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
@@ -230,6 +234,102 @@ test("outcome inputs and outputs must stay inside the repository", async () => {
     await assert.rejects(
       recordFindingOutcome({ ...common, outputDirectory: "../outcomes" }),
       /within the repository/
+    );
+  });
+});
+
+test("missed-finding labels bind a report and require an absent finding", async () => {
+  await withFixture(async ({ root, sourcePath }) => {
+    const result = await recordMissedFinding(
+      {
+        repositoryRoot: root,
+        reportPath: sourcePath,
+        findingId: "missed-security-check",
+        findingKind: "missing_security_validation",
+        severity: "blocker",
+        title: "Security validation was omitted",
+        actor: "maintainer@example.com",
+        reason: "Confirmed by an independent patch audit.",
+      },
+      new Date("2026-09-24T02:00:00.000Z"),
+      "missed-1"
+    );
+    assert.equal(result.label.evidence, "human_missed_finding_label");
+    assert.match(result.outputPath, /^\.agentship\/missed-findings\//);
+    await assert.rejects(
+      recordMissedFinding({
+        repositoryRoot: root,
+        reportPath: sourcePath,
+        findingId: target.id,
+        findingKind: target.kind,
+        severity: "blocker",
+        title: target.title,
+        actor: "maintainer@example.com",
+        reason: "This was actually emitted.",
+      }),
+      /already present/
+    );
+  });
+});
+
+test("outcome metrics report recall only with corpus-bound missed labels", async () => {
+  await withFixture(async ({ root, sourcePath }) => {
+    await recordFindingOutcome(
+      {
+        repositoryRoot: root,
+        reportPath: sourcePath,
+        findingId: target.id,
+        findingKind: target.kind,
+        status: "accepted",
+        actor: "maintainer@example.com",
+        reason: "Valid finding.",
+      },
+      new Date("2026-09-24T02:00:00.000Z"),
+      "valid-1"
+    );
+    const missed = await recordMissedFinding(
+      {
+        repositoryRoot: root,
+        reportPath: sourcePath,
+        findingId: "missed-1",
+        findingKind: "missing_test",
+        severity: "warning",
+        title: "A required test was missed",
+        actor: "auditor@example.com",
+        reason: "Independent audit label.",
+      },
+      new Date("2026-09-24T03:00:00.000Z"),
+      "recall-label"
+    );
+    await assert.rejects(
+      measureFindingOutcomes(root, ".agentship/outcomes", undefined, ".agentship/missed-findings"),
+      /require --reports/
+    );
+    const metrics = await measureFindingOutcomes(
+      root,
+      ".agentship/outcomes",
+      ".agentship/reviews",
+      ".agentship/missed-findings"
+    );
+    assert.deepEqual(metrics.recall, {
+      labelsDirectory: ".agentship/missed-findings",
+      validEmittedFindings: 1,
+      missedFindings: 1,
+      recall: 0.5,
+    });
+    await writeFile(
+      path.join(root, ".agentship", "missed-findings", "duplicate.json"),
+      await readFile(path.join(root, missed.outputPath), "utf8"),
+      "utf8"
+    );
+    await assert.rejects(
+      measureFindingOutcomes(
+        root,
+        ".agentship/outcomes",
+        ".agentship/reviews",
+        ".agentship/missed-findings"
+      ),
+      /duplicates a label/
     );
   });
 });

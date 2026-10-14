@@ -92,6 +92,7 @@ Exit criterion: a malicious pull request cannot escape the runner, obtain secret
 - [x] Track accepted, rejected, fixed, and overridden findings with immutable, report-hash-bound outcome events and explicit evidence semantics.
 - [x] Measure disposition/evidence-backed precision, corpus recall, false blocks per review, override outcomes, and median triage time with hash-bound sample sets.
 - [~] Publish a reproducible coding-agent trust leaderboard (bounded hash-bound submission format, comparable-suite validation, deterministic ranking, and standalone compiler delivered; independently collected representative submissions and hosted publication pending).
+- [x] Add report-bound human missed-finding labels and optional recall aggregation for audited review sets; representative external labels remain pending.
 
 Exit criterion: product and model-comparison claims are supported by reproducible measurements.
 

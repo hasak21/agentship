@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "agentship-cli-"));
 const isolatedCli = path.join(temporaryDirectory, "agentship.cjs");
+const isolatedCliCommand = "./agentship.cjs";
 const intentFixture = path.resolve("fixtures/intent/executable-patch-corpus.json");
 
 async function sha256File(filePath) {
@@ -19,7 +20,7 @@ async function sha256File(filePath) {
 
 try {
   await copyFile(path.resolve("dist/agentship.cjs"), isolatedCli);
-  const { stdout } = await execFileAsync(process.execPath, [isolatedCli, "review", "--help"], {
+  const { stdout } = await execFileAsync(process.execPath, [isolatedCliCommand, "review", "--help"], {
     cwd: temporaryDirectory,
     encoding: "utf8",
   });
@@ -33,6 +34,8 @@ try {
     "--override <path>",
     "--history <dir>",
     "agentship outcome",
+    "agentship missed",
+    "agentship outcome-metrics",
     "agentship metrics",
     "agentship leaderboard",
     "agentship verify-signature",
@@ -47,7 +50,7 @@ try {
   }
   const benchmark = await execFileAsync(
     process.execPath,
-    [isolatedCli, "benchmark", "--fixtures", intentFixture],
+    [isolatedCliCommand, "benchmark", "--fixtures", intentFixture],
     { cwd: temporaryDirectory, encoding: "utf8" }
   );
   const report = JSON.parse(benchmark.stdout);
@@ -119,7 +122,7 @@ try {
   const outcome = await execFileAsync(
     process.execPath,
     [
-      isolatedCli,
+      isolatedCliCommand,
       "outcome",
       "--report",
       "reports/report.json",
@@ -144,18 +147,56 @@ try {
   if (record.status !== "accepted" || record.finding.id !== "standalone-finding") {
     throw new Error("Bundled CLI outcome record is incomplete.");
   }
-  await copyFile(intentFixture, path.join(temporaryDirectory, "corpus.json"));
-  const calibration = await execFileAsync(
+  const missed = await execFileAsync(
     process.execPath,
     [
-      isolatedCli,
-      "metrics",
+      isolatedCliCommand,
+      "missed",
+      "--report", "reports/report.json",
+      "--finding-id", "standalone-missed",
+      "--finding-kind", "missing_test",
+      "--severity", "warning",
+      "--title", "Required test was missed",
+      "--actor", "cli-verifier",
+      "--reason", "Independent CLI verification label.",
+    ],
+    { cwd: temporaryDirectory, encoding: "utf8" }
+  );
+  if (!missed.stdout.includes("AgentShip missed finding: recorded")) {
+    throw new Error("Bundled CLI missed-finding output is incomplete.");
+  }
+  const measured = await execFileAsync(
+    process.execPath,
+    [
+      isolatedCliCommand,
+      "outcome-metrics",
       "--outcomes",
       ".agentship/outcomes",
       "--reports",
       "reports",
-      "--benchmark-fixtures",
-      "corpus.json",
+      "--missed-findings",
+      ".agentship/missed-findings",
+    ],
+    { cwd: temporaryDirectory, encoding: "utf8" }
+  );
+  const outcomeMetrics = JSON.parse(measured.stdout);
+  if (
+    outcomeMetrics.outcomes !== 1 ||
+    outcomeMetrics.dispositions.precision !== 1 ||
+    outcomeMetrics.reviewCorpus.falseBlocksPer100Reviews !== 0 ||
+    outcomeMetrics.recall.recall !== 0.5
+  ) {
+    throw new Error("Bundled CLI outcome metrics are incomplete.");
+  }
+  await copyFile(intentFixture, path.join(temporaryDirectory, "corpus.json"));
+  const calibration = await execFileAsync(
+    process.execPath,
+    [
+      isolatedCliCommand,
+      "metrics",
+      "--outcomes", ".agentship/outcomes",
+      "--reports", "reports",
+      "--benchmark-fixtures", "corpus.json",
     ],
     { cwd: temporaryDirectory, encoding: "utf8" }
   );
@@ -168,7 +209,6 @@ try {
   ) {
     throw new Error("Bundled CLI calibration metrics are incomplete.");
   }
-
   const leaderboardDirectory = path.join(temporaryDirectory, "leaderboard");
   await mkdir(leaderboardDirectory);
   const leaderboardTaskSha = createHash("sha256").update("task").digest("hex");
@@ -307,7 +347,7 @@ try {
   if (!verifiedSignature.stdout.includes("AgentShip signature: VALID")) {
     throw new Error("Bundled CLI did not verify detached signature evidence.");
   }
-  console.log("Bundled CLI init, ci-init, doctor, review, benchmark, leaderboard, outcome, metrics, and signature commands run outside the repository without node_modules.");
+  console.log("Bundled CLI init, ci-init, doctor, review, benchmark, leaderboard, outcome, missed, outcome-metrics, metrics, and signature commands run outside the repository without node_modules.");
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
 }

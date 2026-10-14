@@ -221,6 +221,8 @@ Finding outcome events bind an exact finding identity to the SHA-256 and executi
 
 Calibration recomputes metrics from three bounded inputs: a complete review-report denominator, outcome events whose source and resolution bytes must occur in that denominator, and a freshly executed intent benchmark. Exact source-report and finding identities group lifecycle events; conflicting confirmed/rejected dispositions fail closed. Aggregate directory hashes, corpus hash, formulas, and sample sizes make the result reproducible. This does not authenticate actors, prove that the supplied report directory is complete, or make a synthetic corpus representative. Trusted append-only collection and representative external corpora remain operator and M3 responsibilities.
 
+Missed-finding labels separately bind a human-identified omission to exact report bytes and are rejected if that identity was emitted. The separate `outcome-metrics` command calculates recall only with an explicitly supplied, hash-verified review corpus, using accepted/fixed findings as true positives and missed labels as false negatives. The tool does not authenticate labelers, establish their independence, reproduce the claimed defect, or prove that the labeled corpus is representative; those remain benchmark-governance responsibilities.
+
 Leaderboard compilation accepts bounded manifests that bind a declared agent/model and
 suite to exact task and report hashes. It rejects incomparable task sets and ranks without
 timestamps or model calls. This establishes reproducible aggregation, not agent identity,

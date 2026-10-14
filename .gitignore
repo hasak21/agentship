@@ -16,6 +16,7 @@
 /.agentship/overrides/
 /.agentship/history/
 /.agentship/outcomes/
+/.agentship/missed-findings/
 
 # next.js
 /.next/
