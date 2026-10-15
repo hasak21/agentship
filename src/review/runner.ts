@@ -10,6 +10,7 @@ import type { CheckEvidence, ReviewCheckConfig } from "./types";
 
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const TERMINATION_GRACE_MS = 1_000;
+const STORAGE_SAMPLE_INTERVAL_MS = 250;
 const DEFAULT_ENVIRONMENT = [
   "PATH",
   "HOME",
@@ -65,8 +66,14 @@ export async function runCheck(
   );
   const environment = buildCheckEnvironment(check);
   const secrets = collectSecrets(environment);
-  let invocation: CheckInvocation;
+  let invocation: CheckInvocation | undefined;
   let sandbox: PreparedSandbox | undefined;
+  const workspaceLimitBytes = check.resources?.maxWorkspaceMiB === undefined
+    ? undefined
+    : mebibytes(check.resources.maxWorkspaceMiB);
+  let maxObservedWorkspaceBytes = 0;
+  let storageExceeded = false;
+  let storageAccountingFailed = false;
   try {
     if (check.isolation === "bubblewrap") {
       sandbox = await prepareBubblewrapSandbox(
@@ -84,6 +91,25 @@ export async function runCheck(
       existsSync(PRLIMIT_PATH),
       sandbox
     );
+    if (workspaceLimitBytes !== undefined) {
+      if (!sandbox) {
+        throw new Error("Configured maxWorkspaceMiB requires prepared bubblewrap isolation.");
+      }
+      let initial;
+      try {
+        initial = await sandbox.measureWritableStorage();
+      } catch (error) {
+        storageAccountingFailed = true;
+        throw error;
+      }
+      maxObservedWorkspaceBytes = initial.bytes;
+      if (initial.bytes > workspaceLimitBytes) {
+        storageExceeded = true;
+        throw new Error(
+          `Bubblewrap writable storage starts above its ${workspaceLimitBytes}-byte limit (${initial.bytes} bytes observed).`
+        );
+      }
+    }
     if (options.maxTimeoutMs !== undefined) {
       const remainingMs = options.maxTimeoutMs - (performance.now() - budgetStarted);
       if (remainingMs <= 0) {
@@ -105,7 +131,20 @@ export async function runCheck(
           stdout: "",
           stderr: "Aggregate check wall-clock budget expired during check preparation.",
           outputTruncated: false,
-          execution: invocation.execution,
+          execution: {
+            ...invocation.execution,
+            ...(workspaceLimitBytes === undefined
+              ? {}
+              : {
+                  writableStorage: {
+                    enforcement: "sampled-logical-bytes" as const,
+                    limitBytes: workspaceLimitBytes,
+                    maxObservedBytes: maxObservedWorkspaceBytes,
+                    exceeded: storageExceeded,
+                    accountingFailed: storageAccountingFailed,
+                  },
+                }),
+          },
         };
       }
       timeoutMs = Math.min(configuredTimeoutMs, remainingMs);
@@ -130,12 +169,29 @@ export async function runCheck(
       stdout: "",
       stderr: error instanceof Error ? error.message : String(error),
       outputTruncated: false,
-      execution: {
-        backend: "unsupported",
-        ...(check.resources ? { resourceLimits: check.resources } : {}),
-      },
+      execution: invocation
+        ? {
+            ...invocation.execution,
+            ...(workspaceLimitBytes === undefined
+              ? {}
+              : {
+                  writableStorage: {
+                    enforcement: "sampled-logical-bytes",
+                    limitBytes: workspaceLimitBytes,
+                    maxObservedBytes: maxObservedWorkspaceBytes,
+                    exceeded: storageExceeded,
+                    accountingFailed: storageAccountingFailed,
+                  },
+                }),
+          }
+        : {
+            backend: "unsupported",
+            ...(check.resources ? { resourceLimits: check.resources } : {}),
+          },
     };
   }
+
+  if (!invocation) throw new Error("Check invocation was not prepared.");
 
   return new Promise((resolve, reject) => {
     const child = spawn(invocation.file, invocation.args, {
@@ -151,6 +207,10 @@ export async function runCheck(
     let stderr = "";
     let outputTruncated = false;
     let timedOut = false;
+    let childClosed = false;
+    let storageFailed = false;
+    let storageFailureMessage: string | undefined;
+    let storageSample: Promise<void> | undefined;
     let cleanupPromise: Promise<void> | undefined;
     const cleanup = () => (cleanupPromise ??= sandbox?.cleanup() ?? Promise.resolve());
 
@@ -172,8 +232,50 @@ export async function runCheck(
       stderr = append(stderr, chunk);
     });
     let forceKillTimer: NodeJS.Timeout | undefined;
-    child.once("error", (error) => {
+    let storageTimer: NodeJS.Timeout | undefined;
+    const stopForStorage = (message: string, reason: "exceeded" | "accounting") => {
+      if (storageFailed) return;
+      storageFailed = true;
+      storageExceeded = reason === "exceeded";
+      storageAccountingFailed = reason === "accounting";
+      storageFailureMessage = message;
       clearTimeout(timer);
+      if (!childClosed) {
+        terminateProcessTree(child.pid, "SIGTERM");
+        forceKillTimer = setTimeout(
+          () => terminateProcessTree(child.pid, "SIGKILL"),
+          TERMINATION_GRACE_MS
+        );
+      }
+    };
+    const measureStorage = async () => {
+      if (!sandbox || workspaceLimitBytes === undefined) return;
+      try {
+        const observed = await sandbox.measureWritableStorage();
+        maxObservedWorkspaceBytes = Math.max(maxObservedWorkspaceBytes, observed.bytes);
+        if (observed.bytes > workspaceLimitBytes) {
+          stopForStorage(
+            `Bubblewrap writable storage exceeded its ${workspaceLimitBytes}-byte limit (${observed.bytes} bytes observed).`,
+            "exceeded"
+          );
+        }
+      } catch (error) {
+        stopForStorage(
+          `Bubblewrap writable storage could not be measured: ${error instanceof Error ? error.message : String(error)}`,
+          "accounting"
+        );
+      }
+    };
+    const requestStorageSample = () => {
+      if (storageSample) return;
+      storageSample = measureStorage().finally(() => {
+        storageSample = undefined;
+      });
+    };
+    child.once("error", (error) => {
+      childClosed = true;
+      clearTimeout(timer);
+      if (storageTimer) clearInterval(storageTimer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       void cleanup().then(() => reject(error), reject);
     });
@@ -186,10 +288,22 @@ export async function runCheck(
         TERMINATION_GRACE_MS
       );
     }, timeoutMs);
+    if (workspaceLimitBytes !== undefined) {
+      storageTimer = setInterval(requestStorageSample, STORAGE_SAMPLE_INTERVAL_MS);
+    }
 
     child.once("close", async (exitCode, signal) => {
+      childClosed = true;
       clearTimeout(timer);
+      if (storageTimer) clearInterval(storageTimer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
+      await storageSample;
+      if (!storageFailed && workspaceLimitBytes !== undefined) {
+        await measureStorage();
+      }
+      if (storageFailureMessage) {
+        stderr = append(stderr, Buffer.from(`\n${storageFailureMessage}`));
+      }
       const finished = Date.now();
       let cleanupFailed = false;
       try {
@@ -210,7 +324,11 @@ export async function runCheck(
         network: check.network ?? "unspecified",
         environment: Object.keys(environment).sort(),
         status:
-          timedOut ? "timed_out" : exitCode === 0 && !cleanupFailed ? "passed" : "failed",
+          timedOut
+            ? "timed_out"
+            : exitCode === 0 && !cleanupFailed && !storageFailed
+              ? "passed"
+              : "failed",
         exitCode,
         signal,
         startedAt,
@@ -220,7 +338,20 @@ export async function runCheck(
         stdout: redactSecrets(stdout, secrets),
         stderr: redactSecrets(stderr, secrets),
         outputTruncated,
-        execution: invocation.execution,
+        execution: {
+          ...invocation.execution,
+          ...(workspaceLimitBytes === undefined
+            ? {}
+            : {
+                writableStorage: {
+                  enforcement: "sampled-logical-bytes" as const,
+                  limitBytes: workspaceLimitBytes,
+                  maxObservedBytes: maxObservedWorkspaceBytes,
+                  exceeded: storageExceeded,
+                  accountingFailed: storageAccountingFailed,
+                },
+              }),
+        },
       });
     });
   });
@@ -251,12 +382,13 @@ export function buildCheckInvocation(
         execution: { backend: "direct" },
       };
   if (!check.resources) return base;
+  const args = resourceLimitArguments(check);
+  if (args.length === 0) return base;
   if (platform !== "linux" || !prlimitAvailable) {
     throw new Error(
       "Configured check resource limits require Linux with /usr/bin/prlimit; the check was not executed."
     );
   }
-  const args = resourceLimitArguments(check);
   args.push(
     "--",
     sandbox ? base.file : "/bin/sh",
@@ -275,9 +407,14 @@ export function buildCheckInvocation(
 
 function resourceLimitArguments(check: ReviewCheckConfig): string[] {
   if (!check.resources) return [];
-  const args = ["--core=0:0"];
-  const exact = (name: string, value: number) =>
+  const args: string[] = [];
+  const ensureCoreLimit = () => {
+    if (args.length === 0) args.push("--core=0:0");
+  };
+  const exact = (name: string, value: number) => {
+    ensureCoreLimit();
     args.push(`--${name}=${value}:${value}`);
+  };
   if (check.resources.cpuSeconds !== undefined) {
     exact("cpu", check.resources.cpuSeconds);
   }

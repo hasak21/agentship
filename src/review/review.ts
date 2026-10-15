@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFile, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { compareWithBaseline, loadBaseline } from "./baseline";
@@ -22,6 +22,7 @@ import {
   applyRequirementConfirmations,
   parseTaskOptions,
   parseTaskRequirements,
+  readBoundedTaskDocument,
 } from "./task-parser";
 import {
   mapRequirementsToChangedFiles,
@@ -515,6 +516,36 @@ export function buildFindings(
         },
       }];
     }
+    if (check.execution?.writableStorage?.exceeded) {
+      return [{
+        id: `check-resource-${index + 1}`,
+        severity: "blocker",
+        kind: "check_resource_limit_exceeded",
+        title: `Check '${check.name}' exceeded its writable-storage limit`,
+        evidence: {
+          check: check.name,
+          command: check.command,
+          budget: "workspace_bytes",
+          observed: check.execution.writableStorage.maxObservedBytes,
+          limit: check.execution.writableStorage.limitBytes,
+        },
+      }];
+    }
+    if (check.execution?.writableStorage?.accountingFailed) {
+      return [{
+        id: `check-resource-accounting-${index + 1}`,
+        severity: "blocker",
+        kind: "check_resource_accounting_failed",
+        title: `Check '${check.name}' lost writable-storage accounting`,
+        evidence: {
+          check: check.name,
+          command: check.command,
+          budget: "workspace_bytes",
+          observed: check.execution.writableStorage.maxObservedBytes,
+          limit: check.execution.writableStorage.limitBytes,
+        },
+      }];
+    }
     if (check.status === "passed" || check.status === "skipped") return [];
     const required = check.required;
     const kind = required
@@ -928,7 +959,7 @@ function sha256(value: string | Buffer): string {
 
 async function loadTask(repositoryRoot: string, taskPath: string) {
   const absolutePath = path.resolve(repositoryRoot, taskPath);
-  const source = await readFile(absolutePath);
+  const source = await readBoundedTaskDocument(absolutePath);
   const markdown = source.toString("utf8");
   return {
     path: path.relative(repositoryRoot, absolutePath),
@@ -956,7 +987,10 @@ export function renderMarkdown(report: ReviewReport): string {
         const isolation = check.execution?.isolation
           ? `workspace=${check.execution.isolation.workspace}, filesystem=${check.execution.isolation.hostFilesystem}, network=${check.execution.isolation.network}`
           : "";
-        const executionDetails = [limits, isolation].filter(Boolean).join("; ");
+        const storage = check.execution?.writableStorage
+          ? `storage=${check.execution.writableStorage.maxObservedBytes}/${check.execution.writableStorage.limitBytes} logical bytes, exceeded=${check.execution.writableStorage.exceeded ? "yes" : "no"}, accounting-failed=${check.execution.writableStorage.accountingFailed ? "yes" : "no"}`
+          : "";
+        const executionDetails = [limits, isolation, storage].filter(Boolean).join("; ");
         return `| ${escapeMarkdown(check.name)} | ${check.status} | ${check.exitCode ?? "—"} | ${check.durationMs} ms | ${check.execution?.backend ?? "legacy"}${executionDetails ? ` (${executionDetails})` : ""} | ${
           check.skipReason
             ? `skipped: ${escapeMarkdown(check.skipReason)}`

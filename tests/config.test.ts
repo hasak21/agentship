@@ -1,9 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig } from "../src/review/config";
+import {
+  loadConfig,
+  MAX_CONFIG_BYTES,
+  MAX_CONFIG_CHECKS,
+} from "../src/review/config";
+
+const adversarialPolicyCases = JSON.parse(
+  readFileSync(
+    new URL(
+      "../fixtures/adversarial/policy-input-cases.json",
+      import.meta.url
+    ),
+    "utf8"
+  )
+) as Array<{ id: string; expected: string; source: string }>;
 
 async function withConfig(source: string, run: (directory: string) => Promise<void>) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-config-"));
@@ -14,6 +29,38 @@ async function withConfig(source: string, run: (directory: string) => Promise<vo
     await rm(directory, { recursive: true, force: true });
   }
 }
+
+test("adversarial policy corpus fails closed", async () => {
+  for (const fixture of adversarialPolicyCases) {
+    await withConfig(fixture.source, async (directory) => {
+      await assert.rejects(
+        loadConfig(directory),
+        (error: unknown) =>
+          error instanceof Error && error.message.includes(fixture.expected),
+        fixture.id
+      );
+    });
+  }
+});
+
+test("configuration file input is byte bounded before YAML parsing", async () => {
+  await withConfig("x".repeat(MAX_CONFIG_BYTES + 1), async (directory) => {
+    await assert.rejects(loadConfig(directory), /at most 262144 bytes/);
+  });
+});
+
+test("configuration bounds the number of executable checks", async () => {
+  const checks = Array.from(
+    { length: MAX_CONFIG_CHECKS + 1 },
+    (_, index) => `  - name: check-${index}\n    run: echo ${index}`
+  ).join("\n");
+  await withConfig(
+    `version: 1\nmode: report\nchecks:\n${checks}\n`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /at most 128 checks/);
+    }
+  );
+});
 
 test("configuration accepts exact and trailing-directory protected paths", async () => {
   await withConfig(
@@ -112,6 +159,7 @@ checks:
       memoryMiB: 2048
       maxFileSizeMiB: 64
       maxOpenFiles: 1024
+      maxWorkspaceMiB: 4096
     whenChanged:
       - src/review/**
       - package.json
@@ -132,8 +180,25 @@ checks:
         memoryMiB: 2048,
         maxFileSizeMiB: 64,
         maxOpenFiles: 1024,
+        maxWorkspaceMiB: 4096,
       });
       assert.equal(config.checks[0]?.isolation, "bubblewrap");
+    }
+  );
+});
+
+test("workspace storage limits require bubblewrap isolation", async () => {
+  await withConfig(
+    `version: 1
+mode: report
+checks:
+  - name: review
+    run: npm test
+    resources:
+      maxWorkspaceMiB: 512
+`,
+    async (directory) => {
+      await assert.rejects(loadConfig(directory), /maxWorkspaceMiB requires isolation: bubblewrap/);
     }
   );
 });

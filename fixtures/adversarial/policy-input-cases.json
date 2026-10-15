@@ -1,0 +1,47 @@
+[
+  {
+    "id": "duplicate-check-identity",
+    "expected": "check names must be unique",
+    "source": "version: 1\nmode: report\nchecks:\n  - name: test\n    run: npm test\n  - name: test\n    run: echo forged\n"
+  },
+  {
+    "id": "bidi-check-name",
+    "expected": "name must not contain control characters",
+    "source": "version: 1\nmode: report\nchecks:\n  - name: 'test‮PASS'\n    run: npm test\n"
+  },
+  {
+    "id": "environment-assignment",
+    "expected": "valid variable names",
+    "source": "version: 1\nmode: report\nchecks:\n  - name: test\n    run: npm test\n    environment: ['SAFE=value']\n"
+  },
+  {
+    "id": "string-required-flag",
+    "expected": "required must be boolean",
+    "source": "version: 1\nmode: report\nchecks:\n  - name: test\n    run: npm test\n    required: 'false'\n"
+  },
+  {
+    "id": "unknown-network-mode",
+    "expected": "network must be 'allowed' or 'denied'",
+    "source": "version: 1\nmode: report\nchecks:\n  - name: test\n    run: npm test\n    network: inherit-host\n"
+  },
+  {
+    "id": "control-character-path",
+    "expected": "must be a non-empty string",
+    "source": "version: 1\nmode: report\nchecks:\n  - name: test\n    run: npm test\n    whenChanged: ['src/‮safe/**']\n"
+  },
+  {
+    "id": "padded-check-identity",
+    "expected": "must not have surrounding whitespace",
+    "source": "version: 1\nmode: report\nchecks:\n  - name: ' test '\n    run: npm test\n"
+  },
+  {
+    "id": "duplicate-change-selector",
+    "expected": "whenChanged must not contain duplicates",
+    "source": "version: 1\nmode: report\nchecks:\n  - name: test\n    run: npm test\n    whenChanged: ['src/**', 'src/**']\n"
+  },
+  {
+    "id": "array-policy-type-confusion",
+    "expected": "policy must be an object",
+    "source": "version: 1\nmode: report\nchecks:\n  - name: test\n    run: npm test\npolicy: []\n"
+  }
+]

@@ -76,6 +76,7 @@ test("CI policy isolates checks without claiming a Node memory limit", async () 
     assert.ok(check.resources?.cpuSeconds);
     assert.ok(check.resources?.maxFileSizeMiB);
     assert.ok(check.resources?.maxOpenFiles);
+    assert.equal(check.resources?.maxWorkspaceMiB, 1024);
     assert.equal(check.resources?.memoryMiB, undefined);
     assert.equal(check.isolation, "bubblewrap");
     assert.equal(check.network, "denied");

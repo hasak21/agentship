@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process";
 import { constants, existsSync } from "node:fs";
+import type { Dirent, Stats } from "node:fs";
 import {
   chmod,
   copyFile,
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readlink,
   realpath,
   rm,
@@ -42,6 +44,7 @@ export interface PreparedSandbox {
   file: string;
   args: string[];
   execution: NonNullable<CheckEvidence["execution"]>;
+  measureWritableStorage(): Promise<{ bytes: number; entries: number }>;
   cleanup(): Promise<void>;
 }
 
@@ -80,13 +83,9 @@ export async function prepareBubblewrapSandbox(
     await chmod(sandboxDirectory, 0o755);
   }
   const workspace = path.join(sandboxDirectory, "workspace");
-  const writableTmp = privilegedNetworkNamespace
-    ? path.join(sandboxDirectory, "tmp")
-    : undefined;
+  const writableTmp = path.join(sandboxDirectory, "tmp");
   try {
-    if (writableTmp) {
-      await mkdir(path.join(writableTmp, "agentship-home"), { recursive: true });
-    }
+    await mkdir(path.join(writableTmp, "agentship-home"), { recursive: true });
     await copyWorkspace(absoluteRoot, workspace);
     const nodeModules = path.join(path.resolve(dependenciesRoot), "node_modules");
     const nodeModulesAvailable = await isDirectory(nodeModules);
@@ -120,12 +119,72 @@ export async function prepareBubblewrapSandbox(
           network: check.network === "allowed" ? "allowed" : "denied",
         },
       },
+      measureWritableStorage: () => measureWritableStorage(sandboxDirectory),
       cleanup: () => rm(sandboxDirectory, { recursive: true, force: true }),
     };
   } catch (error) {
     await rm(sandboxDirectory, { recursive: true, force: true });
     throw error;
   }
+}
+
+export async function measureWritableStorage(
+  root: string,
+  operations: {
+    readdir(directory: string): Promise<Dirent[]>;
+    lstat(candidate: string): Promise<Stats>;
+  } = {
+    readdir: (directory) => readdir(directory, { withFileTypes: true }),
+    lstat,
+  }
+): Promise<{ bytes: number; entries: number }> {
+  const pending = [root];
+  let bytes = 0;
+  let entries = 0;
+  while (pending.length > 0) {
+    const directory = pending.pop()!;
+    let directoryEntries: Dirent[];
+    try {
+      directoryEntries = await operations.readdir(directory);
+    } catch (error) {
+      if (directory !== root && isMissingPathError(error)) continue;
+      throw error;
+    }
+    for (const entry of directoryEntries) {
+      entries++;
+      if (entries > MAX_WORKSPACE_ENTRIES) {
+        throw new Error(
+          `Bubblewrap writable storage exceeds ${MAX_WORKSPACE_ENTRIES} filesystem entries.`
+        );
+      }
+      const candidate = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(candidate);
+        continue;
+      }
+      let stats: Stats;
+      try {
+        stats = await operations.lstat(candidate);
+      } catch (error) {
+        if (isMissingPathError(error)) continue;
+        throw error;
+      }
+      bytes += stats.size;
+      if (bytes > Number.MAX_SAFE_INTEGER) {
+        throw new Error("Bubblewrap writable storage size exceeds safe accounting bounds.");
+      }
+    }
+  }
+  return { bytes, entries };
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
 }
 
 export function buildBubblewrapArguments(options: {

@@ -52,6 +52,7 @@ function policy(checks: string[]): string {
     `      cpuSeconds: ${name === "build" ? 180 : 120}`,
     "      maxFileSizeMiB: 64",
     "      maxOpenFiles: 1024",
+    "      maxWorkspaceMiB: 1024",
     "",
   ]);
   return [

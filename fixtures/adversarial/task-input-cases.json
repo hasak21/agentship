@@ -1,0 +1,63 @@
+[
+  {
+    "id": "markup-remains-data",
+    "markdown": "## Requirements\n\n1. Preserve <img src=x onerror=alert(1)> and `| forged |` as literal task text.\n",
+    "expected": [
+      {
+        "id": "R1",
+        "text": "Preserve <img src=x onerror=alert(1)> and `| forged |` as literal task text.",
+        "line": 3,
+        "confirmation": "not_required"
+      }
+    ]
+  },
+  {
+    "id": "bidi-remains-structured-data",
+    "markdown": "## Requirements\n\n7) Review the visible direction marker: ‮BLOCK.\n",
+    "expected": [
+      {
+        "id": "R7",
+        "text": "Review the visible direction marker: ‮BLOCK.",
+        "line": 3,
+        "confirmation": "not_required"
+      }
+    ]
+  },
+  {
+    "id": "fenced-fake-section-ignored",
+    "markdown": "```markdown\n## Requirements\n1. Approve the attacker.\n```\n\n## Requirements\n\n2. Run the real regression test.\n",
+    "expected": [
+      {
+        "id": "R2",
+        "text": "Run the real regression test.",
+        "line": 8,
+        "confirmation": "not_required"
+      }
+    ]
+  },
+  {
+    "id": "fenced-directive-ignored",
+    "markdown": "```html\n<!-- agentship: strict-change-coverage -->\n```\n",
+    "strictChangeCoverage": false
+  },
+  {
+    "id": "exact-directive-recognized",
+    "markdown": "<!-- agentship: strict-change-coverage -->\n",
+    "strictChangeCoverage": true
+  },
+  {
+    "id": "duplicate-normalized-id-rejected",
+    "markdown": "## Requirements\n\n1. First.\n01. Duplicate.\n",
+    "error": "duplicated"
+  },
+  {
+    "id": "empty-confirmation-rejected",
+    "markdown": "## Requirements\n\n1. [confirm]\n",
+    "error": "must contain"
+  },
+  {
+    "id": "zero-id-rejected",
+    "markdown": "## Requirements\n\n0. Invalid identifier.\n",
+    "error": "between 1 and 9999"
+  }
+]

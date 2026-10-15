@@ -19,6 +19,7 @@ checks:
       cpuSeconds: 120
       maxFileSizeMiB: 64
       maxOpenFiles: 1024
+      maxWorkspaceMiB: 1024
 
   - name: test
     run: npm test
@@ -30,6 +31,7 @@ checks:
       cpuSeconds: 120
       maxFileSizeMiB: 64
       maxOpenFiles: 1024
+      maxWorkspaceMiB: 1024
 
   - name: build
     run: npm run build
@@ -41,6 +43,7 @@ checks:
       cpuSeconds: 180
       maxFileSizeMiB: 64
       maxOpenFiles: 1024
+      maxWorkspaceMiB: 1024
     whenChanged:
       - src/**
       - package.json
@@ -58,6 +61,7 @@ checks:
       cpuSeconds: 120
       maxFileSizeMiB: 64
       maxOpenFiles: 1024
+      maxWorkspaceMiB: 1024
     whenChanged:
       - src/cli/**
       - src/review/**

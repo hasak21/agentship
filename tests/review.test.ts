@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -22,6 +31,7 @@ import { mapRequirementsToChangedFiles } from "../src/review/requirement-mapper"
 import {
   buildBubblewrapArguments,
   buildPrivilegedBubblewrapInvocation,
+  measureWritableStorage,
   prepareBubblewrapSandbox,
 } from "../src/review/sandbox";
 import {
@@ -110,6 +120,63 @@ test("optional failed checks produce a warning verdict", () => {
   ]);
   assert.equal(findings[0]?.kind, "optional_check_failed");
   assert.equal(calculateVerdict(findings), "WARN");
+});
+
+test("writable-storage excess is a distinct non-optional blocker", () => {
+  const findings = buildFindings([
+    check({
+      required: false,
+      status: "failed",
+      exitCode: null,
+      execution: {
+        backend: "linux-bubblewrap",
+        writableStorage: {
+          enforcement: "sampled-logical-bytes",
+          limitBytes: 1024,
+          maxObservedBytes: 2048,
+          exceeded: true,
+          accountingFailed: false,
+        },
+      },
+    }),
+  ]);
+  assert.deepEqual(findings, [
+    {
+      id: "check-resource-1",
+      severity: "blocker",
+      kind: "check_resource_limit_exceeded",
+      title: "Check 'test' exceeded its writable-storage limit",
+      evidence: {
+        check: "test",
+        command: "npm test",
+        budget: "workspace_bytes",
+        observed: 2048,
+        limit: 1024,
+      },
+    },
+  ]);
+});
+
+test("writable-storage accounting loss fails closed for optional checks", () => {
+  const findings = buildFindings([
+    check({
+      required: false,
+      status: "failed",
+      exitCode: null,
+      execution: {
+        backend: "linux-bubblewrap",
+        writableStorage: {
+          enforcement: "sampled-logical-bytes",
+          limitBytes: 1024,
+          maxObservedBytes: 512,
+          exceeded: false,
+          accountingFailed: true,
+        },
+      },
+    }),
+  ]);
+  assert.equal(findings[0]?.kind, "check_resource_accounting_failed");
+  assert.equal(findings[0]?.severity, "blocker");
 });
 
 test("repository policy promotes configured warning kinds to blockers", () => {
@@ -250,6 +317,30 @@ test("Markdown evidence displays runner and runtime provenance", () => {
   assert.match(markdown, /GitHub image: <code>ubuntu24\/20261005\.1<\/code>/);
 });
 
+test("Markdown evidence displays sampled writable-storage observations", () => {
+  const report = reportWithFindings([]);
+  report.checks = [
+    check({
+      execution: {
+        backend: "linux-bubblewrap",
+        resourceLimits: { maxWorkspaceMiB: 1 },
+        writableStorage: {
+          enforcement: "sampled-logical-bytes",
+          limitBytes: 1024 * 1024,
+          maxObservedBytes: 2 * 1024 * 1024,
+          exceeded: true,
+          accountingFailed: false,
+        },
+      },
+    }),
+  ];
+  const markdown = renderMarkdown(report);
+  assert.match(
+    markdown,
+    /storage=2097152\/1048576 logical bytes, exceeded=yes, accounting-failed=no/
+  );
+});
+
 test("Linux resource limits produce an exact prlimit invocation", () => {
   const invocation = buildCheckInvocation(
     {
@@ -304,6 +395,61 @@ test("configured resource limits fail closed without the Linux backend", () => {
       ),
     /require Linux with \/usr\/bin\/prlimit; the check was not executed/
   );
+});
+
+test("writable storage accounting counts logical file bytes without following symlinks", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-storage-"));
+  try {
+    await mkdir(path.join(directory, "nested"));
+    await writeFile(path.join(directory, "nested", "payload"), Buffer.alloc(1024));
+    await symlink("payload", path.join(directory, "nested", "alias"));
+    const usage = await measureWritableStorage(directory);
+    assert.equal(usage.entries, 3);
+    assert.equal(usage.bytes, 1024 + Buffer.byteLength("payload"));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("writable storage accounting tolerates entries removed during a sample", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-storage-race-"));
+  try {
+    const transient = path.join(directory, "transient");
+    await writeFile(transient, "short-lived");
+    const usage = await measureWritableStorage(directory, {
+      readdir: (candidate) => readdir(candidate, { withFileTypes: true }),
+      lstat: async (candidate) => {
+        if (candidate === transient) {
+          throw Object.assign(new Error("removed during accounting"), {
+            code: "ENOENT",
+          });
+        }
+        return lstat(candidate);
+      },
+    });
+    assert.deepEqual(usage, { bytes: 0, entries: 1 });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("writable storage accounting still fails closed on non-disappearance errors", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-storage-error-"));
+  try {
+    const unreadable = path.join(directory, "unreadable");
+    await writeFile(unreadable, "payload");
+    await assert.rejects(
+      measureWritableStorage(directory, {
+        readdir: (candidate) => readdir(candidate, { withFileTypes: true }),
+        lstat: async () => {
+          throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+        },
+      }),
+      /permission denied/
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("bubblewrap invocation exposes only the disposable workspace and runtime", () => {
@@ -396,7 +542,13 @@ test("isolated resource limits wrap bubblewrap and unsupported hosts fail closed
     },
     "linux",
     true,
-    { file: "/usr/bin/unshare", args: ["--unshare-all", "--", "/bin/sh", "-c", "npm test"], execution, cleanup: async () => {} }
+    {
+      file: "/usr/bin/unshare",
+      args: ["--unshare-all", "--", "/bin/sh", "-c", "npm test"],
+      execution,
+      measureWritableStorage: async () => ({ bytes: 0, entries: 0 }),
+      cleanup: async () => {},
+    }
   );
   assert.equal(invocation.file, "/usr/bin/prlimit");
   assert.deepEqual(invocation.args, [
@@ -524,6 +676,24 @@ test("bubblewrap discards mutations, hides host files, and denies network by def
       },
     });
     await assert.rejects(access(path.join(directory, "sandbox-only")));
+
+    const storageEvidence = await runCheck(
+      {
+        name: "storage-bounded",
+        run: "dd if=/dev/zero of=generated.bin bs=1048576 count=2 status=none && sleep 1",
+        timeoutSeconds: 10,
+        isolation: "bubblewrap",
+        resources: { maxWorkspaceMiB: 1 },
+      },
+      directory
+    );
+    assert.equal(storageEvidence.status, "failed");
+    assert.equal(storageEvidence.execution?.writableStorage?.exceeded, true);
+    assert.equal(storageEvidence.execution?.writableStorage?.limitBytes, 1024 * 1024);
+    assert.ok(
+      (storageEvidence.execution?.writableStorage?.maxObservedBytes ?? 0) > 1024 * 1024
+    );
+    assert.match(storageEvidence.stderr, /writable storage exceeded/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -89,6 +89,12 @@ test("ci-init creates pinned report-only trust files without overwriting", async
     const policy = parse(policySource);
     assert.equal(policy.mode, "report");
     assert.ok(policy.checks.every(({ isolation }: { isolation: string }) => isolation === "bubblewrap"));
+    assert.ok(
+      policy.checks.every(
+        ({ resources }: { resources: { maxWorkspaceMiB?: number } }) =>
+          resources.maxWorkspaceMiB === 1024
+      )
+    );
     const report = await readFile(
       path.join(root, ".github/workflows/agentship-report.yml"),
       "utf8"

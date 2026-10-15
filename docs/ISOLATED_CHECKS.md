@@ -10,9 +10,9 @@ and `/usr/bin/bwrap` exists.
 - `.git`, `.agentship`, and `node_modules` are not copied.
 - An existing `node_modules` directory is mounted at the expected path read-only.
 - `/usr`, essential shared-library paths, and the active Node distribution are read-only.
-- `/proc`, `/dev`, `/tmp`, and `HOME` are new sandbox-local instances. The hosted
-  privileged backend binds a runner-owned disposable temporary directory so the restored
-  runner UID can write it; the ordinary backend uses tmpfs.
+- `/proc` and `/dev` are sandbox-local instances. `/tmp` and `HOME` use a runner-owned
+  disposable directory visible only inside the sandbox so aggregate writable usage can be
+  measured without exposing host temporary files.
 - The host home and `/etc` are absent in the default denied-network profile.
 - Credential-, token-, cookie-, password-, and secret-shaped environment names are removed; proxy variables survive only when their URLs contain no credentials, path, query, or fragment.
 - PID, IPC, UTS, cgroup, and network namespaces are unshared. The ordinary unprivileged
@@ -21,6 +21,12 @@ and `/usr/bin/bwrap` exists.
 - Repository mutations and generated artifacts disappear when the worker exits.
 - The copy rejects special files and is capped at 200,000 entries and 2 GiB.
 - Configured `prlimit` bounds wrap bubblewrap itself and are inherited by worker processes.
+- `resources.maxWorkspaceMiB` samples logical bytes across the disposable workspace and
+  private `/tmp` every 250 ms and once after process exit. Excess or accounting failure
+  terminates the process tree and fails the check; JSON and Markdown retain the maximum
+  observation. Files or nested directories that disappear while a sample walks them are
+  treated as ordinary create/delete churn; other filesystem errors still fail closed.
+  Generated entry counts remain capped at 200,000.
 
 The default effective network mode is `denied`, even when `network` is omitted. A trusted
 `network: allowed` declaration adds `--share-net` and exposes read-only TLS certificates,
@@ -45,13 +51,17 @@ environment.
 
 JSON and Markdown reports record `linux-bubblewrap`, `disposable-copy`,
 `minimal-read-only-runtime`, and the effective `allowed` or `denied` network mode. A
-skipped check records the requested isolation policy but remains `not_executed`.
+skipped check records the requested isolation policy but remains `not_executed`. Storage
+evidence distinguishes a measured excess from loss of accounting; either condition is an
+intrinsic blocker even when the underlying check was configured as optional.
 
 ## Residual risk
 
 Bubblewrap is namespace isolation, not a virtual machine. It shares the host kernel and
-does not currently apply seccomp, cgroup-wide CPU/memory/process accounting, or a strict
-temporary-storage/disk-capacity quota. Read-only runtime and dependency files are still visible.
+does not currently apply seccomp, cgroup-wide CPU/memory/process accounting, or a hard
+filesystem quota. The writable-storage monitor is sampled and can miss a short-lived
+create/delete spike between observations; host free-space exhaustion can occur before the
+next sample. Read-only runtime and dependency files are still visible.
 Name-based environment filtering cannot recognize a secret stored under an innocuous
 custom variable name; trusted policies must not request such values for hostile checks.
 Copying occurs before sandbox entry, so the entry/byte bounds protect availability but do

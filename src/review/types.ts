@@ -5,6 +5,8 @@ export type CheckStatus = "passed" | "failed" | "timed_out" | "skipped";
 export type ReviewFindingKind =
   | "required_check_failed"
   | "required_check_timed_out"
+  | "check_resource_limit_exceeded"
+  | "check_resource_accounting_failed"
   | "causal_check_not_reproduced"
   | "optional_check_failed"
   | "repository_changed_during_review"
@@ -37,6 +39,7 @@ export interface CheckResourceLimits {
   memoryMiB?: number;
   maxFileSizeMiB?: number;
   maxOpenFiles?: number;
+  maxWorkspaceMiB?: number;
 }
 
 export interface ProtectedPathPolicy {
@@ -105,6 +108,13 @@ export interface CheckEvidence {
       | "unsupported"
       | "not_executed";
     resourceLimits?: CheckResourceLimits;
+    writableStorage?: {
+      enforcement: "sampled-logical-bytes";
+      limitBytes: number;
+      maxObservedBytes: number;
+      exceeded: boolean;
+      accountingFailed: boolean;
+    };
     isolation?: {
       workspace: "disposable-copy";
       hostFilesystem: "minimal-read-only-runtime";
@@ -155,7 +165,7 @@ export interface ReviewFinding {
     }>;
     expectedRoles?: Array<"test" | "documentation">;
     unexpectedPaths?: string[];
-    budget?: "changed_files" | "diff_bytes" | "check_wall_clock_ms";
+    budget?: "changed_files" | "diff_bytes" | "check_wall_clock_ms" | "workspace_bytes";
     observed?: number;
     limit?: number;
     protectedPathPattern?: string;
