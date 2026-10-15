@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { callUniversalLLM, extractJsonFromResponse, fetchWithTimeout, resolveProviderConfig, UNIVERSAL_MODEL_PRESETS } from "../src/lib/llm/client";
+import {
+  callUniversalLLM,
+  DEFAULT_LLM_MAX_TOKENS,
+  extractJsonFromResponse,
+  fetchWithTimeout,
+  readBoundedResponseText,
+  resolveProviderConfig,
+  UNIVERSAL_MODEL_PRESETS,
+} from "../src/lib/llm/client";
 import { parsePublicLLMOptions, PublicLLMInputError } from "../src/lib/llm/public-options";
 
 test("UNIVERSAL_MODEL_PRESETS contains essential providers", () => {
@@ -72,6 +80,122 @@ test("generic OpenAI-compatible endpoints retain sampling and max_tokens", async
     assert.equal(payload?.temperature, 0.2);
     assert.equal(payload?.max_tokens, 512);
     assert.equal(payload?.max_completion_tokens, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("provider requests apply a bounded default output token limit", async () => {
+  const originalFetch = globalThis.fetch;
+  const payloads: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_input, init) => {
+    payloads.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return Response.json({
+      model: "test-model",
+      choices: [{ message: { content: "ok" } }],
+    });
+  }) as typeof fetch;
+
+  try {
+    await callUniversalLLM([{ role: "user", content: "Review this." }], {
+      provider: "openai-compatible",
+      model: "test-model",
+      baseUrl: "https://compatible.example/v1",
+      apiKey: "test-key",
+    });
+    assert.equal(payloads[0]?.max_tokens, DEFAULT_LLM_MAX_TOKENS);
+    await callUniversalLLM([{ role: "user", content: "Review this." }], {
+      provider: "anthropic",
+      model: "test-model",
+      baseUrl: "https://anthropic.example",
+      apiKey: "test-key",
+    });
+    assert.equal(payloads[1]?.max_tokens, DEFAULT_LLM_MAX_TOKENS);
+    await callUniversalLLM([{ role: "user", content: "Review this." }], {
+      provider: "gemini",
+      model: "test-model",
+      baseUrl: "https://gemini.example/v1beta",
+      apiKey: "test-key",
+    });
+    assert.deepEqual(payloads[2]?.generationConfig, {
+      maxOutputTokens: DEFAULT_LLM_MAX_TOKENS,
+    });
+    await assert.rejects(
+      callUniversalLLM([{ role: "user", content: "Review this." }], {
+        provider: "openai-compatible",
+        model: "test-model",
+        baseUrl: "https://compatible.example/v1",
+        apiKey: "test-key",
+        maxTokens: 0,
+      }),
+      /integer between 1 and 65536/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bounded provider response reader rejects declared and streamed excess", async () => {
+  await assert.rejects(
+    readBoundedResponseText(
+      new Response("small", { headers: { "content-length": "100" } }),
+      10
+    ),
+    /exceeds 10 bytes/
+  );
+
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("123456"));
+      controller.enqueue(new TextEncoder().encode("789012"));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  await assert.rejects(
+    readBoundedResponseText(new Response(stream), 10),
+    /exceeds 10 bytes/
+  );
+  assert.equal(cancelled, true);
+});
+
+test("bounded provider response reader accepts exact UTF-8 and rejects malformed bytes", async () => {
+  assert.equal(await readBoundedResponseText(new Response("four"), 4), "four");
+  await assert.rejects(
+    readBoundedResponseText(new Response(new Uint8Array([0xff])), 1),
+    /not valid UTF-8/
+  );
+});
+
+test("provider timeout remains active while the response body is consumed", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_input, init) =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () =>
+            controller.error(init.signal?.reason)
+          );
+        },
+        pull() {
+          // Deliberately never produce or close the body.
+        },
+      })
+    )) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      callUniversalLLM([{ role: "user", content: "Review this." }], {
+        provider: "anthropic",
+        model: "test-model",
+        baseUrl: "https://anthropic.example",
+        apiKey: "test-key",
+        timeoutMs: 20,
+      }),
+      /timed out after 20ms/
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

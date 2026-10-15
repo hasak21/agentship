@@ -11,6 +11,40 @@ import {
   ModelPreset,
 } from "./types";
 
+interface OpenAIResponseBody {
+  choices?: Array<{
+    message?: { content?: string };
+    delta?: { content?: string };
+  }>;
+  text?: string;
+  model?: string;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+}
+
+interface AnthropicResponseBody {
+  content?: Array<{ type: string; text?: string }>;
+  model?: string;
+  usage?: { input_tokens?: number; output_tokens?: number };
+}
+
+interface GeminiResponseBody {
+  candidates?: Array<{
+    content?: { parts?: Array<{ thought?: boolean; text?: string }> };
+    groundingMetadata?: {
+      groundingChunks?: Array<{ web?: { uri?: string; title?: string } }>;
+    };
+  }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  };
+}
+
 export const UNIVERSAL_MODEL_PRESETS: ModelPreset[] = [
   {
     id: "deepseek-v4-flash",
@@ -91,7 +125,9 @@ export const UNIVERSAL_MODEL_PRESETS: ModelPreset[] = [
 
 // Circuit breaker for rate-limited endpoints
 const CIRCUIT_COOLDOWN_MS = 60_000;
-const DEFAULT_LLM_REQUEST_TIMEOUT_MS = 30_000;
+export const DEFAULT_LLM_REQUEST_TIMEOUT_MS = 30_000;
+export const DEFAULT_LLM_MAX_TOKENS = 4_096;
+export const MAX_LLM_RESPONSE_BYTES = 4 * 1024 * 1024;
 const circuitCooldowns = new Map<string, number>();
 
 function isCircuitOpen(key: string): boolean {
@@ -197,6 +233,7 @@ export async function callUniversalLLM(
 ): Promise<LLMResponse> {
   const config = resolveProviderConfig(options);
   const targetModel = options.model || config.model;
+  const maxTokens = normalizeMaxTokens(options.maxTokens);
   const circuitKey = `${config.provider}:${targetModel}`;
 
   if (isCircuitOpen(circuitKey)) {
@@ -207,6 +244,7 @@ export async function callUniversalLLM(
     case "anthropic":
       return callAnthropicMessages(messages, {
         ...options,
+        maxTokens,
         model: targetModel,
         apiKey: config.apiKey,
         baseUrl: config.baseUrl,
@@ -215,6 +253,7 @@ export async function callUniversalLLM(
     case "gemini":
       return callGeminiAPI(messages, {
         ...options,
+        maxTokens,
         model: targetModel,
         apiKey: config.apiKey,
         baseUrl: config.baseUrl,
@@ -227,6 +266,7 @@ export async function callUniversalLLM(
     default:
       return callOpenAICompatibleChat(messages, {
         ...options,
+        maxTokens,
         model: targetModel,
         apiKey: config.apiKey,
         baseUrl: config.baseUrl,
@@ -255,10 +295,8 @@ async function callOpenAICompatibleChat(
     /^gpt-(?:5|6)(?:[.-]|$)/.test(options.model);
   if (!modernOpenAIModel) payload.temperature = options.temperature ?? 0.7;
 
-  if (options.maxTokens) {
-    payload[modernOpenAIModel ? "max_completion_tokens" : "max_tokens"] =
-      options.maxTokens;
-  }
+  payload[modernOpenAIModel ? "max_completion_tokens" : "max_tokens"] =
+    options.maxTokens;
 
   if (options.responseFormat === "json_object" && !options.model.includes("reasoner")) {
     payload.response_format = { type: "json_object" };
@@ -274,14 +312,14 @@ async function callOpenAICompatibleChat(
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetchWithTimeout(endpoint, {
+      const { response: res, body: responseBody } = await fetchProviderResponse(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
       }, options.timeoutMs);
 
       if (res.ok) {
-        const data = await res.json();
+        const data = parseBoundedResponseJson<OpenAIResponseBody>(responseBody);
         resetCircuit(circuitKey);
 
         const choice = data.choices?.[0];
@@ -304,8 +342,7 @@ async function callOpenAICompatibleChat(
         };
       }
 
-      const errorText = await res.text();
-      lastError = `HTTP ${res.status} from ${endpoint}: ${errorText.slice(0, 200)}`;
+      lastError = `HTTP ${res.status} from ${endpoint}: ${responseBody.slice(0, 200)}`;
 
       if (res.status === 429) {
         tripCircuit(circuitKey);
@@ -350,7 +387,7 @@ async function callAnthropicMessages(
   const payload: Record<string, unknown> = {
     model: options.model,
     messages: formattedMessages.length > 0 ? formattedMessages : [{ role: "user", content: "Proceed." }],
-    max_tokens: options.maxTokens ?? 4096,
+      max_tokens: options.maxTokens,
     temperature: options.temperature ?? 0.7,
   };
 
@@ -365,21 +402,24 @@ async function callAnthropicMessages(
   };
 
   try {
-    const res = await fetchWithTimeout(endpoint, {
+    const { response: res, body: responseBody } = await fetchProviderResponse(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
     }, options.timeoutMs);
 
     if (res.ok) {
-      const data = await res.json();
+      const data = parseBoundedResponseJson<AnthropicResponseBody>(responseBody);
       resetCircuit(circuitKey);
 
       let text = "";
       if (Array.isArray(data.content)) {
         text = data.content
-          .filter((c: { type: string; text?: string }) => c.type === "text" && c.text)
-          .map((c: { text: string }) => c.text)
+          .filter(
+            (c): c is { type: string; text: string } =>
+              c.type === "text" && typeof c.text === "string"
+          )
+          .map((c) => c.text)
           .join("\n");
       }
 
@@ -397,8 +437,7 @@ async function callAnthropicMessages(
       };
     }
 
-    const errorText = await res.text();
-    throw new Error(`Anthropic HTTP ${res.status}: ${errorText.slice(0, 200)}`);
+    throw new Error(`Anthropic HTTP ${res.status}: ${responseBody.slice(0, 200)}`);
   } catch (err) {
     throw new Error(`Anthropic call failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -435,12 +474,15 @@ async function callGeminiAPI(
     payload.tools = [{ google_search: {} }];
   }
 
-  if (options.temperature !== undefined) {
-    payload.generationConfig = { temperature: options.temperature };
-  }
+  payload.generationConfig = {
+    maxOutputTokens: options.maxTokens,
+    ...(options.temperature === undefined
+      ? {}
+      : { temperature: options.temperature }),
+  };
 
   try {
-    const res = await fetchWithTimeout(endpoint, {
+    const { response: res, body: responseBody } = await fetchProviderResponse(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -450,12 +492,15 @@ async function callGeminiAPI(
     }, options.timeoutMs);
 
     if (res.ok) {
-      const data = await res.json();
+      const data = parseBoundedResponseJson<GeminiResponseBody>(responseBody);
       const cand = data.candidates?.[0];
       const parts = cand?.content?.parts ?? [];
       const text = parts
-        .filter((p: { thought?: boolean; text?: string }) => !p.thought && p.text)
-        .map((p: { text: string }) => p.text)
+        .filter(
+          (p): p is { thought?: boolean; text: string } =>
+            !p.thought && typeof p.text === "string"
+        )
+        .map((p) => p.text)
         .join("\n")
         .trim();
 
@@ -483,8 +528,7 @@ async function callGeminiAPI(
       };
     }
 
-    const errorText = await res.text();
-    throw new Error(`Gemini HTTP ${res.status}: ${errorText.slice(0, 200)}`);
+    throw new Error(`Gemini HTTP ${res.status}: ${responseBody.slice(0, 200)}`);
   } catch (err) {
     throw new Error(`Gemini API call failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -541,15 +585,106 @@ export function extractJsonFromResponse<T = Record<string, unknown>>(rawText: st
   }
 }
 
+function normalizeMaxTokens(value: number | undefined): number {
+  const maxTokens = value ?? DEFAULT_LLM_MAX_TOKENS;
+  if (
+    !Number.isSafeInteger(maxTokens) ||
+    maxTokens <= 0 ||
+    maxTokens > 65_536
+  ) {
+    throw new Error("LLM maxTokens must be an integer between 1 and 65536.");
+  }
+  return maxTokens;
+}
+
+export async function readBoundedResponseText(
+  response: Response,
+  maxBytes = MAX_LLM_RESPONSE_BYTES
+): Promise<string> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error("LLM response byte limit must be a positive integer.");
+  }
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const parsedLength = Number(declaredLength);
+    if (
+      !Number.isSafeInteger(parsedLength) ||
+      parsedLength < 0 ||
+      parsedLength > maxBytes
+    ) {
+      await response.body?.cancel();
+      throw new Error(`LLM response exceeds ${maxBytes} bytes.`);
+    }
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (total + value.byteLength > maxBytes) {
+        await reader.cancel();
+        throw new Error(`LLM response exceeds ${maxBytes} bytes.`);
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(combined);
+  } catch {
+    throw new Error("LLM response is not valid UTF-8.");
+  }
+}
+
+function parseBoundedResponseJson<T>(source: string): T {
+  try {
+    return JSON.parse(source) as T;
+  } catch {
+    throw new Error("LLM provider returned invalid JSON.");
+  }
+}
+
+async function fetchProviderResponse(
+  input: string | URL | Request,
+  init: RequestInit,
+  timeoutMs = Number(process.env.LLM_REQUEST_TIMEOUT_MS) ||
+    DEFAULT_LLM_REQUEST_TIMEOUT_MS
+): Promise<{ response: Response; body: string }> {
+  assertRequestTimeout(timeoutMs);
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`LLM request timed out after ${timeoutMs}ms.`)),
+    timeoutMs
+  );
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    const body = await readBoundedResponseText(response);
+    return { response, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function fetchWithTimeout(
   input: string | URL | Request,
   init: RequestInit,
   timeoutMs = Number(process.env.LLM_REQUEST_TIMEOUT_MS) ||
     DEFAULT_LLM_REQUEST_TIMEOUT_MS
 ): Promise<Response> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error("LLM request timeout must be greater than zero.");
-  }
+  assertRequestTimeout(timeoutMs);
 
   const controller = new AbortController();
   const timer = setTimeout(
@@ -561,5 +696,11 @@ export async function fetchWithTimeout(
     return await fetch(input, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+function assertRequestTimeout(timeoutMs: number): void {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("LLM request timeout must be greater than zero.");
   }
 }

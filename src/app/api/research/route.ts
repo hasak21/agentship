@@ -7,7 +7,14 @@
 
 import {
   callUniversalLLM,
+  createDefaultLLMRunBudget,
+  createIsolatedPromptMessages,
+  DEFAULT_LLM_MAX_TOKENS,
+  DEFAULT_LLM_REQUEST_TIMEOUT_MS,
   extractJsonFromResponse,
+  IsolatedPromptInput,
+  LLMRunBudget,
+  LLMRunBudgetError,
   LLMRequestOptions,
   LLMResponse,
   LLMSource,
@@ -44,27 +51,40 @@ type Opts = {
   web: boolean;
   critic: boolean;
   llmOptions?: LLMRequestOptions;
+  budget: LLMRunBudget;
 };
 
 // Universal free-text call
 async function callText(
   system: string,
-  user: string,
+  input: IsolatedPromptInput,
   web: boolean,
   temperature?: number,
-  llmOptions?: LLMRequestOptions
+  llmOptions?: LLMRequestOptions,
+  budget?: LLMRunBudget
 ): Promise<Leaf> {
+  const messages = createIsolatedPromptMessages(system, input);
+  const remainingMs = budget?.claim(
+    messages,
+    llmOptions?.maxTokens ?? DEFAULT_LLM_MAX_TOKENS
+  );
   const res: LLMResponse = await callUniversalLLM(
-    [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
+    messages,
     {
       ...llmOptions,
       temperature: temperature ?? 0.7,
       webSearch: web,
+      ...(remainingMs === undefined
+        ? {}
+        : {
+            timeoutMs: Math.min(
+              llmOptions?.timeoutMs ?? DEFAULT_LLM_REQUEST_TIMEOUT_MS,
+              remainingMs
+            ),
+          }),
     }
   );
+  budget?.recordReportedTokens(res.usage.totalTokens);
 
   return {
     text: res.text,
@@ -77,23 +97,35 @@ async function callText(
 // Universal structured JSON call
 async function callJSON<T>(
   system: string,
-  user: string,
+  input: IsolatedPromptInput,
   schemaDescription: string,
-  llmOptions?: LLMRequestOptions
+  llmOptions?: LLMRequestOptions,
+  budget?: LLMRunBudget
 ): Promise<{ value: T; usage: number; model?: string }> {
   const fullSystem = `${system}\n\nIMPORTANT: Return ONLY a valid JSON object or array according to this requirement:\n${schemaDescription}`;
+  const messages = createIsolatedPromptMessages(fullSystem, input);
+  const remainingMs = budget?.claim(
+    messages,
+    llmOptions?.maxTokens ?? DEFAULT_LLM_MAX_TOKENS
+  );
 
   const res: LLMResponse = await callUniversalLLM(
-    [
-      { role: "system", content: fullSystem },
-      { role: "user", content: user },
-    ],
+    messages,
     {
       ...llmOptions,
       temperature: 0.2,
       responseFormat: "json_object",
+      ...(remainingMs === undefined
+        ? {}
+        : {
+            timeoutMs: Math.min(
+              llmOptions?.timeoutMs ?? DEFAULT_LLM_REQUEST_TIMEOUT_MS,
+              remainingMs
+            ),
+          }),
     }
   );
+  budget?.recordReportedTokens(res.usage.totalTokens);
 
   const value = extractJsonFromResponse<T>(res.text);
   return {
@@ -135,7 +167,8 @@ async function nodeRun(
       break;
     } catch (e) {
       lastMsg = e instanceof Error ? e.message : String(e);
-      const transient = !lastMsg.includes("429");
+      const transient =
+        !(e instanceof LLMRunBudgetError) && !lastMsg.includes("429");
       if (attempt < NODE_RETRIES && transient) {
         emit({ track, type: "node_retry", id: node.id, reason: lastMsg });
         continue;
@@ -220,10 +253,11 @@ async function runSingle(
     () =>
       callText(
         "You are a capable assistant. Answer the user's task clearly, rigorously, and completely.",
-        q,
+        { task: q },
         opts.web,
         undefined,
-        opts.llmOptions
+        opts.llmOptions,
+        opts.budget
       )
   );
 }
@@ -250,9 +284,10 @@ async function runOrchestrator(
       try {
         const r = await callJSON<string[]>(
           `You are the PLANNER. Break the task into 2 to 4 focused, independent sub-tasks that can run in parallel. Return ONLY a JSON array of strings.`,
-          q,
+          { task: q },
           `["Subtask 1 description", "Subtask 2 description", ...]`,
-          opts.llmOptions
+          opts.llmOptions,
+          opts.budget
         );
         subtasks = r.value;
         usage = r.usage;
@@ -291,10 +326,11 @@ async function runOrchestrator(
 End your reply with one final line, exactly:
 CONFIDENCE: high|medium|low — <short reason, or any caveat a reader should know>
 Use "low" honestly when you are guessing or lack the information to be sure.`,
-            `Overall task: ${q}\n\nYour sub-task: ${st}`,
+            { task: q, data: { assignedSubtask: st } },
             opts.web,
             undefined,
-            opts.llmOptions
+            opts.llmOptions,
+            opts.budget
           );
           const h = parseHandoff(raw.text);
           return {
@@ -334,10 +370,17 @@ Combine their findings into one unified, cohesive, high-quality response to the 
 Each worker provided a CONFIDENCE tag (high/medium/low). Rely firmly on high-confidence findings;
 hedge or omit claims tagged low-confidence.
 Do NOT just paste the sections together — resolve contradictions and write a seamless answer.`,
-        `Overall task: ${q}\n\n=== Worker Findings ===\n${combined}${degradedNote(lost, results.length)}`,
+        {
+          task: q,
+          data: {
+            workerFindings: combined,
+            executionNote: degradedNote(lost, results.length).trim(),
+          },
+        },
         false,
         undefined,
-        opts.llmOptions
+        opts.llmOptions,
+        opts.budget
       );
       const allSources = results.flatMap((res) => res.sources ?? []);
       return { ...r, sources: allSources };
@@ -388,10 +431,11 @@ async function runDebate(
             `You are a debater in a multi-perspective panel addressing the user's task.
 Focus especially on: ${d.angle}.
 State your strongest, most persuasive opening argument.`,
-            `Task: ${q}`,
+            { task: q },
             opts.web,
             undefined,
-            opts.llmOptions
+            opts.llmOptions,
+            opts.budget
           )
       )
     )
@@ -418,10 +462,11 @@ State your strongest, most persuasive opening argument.`,
           callText(
             `You are ${d.title}. You have heard your peers' opening statements.
 Challenge weak assumptions, concede valid points, and present your refined concluding recommendation.`,
-            `Task: ${q}\n\n=== All Opening Statements ===\n${openingDigest}`,
+            { task: q, data: { openingStatements: openingDigest } },
             opts.web,
             undefined,
-            opts.llmOptions
+            opts.llmOptions,
+            opts.budget
           )
       )
     )
@@ -446,10 +491,11 @@ Challenge weak assumptions, concede valid points, and present your refined concl
       const r = await callText(
         `You are the Chief Arbitrator / Senior Judge.
 Review the complete debate transcript. Weigh the evidence and deliver the definitive answer to the user's task.`,
-        `Task: ${q}\n\n=== Debate Transcript ===\n${debateTranscript}`,
+        { task: q, data: { debateTranscript } },
         false,
         undefined,
-        opts.llmOptions
+        opts.llmOptions,
+        opts.budget
       );
       const allSources = [...openings, ...rebuttals].flatMap((res) => res.sources ?? []);
       return { ...r, sources: allSources };
@@ -484,9 +530,10 @@ async function runRouter(
         const r = await callJSON<{ domain: string; reasoning: string }>(
           `Classify the given task into exactly ONE of: ["code", "architecture", "security", "writing", "analysis", "general"].
 Explain your classification in one sentence.`,
-          q,
+          { task: q },
           `{ "domain": "code|architecture|security|writing|analysis|general", "reasoning": "string" }`,
-          opts.llmOptions
+          opts.llmOptions,
+          opts.budget
         );
         classification = r.value.domain || "general";
         reasoning = r.value.reasoning || "";
@@ -528,7 +575,15 @@ Explain your classification in one sentence.`,
       title: `${domain.charAt(0).toUpperCase() + domain.slice(1)} Specialist`,
       subtitle: `Domain expert answering request`,
     },
-    () => callText(specialistPrompt, q, opts.web, undefined, opts.llmOptions)
+    () =>
+      callText(
+        specialistPrompt,
+        { task: q },
+        opts.web,
+        undefined,
+        opts.llmOptions,
+        opts.budget
+      )
   );
 
   return result;
@@ -557,10 +612,11 @@ async function runConsistency(
         () =>
           callText(
             "Solve the user's task step-by-step. Be rigorous, self-verify your reasoning, and state your final conclusion clearly.",
-            q,
+            { task: q },
             opts.web,
             0.9,
-            opts.llmOptions
+            opts.llmOptions,
+            opts.budget
           )
       )
     )
@@ -584,10 +640,11 @@ async function runConsistency(
       const r = await callText(
         `You are the Self-Consistency Aggregator. You are given 4 independent reasoning samples for the same task.
 Identify the majority consensus answer, resolve any discrepancies, and provide the definitive solution.`,
-        `Task: ${q}\n\n=== Independent Samples ===\n${sampleDigest}`,
+        { task: q, data: { independentSamples: sampleDigest } },
         false,
         undefined,
-        opts.llmOptions
+        opts.llmOptions,
+        opts.budget
       );
       const allSources = samples.flatMap((s) => s.sources ?? []);
       return { ...r, sources: allSources };
@@ -626,9 +683,10 @@ async function runAuto(
 - "router": for specific single-domain questions needing a specialist
 - "consistency": for algorithmic, mathematical, or logic puzzles with exact answers
 - "single": for simple, direct queries`,
-          q,
+          { task: q },
           `{ "pattern": "orchestrator|debate|router|consistency|single", "rationale": "string" }`,
-          opts.llmOptions
+          opts.llmOptions,
+          opts.budget
         );
         chosenPattern = r.value.pattern || "orchestrator";
         rationale = r.value.rationale || "";
@@ -698,9 +756,10 @@ async function runCriticPass(
             `You are a strict CRITIC. Scrutinize the draft response against the user's task.
 If the draft is accurate, complete, and high quality, set accept=true.
 If it has notable flaws, omissions, or errors, set accept=false and list actionable issues.`,
-            `Task: ${q}\n\n=== Draft ===\n${currentDraft}`,
+            { task: q, data: { draft: currentDraft } },
             `{ "accept": boolean, "issues": ["issue 1", "issue 2"] }`,
-            opts.llmOptions
+            opts.llmOptions,
+            opts.budget
           );
           accept = r.value.accept;
           issues = r.value.issues || [];
@@ -737,10 +796,17 @@ If it has notable flaws, omissions, or errors, set accept=false and list actiona
       async () => {
         const r = await callText(
           `You are the REVISER. Improve and rewrite the draft based on the Critic's feedback.`,
-          `Task: ${q}\n\n=== Previous Draft ===\n${currentDraft}\n\n=== Critic Issues ===\n${criticVerdict.text}`,
+          {
+            task: q,
+            data: {
+              previousDraft: currentDraft,
+              criticIssues: criticVerdict.text,
+            },
+          },
           opts.web,
           undefined,
-          opts.llmOptions
+          opts.llmOptions,
+          opts.budget
         );
         allSources = [...allSources, ...(r.sources ?? [])];
         return r;
@@ -797,17 +863,19 @@ async function judgeOnce(
   q: string,
   ansX: string,
   ansY: string,
-  llmOptions?: LLMRequestOptions
+  llmOptions: LLMRequestOptions | undefined,
+  budget: LLMRunBudget
 ): Promise<{ v: { X: Rubric; Y: Rubric; rationale: string }; usage: number }> {
   const r = await callJSON<{ X: Rubric; Y: Rubric; rationale: string }>(
     `You are an impartial double-blind JUDGE. Score each answer 1-10 on correctness, completeness, and clarity.`,
-    `Task: ${q}\n\n=== Answer X ===\n${ansX}\n\n=== Answer Y ===\n${ansY}`,
+    { task: q, data: { answerX: ansX, answerY: ansY } },
     `{
   "X": { "correctness": 8.5, "completeness": 9.0, "clarity": 8.5 },
   "Y": { "correctness": 9.0, "completeness": 8.0, "clarity": 9.0 },
   "rationale": "Comparative rationale..."
 }`,
-    llmOptions
+    llmOptions,
+    budget
   );
 
   return { v: r.value, usage: r.usage };
@@ -827,13 +895,14 @@ async function runJudge(
   labelA: string,
   labelB: string,
   emit: Emit,
-  llmOptions?: LLMRequestOptions
+  llmOptions: LLMRequestOptions | undefined,
+  budget: LLMRunBudget
 ): Promise<void> {
   emit({ type: "judging" });
   try {
     const [o1, o2] = await Promise.all([
-      judgeOnce(q, answerA, answerB, llmOptions),
-      judgeOnce(q, answerB, answerA, llmOptions),
+      judgeOnce(q, answerA, answerB, llmOptions, budget),
+      judgeOnce(q, answerB, answerA, llmOptions, budget),
     ]);
 
     const scoreA = avg(o1.v.X, o2.v.Y);
@@ -910,12 +979,22 @@ export async function POST(request: Request) {
     async start(controller) {
       const send: Emit = (obj) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+      let budget: LLMRunBudget | undefined;
+      let finalBudgetSent = false;
+      const sendFinalBudget = () => {
+        if (!budget || finalBudgetSent) return;
+        finalBudgetSent = true;
+        send({ type: "budget", phase: "final", ...budget.snapshot() });
+      };
 
       try {
         if (!question) {
           send({ type: "error", message: "Please provide a task to execute." });
           return;
         }
+
+        budget = createDefaultLLMRunBudget();
+        send({ type: "budget", phase: "start", ...budget.snapshot() });
 
         const resolved = resolveProviderConfig(llmOptions);
         if (!resolved.apiKey && resolved.provider !== "ollama" && !resolved.baseUrl.includes("localhost")) {
@@ -945,8 +1024,20 @@ export async function POST(request: Request) {
           send({ type: "track", track: "B", pattern: "single", label: labelB });
 
           const [finalA, finalB] = await Promise.all([
-            runTrack(pattern, question, { web, critic, llmOptions }, send, "A"),
-            runTrack("single", question, { web, critic: false, llmOptions }, send, "B"),
+            runTrack(
+              pattern,
+              question,
+              { web, critic, llmOptions, budget },
+              send,
+              "A"
+            ),
+            runTrack(
+              "single",
+              question,
+              { web, critic: false, llmOptions, budget },
+              send,
+              "B"
+            ),
           ]);
 
           await runJudge(
@@ -956,7 +1047,8 @@ export async function POST(request: Request) {
             labelA,
             labelB,
             send,
-            llmOptions
+            llmOptions,
+            budget
           );
         } else {
           send({
@@ -965,15 +1057,24 @@ export async function POST(request: Request) {
             pattern,
             label: PATTERN_LABELS[pattern] ?? pattern,
           });
-          await runTrack(pattern, question, { web, critic, llmOptions }, send, "A");
+          await runTrack(
+            pattern,
+            question,
+            { web, critic, llmOptions, budget },
+            send,
+            "A"
+          );
         }
 
+        sendFinalBudget();
         send({ type: "done" });
       } catch (err) {
         const message = err instanceof Error ? err.message : "Something went wrong.";
         console.error("Multi-agent route error:", err);
+        sendFinalBudget();
         send({ type: "error", message });
       } finally {
+        sendFinalBudget();
         controller.close();
       }
     },

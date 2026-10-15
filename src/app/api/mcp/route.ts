@@ -11,7 +11,12 @@ import {
   readBoundedJsonObject,
   requireApiAccess,
 } from "@/lib/http-guard";
-import { callUniversalLLM, LLMRequestOptions } from "@/lib/llm";
+import {
+  callUniversalLLM,
+  createIsolatedPromptMessages,
+  LLMRequestOptions,
+} from "@/lib/llm";
+import { normalizeTopologyPattern } from "@/lib/topology-dispatch";
 
 const MAX_MCP_REQUEST_BYTES = 2 * 1024 * 1024;
 
@@ -267,15 +272,16 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
     case "run_multiagent_topology": {
       const task = String(args.task || "");
       if (!task) throw new Error("Missing required argument 'task'.");
-      const pattern = String(args.pattern || "orchestrator");
+      const pattern = normalizeTopologyPattern(
+        String(args.pattern || "orchestrator")
+      );
 
-      const response = await callUniversalLLM([
-        {
-          role: "system",
-          content: `You are AgentShip Universal Orchestrator operating under topology [${pattern.toUpperCase()}]. Solve the user's task with high rigor.`,
-        },
-        { role: "user", content: task },
-      ]);
+      const response = await callUniversalLLM(
+        createIsolatedPromptMessages(
+          "You are AgentShip Universal Orchestrator. Solve the caller's task with high rigor.",
+          { task, data: { topology: pattern } }
+        )
+      );
 
       return {
         task,

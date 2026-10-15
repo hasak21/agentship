@@ -3,6 +3,7 @@ import { AuditReport, AuditScores, AuditIssue, AuditorProvider } from "@/types/a
 import { AUDIT_SYSTEM_PROMPT } from "@/lib/prompts/audit";
 import {
   callUniversalLLM,
+  createIsolatedPromptMessages,
   extractJsonFromResponse,
   LLMRequestOptions,
   resolveProviderConfig,
@@ -24,16 +25,18 @@ export async function executeDiffAudit(
     throw new Error("Cannot audit an empty Git Diff or code payload.");
   }
 
-  const userPayload = `Task Context: ${taskContext || "Code quality, correctness, and security audit."}\n\n=== GIT UNIFIED DIFF / CODE CHANGES ===\n${trimmedDiff}`;
-
   const resolved = resolveProviderConfig(options);
   const targetModel = options.model || resolved.model;
 
   const response = await callUniversalLLM(
-    [
-      { role: "system", content: AUDIT_SYSTEM_PROMPT },
-      { role: "user", content: userPayload },
-    ],
+    createIsolatedPromptMessages(AUDIT_SYSTEM_PROMPT, {
+      task: "Audit the supplied code changes using the fixed rubric.",
+      data: {
+        taskContext:
+          taskContext || "Code quality, correctness, and security audit.",
+        gitDiff: trimmedDiff,
+      },
+    }),
     {
       ...options,
       model: targetModel,
