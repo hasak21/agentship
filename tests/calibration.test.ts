@@ -148,6 +148,53 @@ test("calibration derives reproducible metrics from three evidence sets", async 
   });
 });
 
+test("calibration retains external benchmark provenance", async () => {
+  await withCalibrationFixture(async ({ root, measure }) => {
+    const provenance = {
+      dataset: "SWE-bench/SWE-bench_Verified",
+      revision: "c".repeat(40),
+      datasetSha256: "1".repeat(64),
+      predictionsSha256: "2".repeat(64),
+      split: "test",
+      sourceUrl: "https://huggingface.co/datasets/SWE-bench/SWE-bench_Verified",
+      selection: "One deterministic parser fixture; not a representative sample.",
+      retrievedAt: "2026-10-10",
+    };
+    await writeFile(
+      path.join(root, "corpus.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        kind: "external_evaluation",
+        provenance,
+        cases: [
+          {
+            id: "external-incomplete",
+            category: "externally evaluated incomplete change",
+            requirement: "Add regression tests for the issue.",
+            changedFiles: ["src/behavior.py"],
+            omissionExpected: true,
+            rationale: "The external evaluator marked this candidate unresolved.",
+            source: {
+              instanceId: "project__repository-1",
+              repository: "project/repository",
+              baseCommit: "d".repeat(40),
+              candidate: "model/run-1",
+              predictionSha256: "e".repeat(64),
+              outcomeSha256: "f".repeat(64),
+              outcomeEvidence: "https://example.com/evaluations/run-1",
+            },
+          },
+        ],
+      })}\n`,
+      "utf8"
+    );
+
+    const result = await measure();
+    assert.equal(result.inputs.benchmark.kind, "external_evaluation");
+    assert.deepEqual(result.inputs.benchmark.provenance, provenance);
+  });
+});
+
 test("calibration rejects conflicting finding dispositions", async () => {
   await withCalibrationFixture(async ({ root, sourcePath, measure }) => {
     await recordFindingOutcome(

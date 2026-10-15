@@ -1,7 +1,10 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { measureCalibration } from "../review/calibration";
+import { importSweBenchCorpus } from "../review/external-corpus-import";
 import { runIntentBenchmark } from "../review/intent-benchmark";
 import { compileLeaderboard } from "../review/leaderboard";
 import { diagnoseRepository, initializeRepository } from "../review/onboarding";
@@ -86,6 +89,7 @@ Usage:
   agentship ci-init --ref <full-commit-sha> [--repository <owner/repository>]
   agentship doctor
   agentship benchmark --fixtures <path>
+  agentship import-swebench --dataset <path> --predictions <path> --reports <dir> --output <path> [provenance options]
   agentship leaderboard --submissions <directory>
   agentship outcome --report <path> --finding-id <id> --finding-kind <kind> --status <status> --actor <actor> --reason <reason>
   agentship missed --report <path> --finding-id <id> --finding-kind <kind> --severity <severity> --title <title> --actor <actor> --reason <reason>
@@ -260,6 +264,68 @@ function parseBenchmarkArgs(args: string[]): string {
   return fixturePath;
 }
 
+function parseSweBenchImportArgs(args: string[]): {
+  datasetPath: string;
+  predictionsPath: string;
+  reportsDirectory: string;
+  outputPath: string;
+  candidateRun: string;
+  evidenceBaseUrl: string;
+  provenance: {
+    dataset: string;
+    revision: string;
+    split: string;
+    sourceUrl: string;
+    selection: string;
+    retrievedAt: string;
+  };
+} {
+  const values = new Map<string, string>();
+  const supported = new Set([
+    "--dataset",
+    "--predictions",
+    "--reports",
+    "--output",
+    "--candidate-run",
+    "--evidence-base-url",
+    "--dataset-name",
+    "--dataset-revision",
+    "--split",
+    "--source-url",
+    "--selection",
+    "--retrieved-at",
+  ]);
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (!supported.has(arg)) throw new Error(`Unknown import-swebench argument: ${arg}`);
+    const value = args[++index];
+    if (!value) throw new Error(`${arg} requires a value.`);
+    if (values.has(arg)) throw new Error(`${arg} may only be provided once.`);
+    values.set(arg, value);
+  }
+  const required = (flag: string) => {
+    const value = values.get(flag);
+    if (!value) throw new Error(`import-swebench requires ${flag} <value>.`);
+    return value;
+  };
+  return {
+    datasetPath: required("--dataset"),
+    predictionsPath: required("--predictions"),
+    reportsDirectory: required("--reports"),
+    outputPath: required("--output"),
+    candidateRun: required("--candidate-run"),
+    evidenceBaseUrl: required("--evidence-base-url"),
+    provenance: {
+      dataset: required("--dataset-name"),
+      revision: required("--dataset-revision"),
+      split: required("--split"),
+      sourceUrl: required("--source-url"),
+      selection: required("--selection"),
+      retrievedAt: required("--retrieved-at"),
+    },
+  };
+}
+
 function parseLeaderboardArgs(args: string[]): string {
   if (args.length !== 2 || args[0] !== "--submissions" || !args[1]) {
     throw new Error("leaderboard requires --submissions <directory>.");
@@ -335,6 +401,27 @@ async function main() {
     const fixturePath = path.resolve(process.cwd(), parseBenchmarkArgs(args.slice(1)));
     const benchmark = await runIntentBenchmark(fixturePath);
     writeStdout(`${JSON.stringify(benchmark, null, 2)}\n`);
+    return;
+  }
+  if (args[0] === "import-swebench") {
+    const parsed = parseSweBenchImportArgs(args.slice(1));
+    const outputPath = path.resolve(process.cwd(), parsed.outputPath);
+    const imported = await importSweBenchCorpus({
+      ...parsed,
+      datasetPath: path.resolve(process.cwd(), parsed.datasetPath),
+      predictionsPath: path.resolve(process.cwd(), parsed.predictionsPath),
+      reportsDirectory: path.resolve(process.cwd(), parsed.reportsDirectory),
+    });
+    const source = `${JSON.stringify(imported.corpus, null, 2)}\n`;
+    await writeFile(outputPath, source, { encoding: "utf8", flag: "wx" });
+    writeStdout([
+      `AgentShip imported ${imported.corpus.cases.length} SWE-bench candidates.`,
+      `Resolved: ${imported.outcomes.resolved}`,
+      `Unresolved: ${imported.outcomes.unresolved}`,
+      `Corpus SHA-256: ${createHash("sha256").update(source).digest("hex")}`,
+      `Output: ${outputPath}`,
+      "",
+    ].join("\n"));
     return;
   }
   if (args[0] === "init") {

@@ -5,7 +5,7 @@ single convenient sample:
 
 - A review-report directory supplies the complete review denominator.
 - A finding-outcome directory supplies human dispositions and resolution evidence.
-- An executable or labeled intent corpus supplies omission recall.
+- An executable, labeled, or externally evaluated intent corpus supplies omission recall.
 
 Run calibration with:
 
@@ -24,7 +24,8 @@ report set with matching bytes and run ID. Fixed events are rechecked for compat
 policy/task/scope/base, a newer changed state, and absence of the finding. Override events
 are rechecked against retained source-report override evidence. The output binds sorted
 input paths and hashes into aggregate SHA-256 values and includes the benchmark corpus
-hash.
+hash. Externally evaluated corpora also retain their immutable dataset, predictions, and
+selection provenance in the calibration report.
 
 ## Formulas
 

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { open, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { runIntentBenchmark } from "./intent-benchmark";
+import type { ExternalCorpusProvenance, IntentBenchmarkReport } from "./intent-benchmark";
 import type { FindingOutcomeStatus } from "./outcome";
 
 const MAX_DIRECTORY_ENTRIES = 1_000;
@@ -54,8 +55,9 @@ export interface CalibrationMetricsReport {
     benchmark: {
       path: string;
       sha256: string;
-      kind: "labeled_scenario" | "executable_patch";
+      kind: IntentBenchmarkReport["corpus"]["kind"];
       cases: number;
+      provenance?: ExternalCorpusProvenance;
     };
   };
   samples: {
@@ -239,6 +241,9 @@ export async function measureCalibration(
         sha256: benchmark.corpus.sha256,
         kind: benchmark.corpus.kind,
         cases: benchmark.corpus.cases,
+        ...(benchmark.corpus.provenance
+          ? { provenance: benchmark.corpus.provenance }
+          : {}),
       },
     },
     samples: {

@@ -38,6 +38,7 @@ try {
     "agentship outcome-metrics",
     "agentship metrics",
     "agentship leaderboard",
+    "agentship import-swebench",
     "agentship verify-signature",
     "--signing-key <path>",
     "--approve-path <pattern>",
@@ -60,6 +61,85 @@ try {
     report.corpus.cases !== 12
   ) {
     throw new Error("Bundled CLI benchmark output is incomplete.");
+  }
+  const importedCorpusDirectory = path.join(temporaryDirectory, "swebench-import");
+  const importedLogsDirectory = path.join(importedCorpusDirectory, "logs", "project__repo-1");
+  await mkdir(importedLogsDirectory, { recursive: true });
+  await writeFile(
+    path.join(importedCorpusDirectory, "dataset.jsonl"),
+    `${JSON.stringify({
+      instance_id: "project__repo-1",
+      repo: "project/repo",
+      base_commit: "a".repeat(40),
+      problem_statement: "Update the behavior and add regression coverage.",
+    })}\n`
+  );
+  await writeFile(
+    path.join(importedCorpusDirectory, "predictions.jsonl"),
+    `${JSON.stringify({
+      instance_id: "project__repo-1",
+      model_name_or_path: "standalone-model",
+      model_patch: "diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n@@ -1 +1 @@\n-old\n+new\n",
+    })}\n`
+  );
+  await writeFile(
+    path.join(importedLogsDirectory, "report.json"),
+    `${JSON.stringify({ "project__repo-1": { resolved: false, infra_failure: false } })}\n`
+  );
+  await execFileAsync(
+    process.execPath,
+    [
+      isolatedCli,
+      "import-swebench",
+      "--dataset",
+      "dataset.jsonl",
+      "--predictions",
+      "predictions.jsonl",
+      "--reports",
+      "logs",
+      "--output",
+      "corpus.json",
+      "--candidate-run",
+      "standalone-run",
+      "--evidence-base-url",
+      `https://github.com/example/results/blob/${"b".repeat(40)}/`,
+      "--dataset-name",
+      "SWE-bench/SWE-bench_Verified",
+      "--dataset-revision",
+      "c".repeat(40),
+      "--split",
+      "test",
+      "--source-url",
+      "https://huggingface.co/datasets/SWE-bench/SWE-bench_Verified",
+      "--selection",
+      "Every prediction in this parser fixture.",
+      "--retrieved-at",
+      "2026-10-10",
+    ],
+    { cwd: importedCorpusDirectory, encoding: "utf8" }
+  );
+  const importedCorpus = JSON.parse(
+    await readFile(path.join(importedCorpusDirectory, "corpus.json"), "utf8")
+  );
+  if (
+    importedCorpus.kind !== "external_evaluation" ||
+    importedCorpus.cases?.[0]?.source?.predictionSha256?.length !== 64 ||
+    importedCorpus.cases?.[0]?.source?.outcomeSha256?.length !== 64
+  ) {
+    throw new Error("Bundled CLI SWE-bench import output is incomplete.");
+  }
+  const importedBenchmarkRun = await execFileAsync(
+    process.execPath,
+    [isolatedCli, "benchmark", "--fixtures", "corpus.json"],
+    { cwd: importedCorpusDirectory, encoding: "utf8" }
+  );
+  const importedBenchmark = JSON.parse(importedBenchmarkRun.stdout);
+  if (
+    importedBenchmark.corpus?.kind !== "external_evaluation" ||
+    importedBenchmark.corpus?.cases !== 1 ||
+    importedBenchmark.results?.[0]?.source?.instanceId !== "project__repo-1"
+  ) {
+    throw new Error("Bundled CLI could not benchmark its imported SWE-bench corpus.");
   }
   const initializedRepository = path.join(temporaryDirectory, "initialized");
   await mkdir(initializedRepository);
@@ -347,7 +427,7 @@ try {
   if (!verifiedSignature.stdout.includes("AgentShip signature: VALID")) {
     throw new Error("Bundled CLI did not verify detached signature evidence.");
   }
-  console.log("Bundled CLI init, ci-init, doctor, review, benchmark, leaderboard, outcome, missed, outcome-metrics, metrics, and signature commands run outside the repository without node_modules.");
+  console.log("Bundled CLI init, ci-init, doctor, review, benchmark, SWE-bench import, leaderboard, outcome, missed, outcome-metrics, metrics, and signature commands run outside the repository without node_modules.");
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
 }
