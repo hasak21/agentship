@@ -153,7 +153,25 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 
 # Optional outbound provider request deadline (default: 30000)
 # LLM_REQUEST_TIMEOUT_MS=30000
+
+# Optional bounded research-run overrides
+# AGENTSHIP_LLM_MAX_CALLS=20
+# AGENTSHIP_LLM_MAX_INPUT_BYTES=4194304
+# AGENTSHIP_LLM_MAX_RESERVED_OUTPUT_TOKENS=65536
+# AGENTSHIP_LLM_MAX_REPORTED_TOKENS=100000
+# AGENTSHIP_LLM_RUN_TIMEOUT_MS=180000
 ```
+
+Provider calls default to at most 4,096 output tokens and accept at most 4 MiB of UTF-8
+response data. The request deadline remains active through body consumption, not only
+until response headers arrive. These per-call safeguards do not replace deployment-level
+authentication, concurrency limits, or spending controls.
+
+Multi-agent research requests additionally share a single aggregate budget across all
+fan-outs, critic revisions, comparison tracks, and judge calls. The SSE stream emits
+`budget` events at the start and end of the run with limits and observed reservations.
+Environment overrides are range-validated; the budget is a resource/cost proxy, not a
+currency-denominated billing guarantee.
 
 ### 3. Run Development Server & Tests
 
@@ -184,6 +202,12 @@ node /path/to/agentship/dist/agentship.cjs review --task task.md
 scripts and never overwrites an existing policy. `doctor` validates the policy and local
 isolation prerequisites while explaining unenforced direct-execution boundaries.
 
+AgentShip reads configuration through a fixed 256 KiB regular-file buffer. It bounds
+checks and policy lists, validates environment names and policy scalar types, and rejects
+duplicate check or policy identities before running commands. This protects parsing and
+evidence integrity; local `.agentship.yml` commands are still trusted code unless an
+isolated, trusted-base CI policy is used.
+
 To add the neutral two-stage GitHub report flow to an npm project, use an immutable,
 reviewed AgentShip commit:
 
@@ -211,6 +235,12 @@ npm run review -- --task task.md --confirm R1
 The confirmation is recorded evidence, not authenticated approval or a signature.
 Requirements mapped to `.agentship.yml` protected paths with
 `requireManualApproval: true` also require confirmation automatically.
+
+Task files are read with a 256 KiB bound and accept at most 256 uniquely numbered
+requirements, each no larger than 16 KiB. Fenced Markdown examples cannot create
+requirements or activate the strict-coverage directive. Duplicate, empty-confirmation,
+and out-of-range identities fail closed; hostile prose remains data and is encoded when
+rendered into Markdown.
 
 Protected-path policy also evaluates the complete observed changed-file set, even when a
 task omits path annotations. Approve each matching configured pattern explicitly:
@@ -360,7 +390,12 @@ The worker copies Git-tracked and non-ignored untracked files without `.git`, `.
 the copied workspace writable, mounts `node_modules` and the minimal system/Node runtime
 read-only, creates fresh `/tmp` and home directories, and discards the copy afterward.
 Network is denied unless the trusted policy explicitly says `network: allowed`. Workspace
-copying is bounded to 200,000 entries and 2 GiB. Unsupported platforms or a missing
+copying is bounded to 200,000 entries and 2 GiB. An isolated check can additionally set
+`resources.maxWorkspaceMiB`; AgentShip samples aggregate logical bytes across the writable
+workspace and private `/tmp`, terminates the process tree on excess or accounting failure,
+and records the limit, maximum observation, and result. The official policies set 1024 MiB.
+This sampled budget catches retained growth but is not a hard filesystem quota and can miss
+short-lived create/delete spikes between 250 ms samples. Unsupported platforms or a missing
 backend fail closed. This is meaningful host-file, mutation, PID, and network namespace
 isolation, but not a VM or a defense against kernel vulnerabilities. See
 `docs/ISOLATED_CHECKS.md` for exact boundaries.
@@ -490,6 +525,15 @@ safe file oracles; it never executes corpus commands. It remains a synthetic reg
 baseline, not a claim of representative real-world accuracy. The earlier metadata-only
 scenario suite remains available through `npm run benchmark:intent:scenarios`.
 
+Externally evaluated candidate sets use a separate `external_evaluation` schema. AgentShip
+requires immutable dataset provenance and preserves each repository, base commit,
+candidate identity, and outcome-evidence URL in its output. This prevents an ordinary
+labeled fixture from being presented as external evidence; it does not make a selected
+sample representative. See `docs/EXTERNAL_CORPUS.md` for the schema and publication rules.
+The `import-swebench` command deterministically joins an immutable task export, official
+prediction JSONL, and packaged per-instance `report.json` evidence without executing
+third-party code.
+
 Compile multiple agents' hash-bound reports for one identical evaluation suite:
 
 ```bash
@@ -504,9 +548,10 @@ synthetic suite representative. See `docs/LEADERBOARD.md`.
 ### 5. GitHub pull-request report mode
 
 The checked-in `.github/workflows/agentship-report.yml` runs on `pull_request` with
-read-only permissions and no secrets. It builds AgentShip and loads policy from the base
-commit, reviews the subject in a separate checkout, and uploads JSON/Markdown evidence as
-an artifact. It also publishes the Markdown report to the workflow job summary and includes
+read-only permissions and no secrets. It invokes AgentShip from an immutable reusable
+workflow revision, loads repository policy and task extraction from a separate base-commit
+checkout, reviews the exact subject in another checkout, and uploads JSON/Markdown evidence
+as an artifact. It also publishes the Markdown report to the workflow job summary and includes
 SARIF in the artifact. A separate trusted `workflow_run` publisher downloads that artifact
 as untrusted data, validates the bounded report and event bindings, and creates an
 always-neutral Check Run on the pull-request head. Keep the subject workflow on
@@ -541,6 +586,11 @@ See `docs/CI_REPORT_MODE.md` for the trust boundary.
 
 ### `POST /api/mcp` (Model Context Protocol JSON-RPC 2.0)
 Standard MCP server supporting tools (`audit_diff`, `inspect_diff`, `run_multiagent_topology`, `get_telemetry_summary`) and resources (`agentship://guidelines/audit_rubric`, `agentship://topologies/catalog`).
+
+All production model calls keep application policy in the system role and serialize the
+caller task plus untrusted diffs, documents, and prior model output in a JSON data envelope.
+This reduces prompt-role confusion but does not make model judgments deterministic;
+LLM findings never replace executable checks or human approval.
 
 **Connect via Claude Code:**
 ```bash

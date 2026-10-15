@@ -16,6 +16,15 @@ Only observed, reproduced, or explicitly attested evidence may satisfy a require
 
 The first local runner executes commands from the repository's trusted `.agentship.yml`. It is intended for a developer's own checkout. It is not yet safe for hostile pull requests because repository commands execute on the host.
 
+Configuration parsing is fail-closed and availability-bounded before any configured
+command runs. AgentShip reads at most 256 KiB from a regular file into a fixed buffer,
+bounds check and policy-list cardinalities, validates scalar types and environment-variable
+identifiers, rejects control characters in human-facing check/path identities, and rejects
+duplicate check, protected-path, suppression, and blocking-kind identities. Commands are
+bounded to 16 KiB each. These controls prevent ambiguous evidence and parser amplification;
+they do not make a locally selected policy trustworthy. Hostile CI must still load policy
+from the separately checked-out trusted base revision.
+
 Before privileged maintainer-side execution, AgentShip must add aggregate kernel-enforced worker budgets and authenticated policy/approval provenance. The current hosted report workflow provisions a digest-pinned bubblewrap package and combines disposable-copy, filesystem, PID, default network isolation, a cumulative check wall-clock deadline, and per-process limits. It remains secretless, neutral, and non-gating; the publisher attests the validated canonical report, but the subject execution itself is not workload-attested.
 
 ## Evidence manifest
@@ -93,6 +102,24 @@ Next.js route handlers are public endpoints. They may select a supported provide
 
 The lower-level provider client also refuses to inherit an environment credential when code supplies an explicit base URL without an explicit credential. This is defense in depth against future route regressions.
 
+Provider availability is bounded at the response boundary as well as the request boundary.
+Every protocol applies a 4,096-token output default (internal callers may request only a
+validated 1–65,536 range), streams at most 4 MiB of response bytes, rejects invalid UTF-8
+or JSON, and keeps the abort deadline active until the complete bounded body is consumed.
+Declared oversized bodies are rejected before consumption and streamed excess cancels the
+reader. These are per-call bounds; deployment-level authentication, rate limits, concurrent
+request caps, and aggregate spending controls remain operator responsibilities.
+
+The research route also creates one shared budget before any topology executes. Planner,
+worker, debate, critic, comparison, and judge calls atomically reserve against default
+limits of 20 calls, 4 MiB of cumulative prompt content, 65,536 output tokens, 100,000
+provider-reported total tokens, and 180 seconds. Parallel branches share the same object,
+so a fan-out cannot independently receive the full allowance. Every call timeout is
+clamped to the remaining run lifetime; exhausted budgets prevent subsequent provider
+calls and are emitted as start/final SSE evidence. Deployment environment overrides are
+bounded and invalid values fail closed. Reported usage remains a provider claim, and these
+limits are resource proxies—not a currency-denominated or service-wide spending cap.
+
 ## Local check environment
 
 Local checks receive a minimal cross-platform environment allowlist. A repository may request additional variable names for a check, but captured evidence records only those names. Values whose names indicate credentials, tokens, cookies, passwords, secrets, or authenticated proxies are redacted from stdout and stderr.
@@ -115,7 +142,12 @@ a private `/proc`, minimal `/dev`, and fresh temporary/home directories. It does
 the host home, `/etc`, or repository writes made inside the disposable copy. An explicitly
 network-allowed worker additionally receives read-only TLS and resolver files. Copy setup
 is bounded to 200,000 entries and 2 GiB and fails closed on special files or unavailable
-Linux user namespaces. This boundary does not prevent kernel exploits, side channels,
+Linux user namespaces. An optional fail-closed writable-storage monitor samples aggregate
+logical bytes across the disposable workspace and private `/tmp`, including a final sample
+after process exit. It records the maximum observation and terminates the process tree on
+excess or accounting failure. An entry that disappears during traversal is normal worker
+churn and is omitted from that observation; other traversal errors fail closed. Sampling is not a hard filesystem quota and can miss
+short-lived spikes. This boundary does not prevent kernel exploits, side channels,
 resource use outside current per-process limits, or malicious behavior in an explicitly
 mounted runtime/dependency tree.
 
@@ -153,7 +185,25 @@ commands, finding titles, and operator-supplied reasons are normalized and encod
 they enter fixed report prose, tables, or code markup. This prevents those values from
 creating apparent AgentShip headings, columns, links, or raw HTML. The underlying JSON
 and SARIF preserve structured evidence; other consumers remain responsible for encoding
-it for their own output context.
+it for their own output context. Before parsing, a task must be a regular file no larger
+than 256 KiB. The parser accepts at most 256 uniquely numbered requirements, bounds each
+requirement to 16 KiB, normalizes numeric identities, and ignores fenced Markdown content
+when recognizing sections or the strict-coverage directive. An adversarial fixture corpus
+retains hostile markup and bidirectional characters as structured task data while proving
+that duplicate, empty, oversized, and fence-injected structures fail closed or remain inert.
+
+Model prompts are a separate probabilistic boundary. Production audit, research, and MCP
+call sites construct messages through one helper: fixed application instructions remain in
+the system role, while the caller objective and all reference material are serialized as a
+single-line JSON envelope. Only `task` defines the caller objective; source, diffs, task
+context, documents, prior model answers, and other derived text live under `data` and are
+explicitly declared non-authoritative. Caller-supplied topology labels are normalized to an
+allowlist before use. An adversarial corpus places role-like prose, markup, fences,
+bidirectional text, and JSON-looking delimiters in source, test-output, policy,
+repository-instruction, and prior-model-output surfaces, and verifies that they round-trip
+only as string values and never enter the system message. This is defense in depth, not a security proof: models can still
+misinterpret data or follow injections, so their verdicts remain inferred claims and cannot
+satisfy deterministic checks or approve a gate.
 
 A task containing the exact `<!-- agentship: strict-change-coverage -->` directive turns unattributed files into a warning-level finding. The task document itself is excluded because it is review input rather than implementation output. Only explicit path mappings satisfy strict attribution; inferred roles cannot hide an unattributed file. The directive is task-owned and warning-only, so it is not an immutable repository policy and is not sufficient for hostile pull-request enforcement.
 
@@ -171,12 +221,21 @@ The primary executable corpus contains 12 declarative before/after patch cases. 
 
 The `benchmark --fixtures` command validates corpus paths, size bounds, schema, and unique case identifiers, then emits the source SHA-256, aggregate confusion-matrix metrics, every case result, and executable oracle outcomes where present. The standalone executable requires an explicit corpus path; it does not embed a favorable corpus, execute corpus code, or call a model. Corpus provenance and representativeness remain the benchmark publisher's responsibility.
 
+Externally evaluated candidates use a distinct `external_evaluation` schema. It requires
+an immutable dataset revision, exact dataset-export and predictions-file hashes, credential-free HTTPS source, deterministic selection
+description, retrieval date, and a unique instance/candidate identity bound to repository,
+full base commit, exact candidate-patch and outcome-report hashes, and outcome evidence. The benchmark retains those fields but does not
+fetch them, authenticate the named candidate, rerun the external evaluator, or prove that
+selection was followed. A representative result still requires independently produced
+candidates and a published sampling method; see `docs/EXTERNAL_CORPUS.md`.
+
 ## CI report boundary
 
-The subject GitHub workflow uses the unprivileged `pull_request` event with `contents: read`, no repository secrets, blank CLI token variables, a GitHub-hosted disposable runner, and full-commit-SHA-pinned official actions. It checks out the base revision and pull-request subject separately. The AgentShip executable, task extractor, and `.agentship.ci.yml` policy are built or loaded from the trusted base checkout; pull-request changes cannot replace them for that run. The PR title/body is passed as data through the GitHub event file, never interpolated into a shell program. JSON, Markdown, and SARIF reports are uploaded as artifacts, and the Markdown is copied into the workflow job summary.
+The subject GitHub workflow uses the unprivileged `pull_request` event with `contents: read`, no repository secrets, blank CLI token variables, a GitHub-hosted disposable runner, and full-commit-SHA-pinned official actions. A minimal caller pins the reusable AgentShip verifier workflow to an immutable commit. That verifier checks out three distinct trust roots: its own executable and task extractor from the pinned AgentShip revision, repository policy from the target repository's base revision, and the exact pull-request subject under review. Pull-request changes cannot replace the verifier or effective policy for that run. The PR title/body is passed as data through the GitHub event file, never interpolated into a shell program. JSON, Markdown, and SARIF reports are uploaded as artifacts, and the Markdown is copied into the workflow job summary.
 
 A separate default-branch `workflow_run` publisher holds `checks: write`,
-`attestations: write`, and `id-token: write`. It checks out only trusted publisher code,
+`attestations: write`, and `id-token: write`. A minimal caller pins the reusable publisher
+workflow to an immutable AgentShip commit; the publisher checks out only that trusted publisher code,
 downloads the named artifact from the exact triggering run, and treats every artifact
 byte as untrusted data. The parser bounds both event and report, requires one
 event-associated pull request, verifies repository and base bindings, and selects the
@@ -195,7 +254,7 @@ required branch-protection check; doing so would confuse report delivery with ap
 
 The subject's configured checks execute hostile repository code inside disposable bubblewrap workspaces on a GitHub-hosted runner. A trusted-base installer fetches one fixed Ubuntu Noble amd64 package, checks its published SHA-256 before installation, rejects setuid/wrong-version binaries, and smoke-tests namespace creation. Every check gets a fresh network namespace. The Next build uses pinned Geist v1.7.2 variable assets with fixed hashes and the SIL Open Font License stored in the repository, removing its former Google Fonts fetch. This remains suitable only for secretless, read-only reporting on GitHub-hosted disposable runners. It is not safe for self-hosted runners, privileged subject triggers, subject write tokens, secrets, or merge gating. GitHub repository settings can also opt into write tokens or secrets for fork workflows; operators must leave those options disabled. The incoming unsigned artifact may be attacker-influenced despite the trusted verifier, which is why the privileged publisher only validates and attests a fresh canonical copy and emits a bounded neutral summary. Live fork-PR validation remains required before the workflow is marked fully delivered.
 
-Base-owned `whenChanged` patterns select checks using only exact repository paths and trailing `/**` directory patterns. A non-applicable check is recorded as `skipped`, never as passing; a task that explicitly requires that check remains unsatisfied. Base-owned changed-file and diff-byte limits produce a blocker and skip repository commands before an oversized review executes. Per-check and workflow wall-clock timeouts are enforced. The official Linux policy additionally applies per-process CPU-time, file-size, and descriptor limits through `prlimit`, and bubblewrap supplies a bounded disposable copy plus PID/filesystem/network namespaces. A configurable address-space bound exists but is omitted for official Node checks because it is not a reliable resident-memory bound and breaks runtimes that reserve large virtual ranges. Aggregate process-tree accounting, reliable memory, disk-capacity, process-count, host-kernel isolation, and dependency installation with network access outside the worker remain residual risks.
+Base-owned `whenChanged` patterns select checks using only exact repository paths and trailing `/**` directory patterns. A non-applicable check is recorded as `skipped`, never as passing; a task that explicitly requires that check remains unsatisfied. Base-owned changed-file and diff-byte limits produce a blocker and skip repository commands before an oversized review executes. Per-check and workflow wall-clock timeouts are enforced. The official Linux policy additionally applies per-process CPU-time, file-size, and descriptor limits through `prlimit`; a 1024 MiB sampled writable-storage budget covers the disposable workspace and private `/tmp`; and bubblewrap supplies PID/filesystem/network namespaces. A configurable address-space bound exists but is omitted for official Node checks because it is not a reliable resident-memory bound and breaks runtimes that reserve large virtual ranges. Aggregate process-tree CPU/memory accounting, hard disk-capacity quotas, process-count limits, host-kernel isolation, and dependency installation with network access outside the worker remain residual risks.
 
 Opt-in causal checks require an explicit base revision and bubblewrap. After a head pass,
 AgentShip creates a detached merge-base worktree, overlays only changed regular files
@@ -228,7 +287,7 @@ suite to exact task and report hashes. It rejects incomparable task sets and ran
 timestamps or model calls. This establishes reproducible aggregation, not agent identity,
 report authenticity, complete submission collection, or corpus representativeness.
 
-The fork workflow loads protected-path policy from the trusted base checkout, so pull-request changes cannot weaken the effective policy used for that run. Local working-tree reviews still trust the mutable checkout policy. Authenticated approvals and signed override records remain later provenance work.
+The fork workflow loads protected-path policy from the separate target-base policy checkout, so pull-request changes cannot weaken the effective policy used for that run. Local working-tree reviews still trust the mutable checkout policy. Authenticated approvals and signed override records remain later provenance work.
 
 The trusted-policy boundary is covered by an executable regression: a subject modifies its own `.agentship.yml` from gate mode to permissive report mode, removes protected paths, and substitutes a passing check, while AgentShip loads an external base-owned configuration. The resulting report retains gate mode and emits both the trusted required-check failure and protected-path blocker. The official workflow separately asserts that it never passes subject-controlled `--approve-path` or `--override` inputs. This proves precedence for the checked-in workflow structure; GitHub settings and live fork behavior remain external deployment assumptions.
 

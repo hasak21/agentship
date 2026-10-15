@@ -18,7 +18,8 @@ AgentShip independently verifies whether agent-written code is ready to ship and
 - [x] Complete the hostile-repository and forked-PR threat model.
 - [x] Update the web product language from orchestration lab to AgentShip Verify.
 - [x] Bind locally by default and add bounded, optionally authenticated API requests.
-- [x] Abort stalled upstream LLM requests before supervisor retries.
+- [x] Bound upstream LLM calls with whole-response deadlines, a 4 MiB streaming response limit, strict UTF-8/JSON parsing, and a cross-provider 4,096-token default.
+- [x] Bound each research run across topology fan-outs, critic passes, comparisons, and judges by calls, prompt bytes, reserved/reported tokens, and total wall-clock duration, with streamed budget evidence.
 
 Exit criterion: no AgentShip report presents model output as executed evidence.
 
@@ -54,7 +55,7 @@ Exit criterion: changes to AgentShip routinely carry an independently produced v
 - [x] Map requirements to files, symbols, tests, and documentation through explicit path/check/symbol evidence and labeled test/documentation role inference.
 - [x] Identify explicit/inferred omissions and opt-in strict unattributed changes while keeping semantic relevance claims out of deterministic evidence.
 - [x] Add opt-in causal regression checks that retain pass-on-head/fail-on-base evidence with explicit test overlays.
-- [~] Measure omission recall and false-positive rate (corpus-hashed 12-case executable baseline delivered at 0.667 precision/recall; representative external corpus pending).
+- [~] Measure omission recall and false-positive rate (corpus-hashed 12-case executable baseline delivered at 0.667 precision/recall, plus a fail-closed external provenance contract and deterministic official SWE-bench artifact importer; independently collected representative external candidates remain pending).
 
 Exit criterion: omitted requirements are detected with measured, publishable accuracy.
 
@@ -63,7 +64,7 @@ Exit criterion: omitted requirements are detected with measured, publishable acc
 - [~] Add non-destructive team onboarding (npm lockfile validation, conservative CI policy, immutable verifier pin, minimal reusable-workflow callers, unit coverage, disposable-repository installation, and live first-party reusable report/publisher validation delivered; cross-repository validation pending).
 - [~] Build a fork-safe GitHub Action (trusted-base, exact-head, read-only, artifact-only report workflow delivered and live same-repository PR validated; live fork-PR validation pending).
 - [~] Publish Check Run, Markdown, JSON, and SARIF outputs (artifact/job-summary outputs and a separate bounded, always-neutral `workflow_run` Check Run publisher with attested canonical JSON and Sigstore bundle are live-validated through both direct and reusable same-repository flows; live fork-PR validation remains pending).
-- [~] Add changed-path filtering and execution budgets (deterministic check selection, pre-execution changed-file/diff limits, per-check plus cumulative check wall-clock deadlines, Linux per-process limits, and digest-pinned disposable bubblewrap workers in official CI delivered; aggregate cgroup accounting and disk-capacity quotas remain pending).
+- [~] Add changed-path filtering and execution budgets (deterministic check selection, pre-execution changed-file/diff limits, per-check plus cumulative check wall-clock deadlines, Linux per-process limits, digest-pinned disposable bubblewrap workers, and a fail-closed sampled aggregate writable-storage budget in official CI delivered; aggregate cgroup accounting and hard disk-capacity quotas remain pending).
 - [x] Add baselines, suppressions with ownership, and report history (bounded comparison, owned suppressions, compatible local history, and validated publisher-written/read-only PR cache restoration delivered).
 
 Exit criterion: a team can install AgentShip without granting merge-blocking authority.
@@ -79,9 +80,9 @@ Exit criterion: teams can enable gate mode without trusting an LLM verdict.
 
 ## M6 — Adversarial maintainer mode
 
-- [~] Execute untrusted checks in isolated, resource-limited workers (Linux bubblewrap disposable-copy backend composes with `prlimit`, and official CI installs a fixed SHA-256-verified Ubuntu package; stronger kernel/VM and aggregate cgroup boundaries remain pending).
+- [~] Execute untrusted checks in isolated, resource-limited workers (Linux bubblewrap disposable-copy backend composes with `prlimit` and sampled aggregate writable-storage enforcement, and official CI installs a fixed SHA-256-verified Ubuntu package; stronger kernel/VM, hard disk quota, and aggregate cgroup boundaries remain pending).
 - [~] Enforce network denial and secret isolation (all official checks use fresh network namespaces and minimal filesystems with no host home or `/etc`, including a live GitHub-hosted same-repository PR run and an offline build backed by pinned local fonts; dependency installation, fork-specific behavior, and non-isolated local checks remain outside completed validation).
-- [~] Treat source, task text, tests, and repository instructions as hostile inputs (structured parsing and Markdown report anti-forgery escaping delivered; model prompt isolation and broader adversarial corpus remain pending).
+- [~] Treat source, task text, tests, and repository instructions as hostile inputs (bounded fence-aware task/configuration parsing, Markdown report anti-forgery escaping, JSON prompt envelopes with trusted-system/untrusted-data separation across production model call sites, policy identity/cardinality validation, and adversarial task/source/test/policy prompt corpora delivered; deeper source-language semantics and deterministic model-content defenses remain pending).
 - [~] Sign evidence manifests and preserve verifier provenance (trusted Git path/version/digest evidence, exact standalone-verifier and Node runtime digests, recorded OS/GitHub runner-image identity, detached Ed25519 report signatures, and GitHub-workload-attested canonical publisher reports delivered; subject-runner attestation and authenticated Ed25519 key ownership remain pending).
 
 Exit criterion: a malicious pull request cannot escape the runner, obtain secrets, or approve itself.
