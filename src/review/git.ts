@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { mkdtemp, open, readFile, rm } from "node:fs/promises";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { GitProvenance } from "./types";
+import { collectUntrackedManifest } from "./untracked-evidence";
 
 const execFileAsync = promisify(execFile);
 const MAX_GIT_BYTES = 128 * 1024 * 1024;
@@ -191,9 +192,9 @@ export async function collectGitEvidence(
   if (options.staged) {
     const [diff, names] = await Promise.all([
       git(["diff", "--cached", "--binary", "--no-ext-diff"], repositoryRoot),
-      git(["diff", "--cached", "--name-only", "--no-ext-diff"], repositoryRoot),
+      git(["diff", "--cached", "--name-only", "-z", "--no-ext-diff"], repositoryRoot),
     ]);
-    return { scope: "staged", diff, changedFiles: splitLines(names) };
+    return { scope: "staged", diff, changedFiles: splitNames(names) };
   }
 
   if (options.base) {
@@ -201,27 +202,19 @@ export async function collectGitEvidence(
     const range = `${options.base}...HEAD`;
     const [diff, names] = await Promise.all([
       git(["diff", "--binary", "--no-ext-diff", range], repositoryRoot),
-      git(["diff", "--name-only", "--no-ext-diff", range], repositoryRoot),
+      git(["diff", "--name-only", "-z", "--no-ext-diff", range], repositoryRoot),
     ]);
-    return { scope: "base", diff, changedFiles: splitLines(names) };
+    return { scope: "base", diff, changedFiles: splitNames(names) };
   }
 
   const [diff, trackedNames, untrackedNames] = await Promise.all([
     git(["diff", "HEAD", "--binary", "--no-ext-diff"], repositoryRoot),
-    git(["diff", "HEAD", "--name-only", "--no-ext-diff"], repositoryRoot),
-    git(["ls-files", "--others", "--exclude-standard"], repositoryRoot),
+    git(["diff", "HEAD", "--name-only", "-z", "--no-ext-diff"], repositoryRoot),
+    git(["ls-files", "--others", "--exclude-standard", "-z"], repositoryRoot),
   ]);
-  const untrackedFiles = splitLines(untrackedNames);
-  const changedFiles = [...new Set([...splitLines(trackedNames), ...untrackedFiles])].sort();
-  const untrackedManifest = (
-    await Promise.all(
-      untrackedFiles.map(async (name) => {
-        const content = await readFile(path.join(repositoryRoot, name));
-        const digest = createHash("sha256").update(content).digest("hex");
-        return `untracked:${name}:${digest}`;
-      })
-    )
-  ).join("\n");
+  const untrackedFiles = splitNames(untrackedNames);
+  const changedFiles = [...new Set([...splitNames(trackedNames), ...untrackedFiles])].sort();
+  const untrackedManifest = await collectUntrackedManifest(repositoryRoot, untrackedFiles);
   return {
     scope: "working-tree",
     diff: [diff, untrackedManifest].filter(Boolean).join("\n"),
@@ -229,6 +222,6 @@ export async function collectGitEvidence(
   };
 }
 
-function splitLines(value: string): string[] {
-  return value ? value.split("\n").filter(Boolean) : [];
+function splitNames(value: string): string[] {
+  return value ? value.split("\0").filter(Boolean) : [];
 }

@@ -1,5 +1,6 @@
-import { mkdir, open, readdir, realpath } from "node:fs/promises";
+import { open, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
+import { ensureArtifactDirectory } from "./artifact-output";
 
 const MAX_HISTORY_ENTRIES = 1_000;
 const MAX_REPORT_BYTES = 5 * 1024 * 1024;
@@ -66,7 +67,7 @@ export async function prepareHistoryDirectory(
   historyDirectory: string
 ): Promise<{ absolutePath: string; relativePath: string }> {
   const directory = resolveHistoryDirectory(repositoryRoot, historyDirectory);
-  await mkdir(directory.absolutePath, { recursive: true });
+  await ensureArtifactDirectory(repositoryRoot, directory.absolutePath);
   await assertResolvedHistoryDirectory(repositoryRoot, directory);
   return directory;
 }

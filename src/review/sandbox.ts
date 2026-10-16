@@ -1,22 +1,18 @@
-import { execFile } from "node:child_process";
-import { constants, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import type { Dirent, Stats } from "node:fs";
 import {
   chmod,
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
   readdir,
-  readlink,
   realpath,
   rm,
-  symlink,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import type { CheckEvidence, ReviewCheckConfig } from "./types";
+import { copySandboxWorkspace } from "./workspace-copy";
 
 export const BUBBLEWRAP_PATH = "/usr/bin/bwrap";
 export const UNSHARE_PATH = "/usr/bin/unshare";
@@ -24,8 +20,6 @@ export const SETPRIV_PATH = "/usr/bin/setpriv";
 export const SUDO_PATH = "/usr/bin/sudo";
 const GIT_PATH = "/usr/bin/git";
 const MAX_WORKSPACE_ENTRIES = 200_000;
-const MAX_WORKSPACE_BYTES = 2 * 1024 * 1024 * 1024;
-const OMITTED_ROOT_ENTRIES = new Set([".agentship", ".git", "node_modules"]);
 const SUDO_INJECTED_ENVIRONMENT = [
   "LOGNAME",
   "SUDO_COMMAND",
@@ -38,7 +32,6 @@ const SUDO_INJECTED_ENVIRONMENT = [
   "XDG_SESSION_ID",
   "XDG_SESSION_TYPE",
 ];
-const execFileAsync = promisify(execFile);
 
 export interface PreparedSandbox {
   file: string;
@@ -86,7 +79,7 @@ export async function prepareBubblewrapSandbox(
   const writableTmp = path.join(sandboxDirectory, "tmp");
   try {
     await mkdir(path.join(writableTmp, "agentship-home"), { recursive: true });
-    await copyWorkspace(absoluteRoot, workspace);
+    await copySandboxWorkspace(absoluteRoot, workspace);
     const nodeModules = path.join(path.resolve(dependenciesRoot), "node_modules");
     const nodeModulesAvailable = await isDirectory(nodeModules);
     if (nodeModulesAvailable) {
@@ -341,61 +334,6 @@ function buildBubblewrapCoreArguments(options: {
     ...command
   );
   return args;
-}
-
-async function copyWorkspace(sourceRoot: string, destinationRoot: string): Promise<void> {
-  const { stdout } = await execFileAsync(
-    GIT_PATH,
-    ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-    { cwd: sourceRoot, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 }
-  );
-  const files = stdout
-    .split("\0")
-    .filter(Boolean)
-    .filter((name) => !OMITTED_ROOT_ENTRIES.has(name.split("/", 1)[0] ?? ""))
-    .sort();
-  if (files.length > MAX_WORKSPACE_ENTRIES) {
-    throw new Error(
-      `Bubblewrap workspace exceeds ${MAX_WORKSPACE_ENTRIES} filesystem entries.`
-    );
-  }
-  await mkdir(destinationRoot, { recursive: true });
-  let bytes = 0;
-  for (const relativeName of files) {
-    if (
-      path.posix.isAbsolute(relativeName) ||
-      relativeName.split("/").some((part) => !part || part === "..")
-    ) {
-      throw new Error(`Git returned an unsafe workspace path '${relativeName}'.`);
-    }
-    const source = path.join(sourceRoot, ...relativeName.split("/"));
-    const destination = path.join(destinationRoot, ...relativeName.split("/"));
-    let stats;
-    try {
-      stats = await lstat(source);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw error;
-    }
-    await mkdir(path.dirname(destination), { recursive: true });
-    if (stats.isSymbolicLink()) {
-      await symlink(await readlink(source), destination);
-      continue;
-    }
-    if (!stats.isFile()) {
-      throw new Error(
-        `Bubblewrap workspace contains unsupported tracked entry '${relativeName}'.`
-      );
-    }
-    bytes += stats.size;
-    if (bytes > MAX_WORKSPACE_BYTES) {
-      throw new Error(
-        `Bubblewrap workspace exceeds ${MAX_WORKSPACE_BYTES} copied bytes.`
-      );
-    }
-    await copyFile(source, destination, constants.COPYFILE_FICLONE);
-    await chmod(destination, stats.mode & 0o777);
-  }
 }
 
 function minimalRuntimePaths(): string[] {

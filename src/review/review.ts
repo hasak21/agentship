@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFile, lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { compareWithBaseline, loadBaseline } from "./baseline";
 import { loadConfig } from "./config";
+import { assessCausalBase } from "./causal-evidence";
+import { overlayCausalTestFiles } from "./causal-overlay";
+import { writeEvidenceArtifacts } from "./artifact-output";
 import {
   collectGitEvidence,
   getGitProvenance,
@@ -167,8 +169,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
             baseCommit: baseWorktree.commit,
             testPaths: check.causal.testPaths,
             overlaidFiles,
-            satisfied:
-              baseEvidence.status === "failed" && baseEvidence.exitCode !== null,
+            ...assessCausalBase(baseEvidence),
             base: baseEvidence,
           },
         };
@@ -201,7 +202,8 @@ export async function runReview(options: RunReviewOptions): Promise<{
       task.requirements,
       gitEvidence.changedFiles,
       checks,
-      gitEvidence.diff
+      gitEvidence.diff,
+      { excludedRolePaths: [task.path] }
     );
     task.requirements = applyRequirementConfirmations(
       task.requirements,
@@ -383,19 +385,15 @@ export async function runReview(options: RunReviewOptions): Promise<{
   const jsonSource = `${JSON.stringify(report, null, 2)}\n`;
   const markdownSource = renderMarkdown(report);
   const sarifSource = `${JSON.stringify(renderSarif(report), null, 2)}\n`;
-  await mkdir(path.dirname(jsonPath), { recursive: true });
-  if (historyTarget) {
-    await mkdir(historyTarget.absoluteDirectory, { recursive: true });
-  }
-  await Promise.all([
-    writeFile(jsonPath, jsonSource, "utf8"),
-    writeFile(markdownPath, markdownSource, "utf8"),
-    writeFile(sarifPath, sarifSource, "utf8"),
+  await writeEvidenceArtifacts(repositoryRoot, [
+    { path: jsonPath, source: jsonSource },
+    { path: markdownPath, source: markdownSource },
+    { path: sarifPath, source: sarifSource },
     ...(historyTarget
       ? [
-          writeFile(historyTarget.absoluteJsonPath, jsonSource, "utf8"),
-          writeFile(historyTarget.absoluteMarkdownPath, markdownSource, "utf8"),
-          writeFile(historyTarget.absoluteSarifPath, sarifSource, "utf8"),
+          { path: historyTarget.absoluteJsonPath, source: jsonSource },
+          { path: historyTarget.absoluteMarkdownPath, source: markdownSource },
+          { path: historyTarget.absoluteSarifPath, source: sarifSource },
         ]
       : []),
   ]);
@@ -407,36 +405,6 @@ export async function runReview(options: RunReviewOptions): Promise<{
     sarifPath,
     historyJsonPath: historyTarget?.absoluteJsonPath,
   };
-}
-
-async function overlayCausalTestFiles(
-  repositoryRoot: string,
-  baseWorktree: string,
-  changedFiles: string[],
-  patterns: string[]
-): Promise<string[]> {
-  const files = changedFiles.filter((file) =>
-    patterns.some((pattern) => pathMatches(pattern, file))
-  );
-  if (files.length === 0) {
-    throw new Error("Causal check testPaths did not match a changed file.");
-  }
-  for (const file of files) {
-    const source = path.join(repositoryRoot, ...file.split("/"));
-    const destination = path.join(baseWorktree, ...file.split("/"));
-    try {
-      const stats = await lstat(source);
-      if (!stats.isFile()) {
-        throw new Error(`Causal overlay '${file}' must be a regular file.`);
-      }
-      await mkdir(path.dirname(destination), { recursive: true });
-      await copyFile(source, destination);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      await rm(destination, { force: true });
-    }
-  }
-  return files;
 }
 
 async function buildHistoryTarget(
@@ -501,7 +469,7 @@ export function buildFindings(
   protectedPaths: ProtectedPathEvidence[] = []
 ): ReviewFinding[] {
   const findings = checks.flatMap((check, index): ReviewFinding[] => {
-    if (check.causal && !check.causal.satisfied) {
+    if (check.causal && (!check.causal.satisfied || !assessCausalBase(check.causal.base).satisfied)) {
       return [{
         id: `causal-check-${index + 1}`,
         severity: "blocker",
@@ -513,6 +481,7 @@ export function buildFindings(
           baseCommit: check.causal.baseCommit,
           baseStatus: check.causal.base.status,
           baseExitCode: check.causal.base.exitCode,
+          baseFailureReason: assessCausalBase(check.causal.base).reason,
         },
       }];
     }
@@ -990,7 +959,8 @@ export function renderMarkdown(report: ReviewReport): string {
         const storage = check.execution?.writableStorage
           ? `storage=${check.execution.writableStorage.maxObservedBytes}/${check.execution.writableStorage.limitBytes} logical bytes, exceeded=${check.execution.writableStorage.exceeded ? "yes" : "no"}, accounting-failed=${check.execution.writableStorage.accountingFailed ? "yes" : "no"}`
           : "";
-        const executionDetails = [limits, isolation, storage].filter(Boolean).join("; ");
+        const cleanup = check.execution?.cleanupFailed ? "workspace-cleanup=failed" : "";
+        const executionDetails = [limits, isolation, storage, cleanup].filter(Boolean).join("; ");
         return `| ${escapeMarkdown(check.name)} | ${check.status} | ${check.exitCode ?? "—"} | ${check.durationMs} ms | ${check.execution?.backend ?? "legacy"}${executionDetails ? ` (${executionDetails})` : ""} | ${
           check.skipReason
             ? `skipped: ${escapeMarkdown(check.skipReason)}`
@@ -999,7 +969,7 @@ export function renderMarkdown(report: ReviewReport): string {
               ? check.selection.matchedFiles.map(markdownCode).join(", ")
               : "no path match"
             : "all changes"
-        }${check.causal ? `; causal base=${check.causal.base.status} at ${markdownCode(check.causal.baseCommit)}` : ""
+        }${check.causal ? `; causal base=${check.causal.base.status} at ${markdownCode(check.causal.baseCommit)}, reason=${assessCausalBase(check.causal.base).reason}` : ""
         } | ${markdownCode(check.command)} |`;
       }
     )
@@ -1052,7 +1022,11 @@ export function renderMarkdown(report: ReviewReport): string {
                 : ""
             }${
               mapping.roleEvidence.length
-                ? ` — inferred ${mapping.roleEvidence.map(({ role, observedFiles }) => `${role}=${observedFiles.length ? observedFiles.map(markdownCode).join(",") : "missing"}`).join("; ")}`
+                ? ` — inferred ${mapping.roleEvidence.map(({ role, observedFiles, excludedDeletedFiles = [], excludedInputFiles = [] }) =>
+                  `${role}=${observedFiles.length ? observedFiles.map(markdownCode).join(",") : "missing"}${
+                    excludedDeletedFiles.length ? ` (excluded deleted: ${excludedDeletedFiles.map(markdownCode).join(",")})` : ""
+                  }${excludedInputFiles.length ? ` (excluded input: ${excludedInputFiles.map(markdownCode).join(",")})` : ""}`
+                ).join("; ")}`
                 : ""
             }`
         )

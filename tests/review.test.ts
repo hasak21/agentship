@@ -840,6 +840,27 @@ test("causal checks block unless the passing head check fails normally on base",
   assert.equal(finding?.evidence.baseStatus, "passed");
 });
 
+test("causal evidence cannot accept infrastructure failures as reproduced regressions", () => {
+  const invalidBases = [
+    check({ status: "failed", exitCode: 0 }),
+    check({ status: "failed", exitCode: 127 }),
+    check({ status: "failed", exitCode: 137 }),
+    check({ status: "failed", exitCode: 1, signal: "SIGTERM" }),
+    check({ status: "failed", exitCode: 1, execution: { backend: "linux-bubblewrap", writableStorage: {
+      enforcement: "sampled-logical-bytes", limitBytes: 1, maxObservedBytes: 2, exceeded: true, accountingFailed: false,
+    } } }),
+  ];
+  for (const base of invalidBases) {
+    const evidence = check({ causal: {
+      expectation: "fails_on_base", baseCommit: "a".repeat(40),
+      testPaths: ["tests/**"], overlaidFiles: ["tests/regression.ts"],
+      satisfied: true, base,
+    } });
+    const [finding] = buildFindings([evidence]);
+    assert.equal(finding?.kind, "causal_check_not_reproduced", `accepted base exit ${base.exitCode}`);
+  }
+});
+
 test("causal review records fail-on-base and pass-on-head evidence", async (context) => {
   if (process.env.AGENTSHIP_SANDBOX === "bubblewrap") {
     context.skip("nested bubblewrap is outside this integration test");
@@ -879,8 +900,98 @@ checks:
     assert.equal(result.report.checks[0]?.causal?.baseCommit, base);
     assert.equal(result.report.checks[0]?.causal?.base.status, "failed");
     assert.equal(result.report.checks[0]?.causal?.satisfied, true);
+    assert.equal(result.report.checks[0]?.causal?.reason, "normal_nonzero_exit");
     assert.deepEqual(result.report.checks[0]?.causal?.overlaidFiles, ["regression.sh"]);
     assert.match(await import("node:fs/promises").then(({ readFile }) => readFile(result.markdownPath, "utf8")), /causal base=failed/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("causal review rejects a storage-only base failure with a zero shell exit", async (context) => {
+  if (process.env.AGENTSHIP_SANDBOX === "bubblewrap") return context.skip("nested bubblewrap");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-causal-storage-"));
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: directory });
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await git(["config", "user.name", "AgentShip test"]);
+    await writeFile(path.join(directory, "value.txt"), "old\n");
+    await writeFile(path.join(directory, "regression.sh"), "exit 0\n");
+    await writeFile(path.join(directory, ".agentship.yml"), `version: 1
+mode: report
+checks:
+  - name: regression
+    run: sh regression.sh
+    isolation: bubblewrap
+    network: denied
+    resources:
+      maxWorkspaceMiB: 1
+    causal:
+      expectation: fails_on_base
+      testPaths:
+        - regression.sh
+`);
+    await git(["add", "."]);
+    await git(["commit", "-qm", "base"]);
+    const { stdout: base } = await git(["rev-parse", "HEAD"]);
+    await writeFile(path.join(directory, "value.txt"), "new\n");
+    await writeFile(path.join(directory, "regression.sh"), 'if test "$(cat value.txt)" = old; then\n  dd if=/dev/zero of=generated.bin bs=1048576 count=2 status=none\nfi\nexit 0\n');
+    await git(["add", "."]);
+    await git(["commit", "-qm", "head"]);
+    const { report } = await runReview({ cwd: directory, base: base.trim() });
+    assert.equal(report.checks[0].status, "passed");
+    assert.equal(report.checks[0].causal?.base.exitCode, 0);
+    assert.equal(report.checks[0].causal?.base.execution?.writableStorage?.exceeded, true);
+    assert.equal(report.checks[0].causal?.satisfied, false);
+    assert.equal(report.checks[0].causal?.reason, "base_resource_limit");
+    assert.equal(report.verdict, "BLOCK");
+    assert.equal(report.findings[0]?.evidence.baseFailureReason, "base_resource_limit");
+    assert.match(renderMarkdown(report), /reason=base_resource_limit/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("causal review refuses base overlay links and cleans up its worktree", async (context) => {
+  if (process.env.AGENTSHIP_SANDBOX === "bubblewrap") return context.skip("nested bubblewrap");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-causal-link-"));
+  const repository = path.join(directory, "repository");
+  const outside = path.join(directory, "outside");
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: repository });
+  try {
+    await mkdir(repository);
+    await mkdir(outside);
+    await writeFile(path.join(outside, "case.sh"), "outside sentinel");
+    await git(["init", "-q"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await git(["config", "user.name", "AgentShip test"]);
+    await symlink(outside, path.join(repository, "tests"));
+    await writeFile(path.join(repository, ".agentship.yml"), `version: 1
+mode: report
+checks:
+  - name: regression
+    run: sh tests/case.sh
+    isolation: bubblewrap
+    network: denied
+    causal:
+      expectation: fails_on_base
+      testPaths:
+        - tests/case.sh
+`);
+    await git(["add", "."]);
+    await git(["commit", "-qm", "base with linked tests"]);
+    const { stdout: base } = await git(["rev-parse", "HEAD"]);
+    await rm(path.join(repository, "tests"));
+    await mkdir(path.join(repository, "tests"));
+    await writeFile(path.join(repository, "tests/case.sh"), "exit 0\n");
+    await git(["add", "-A"]);
+    await git(["commit", "-qm", "head with regular tests"]);
+    await assert.rejects(runReview({ cwd: repository, base: base.trim() }), { code: "ENOTDIR" });
+    const { readFile } = await import("node:fs/promises");
+    assert.equal(await readFile(path.join(outside, "case.sh"), "utf8"), "outside sentinel");
+    const { stdout: worktrees } = await git(["worktree", "list", "--porcelain"]);
+    assert.equal(worktrees.split("\n").filter(line => line.startsWith("worktree ")).length, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -1460,4 +1571,114 @@ test("timed-out checks terminate and record timeout evidence", async () => {
 
   assert.equal(evidence.status, "timed_out");
   assert.ok(evidence.durationMs < 2_000);
+});
+
+test("malformed task annotations fail before repository commands execute", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-annotation-preflight-"));
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: directory });
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.name", "Test"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await writeFile(path.join(directory, ".agentship.yml"), 'version: 1\nmode: report\nchecks:\n  - name: smoke\n    run: node -e "require(\'node:fs\').writeFileSync(\'executed\', \'yes\')"\n');
+    await writeFile(path.join(directory, "task.md"), "## Requirements\n1. Implement the feature.\n   Pass `check:`.\n");
+    await git(["add", "."]);
+    await git(["commit", "-qm", "base"]);
+    await assert.rejects(runReview({ cwd: directory, taskPath: "task.md" }), /Task requirement 'R1': Invalid check/);
+    await assert.rejects(access(path.join(directory, "executed")), { code: "ENOENT" });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("review artifacts must not follow repository output links to host files", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-output-link-"));
+  const repository = path.join(directory, "repository");
+  const outside = path.join(directory, "outside");
+  try {
+    await mkdir(repository);
+    await mkdir(path.join(outside, "reviews"), { recursive: true });
+    await writeFile(path.join(outside, "reviews/ci.json"), "outside sentinel");
+    await writeFile(path.join(repository, ".gitignore"), ".agentship\n");
+    await writeFile(path.join(repository, ".agentship.yml"), "version: 1\nmode: report\nchecks:\n  - name: smoke\n    run: node --version\n");
+    const git = (args: string[]) => execFileAsync("git", args, { cwd: repository });
+    await git(["init", "-q"]);
+    await git(["config", "user.name", "Test"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await git(["add", "."]);
+    await git(["commit", "-qm", "base"]);
+    await symlink(outside, path.join(repository, ".agentship"));
+    await assert.rejects(runReview({ cwd: repository, outputPath: ".agentship/reviews/ci.json" }));
+    const { readFile } = await import("node:fs/promises");
+    assert.equal(await readFile(path.join(outside, "reviews/ci.json"), "utf8"), "outside sentinel");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("all Git review scopes reject deleted roles and task self-evidence", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-role-deletion-"));
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: directory });
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await git(["config", "user.name", "AgentShip test"]);
+    await mkdir(path.join(directory, "tests"));
+    await mkdir(path.join(directory, "docs"));
+    await writeFile(path.join(directory, ".gitignore"), ".agentship/\n");
+    await writeFile(path.join(directory, ".agentship.yml"), "version: 1\nmode: report\nchecks:\n  - name: smoke\n    run: node --version\n");
+    await writeFile(path.join(directory, "tests/cart.test.ts"), "test('cart', () => {});\n");
+    await writeFile(path.join(directory, "docs/guide.md"), "Guide\n");
+    await git(["add", "."]);
+    await git(["commit", "-qm", "baseline"]);
+    const { stdout: base } = await git(["rev-parse", "HEAD"]);
+    await rm(path.join(directory, "tests/cart.test.ts"));
+    await rm(path.join(directory, "docs/guide.md"));
+    await writeFile(path.join(directory, "docs/task.md"), "## Requirements\n1. Add regression tests and update documentation.\n2. Remove obsolete `change:tests/cart.test.ts` and `change:docs/guide.md`.\n");
+    const verify = async (scope: { staged?: boolean; base?: string }) => {
+      const { report } = await runReview({ cwd: directory, taskPath: "docs/task.md", ...scope });
+      const mappings = report.task!.mappings;
+      assert.equal(mappings[0].status, "inferred_missing");
+      assert.deepEqual(mappings[0].missingRoles, ["test", "documentation"]);
+      assert.deepEqual(mappings[0].roleEvidence[1].excludedInputFiles, ["docs/task.md"]);
+      assert.equal(mappings[1].status, "observed");
+      assert.ok(report.findings.some(row => row.kind === "inferred_requirement_role_missing"));
+      assert.match(renderMarkdown(report), /excluded deleted:/);
+      assert.match(renderMarkdown(report), /excluded input:/);
+    };
+    await verify({});
+    await git(["add", "-A"]);
+    await verify({ staged: true });
+    await git(["commit", "-qm", "destructive change"]);
+    await verify({ base: base.trim() });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("timeout does not wait indefinitely for escaped descendants holding output pipes", async (context) => {
+  if (process.platform === "win32") return context.skip("POSIX detached process groups");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-pipe-timeout-"));
+  let escapedPid: number | undefined;
+  try {
+    await writeFile(path.join(directory, "hold-pipes.cjs"), `
+      const { spawn } = require('node:child_process');
+      const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 4000)'], {
+        detached: true, stdio: ['ignore', 'inherit', 'inherit']
+      });
+      console.log('ESCAPED_PID=' + child.pid);
+      child.unref();
+    `);
+    const evidence = await runCheck({
+      name: "inherited-pipes", run: "node hold-pipes.cjs", timeoutSeconds: 0.25,
+    }, directory);
+    escapedPid = Number(evidence.stdout.match(/ESCAPED_PID=(\d+)/)?.[1]) || undefined;
+    assert.ok(escapedPid, "fixture must launch the escaped descendant");
+    assert.equal(evidence.status, "timed_out");
+    assert.ok(evidence.durationMs < 2_500, `held pipes delayed completion to ${evidence.durationMs} ms`);
+    assert.equal(evidence.outputTruncated, true);
+    assert.match(evidence.stderr, /output pipes.*deadline/i);
+  } finally {
+    if (escapedPid) {
+      try { process.kill(escapedPid, "SIGKILL"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
 });

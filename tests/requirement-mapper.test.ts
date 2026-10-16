@@ -26,6 +26,15 @@ test("extracts only explicit change annotations", () => {
   );
 });
 
+test("extensionless and space-containing paths remain explicit mandates", () => {
+  const mappings = mapRequirementsToChangedFiles([
+    requirement("R1", "Update `change:Dockerfile`."),
+    requirement("R2", "Update `change:src/my file.ts`."),
+  ], []);
+  assert.deepEqual(mappings.map(row => row.status), ["missing", "missing"]);
+  assert.deepEqual(mappings.map(row => row.missingReferences), [["Dockerfile"], ["src/my file.ts"]]);
+});
+
 test("extracts explicit check annotations without treating ordinary code as evidence", () => {
   assert.deepEqual(
     extractCheckReferences(
@@ -38,7 +47,7 @@ test("extracts explicit check annotations without treating ordinary code as evid
 test("extracts path-qualified symbol annotations only", () => {
   assert.deepEqual(
     extractSymbolReferences(
-      "Change `symbol:src/auth/session.ts#refreshSession`; document ``symbol:path#name`` and ignore `symbol:no-path`."
+      "Change `symbol:src/auth/session.ts#refreshSession`; document ``symbol:path#name`` and ignore ``symbol:no-path``."
     ),
     [{ path: "src/auth/session.ts", symbol: "refreshSession" }]
   );
@@ -57,6 +66,32 @@ test("infers conservative test and documentation roles with negation controls", 
   );
   assert.deepEqual(inferExpectedFileRoles("Do not document this option."), []);
   assert.deepEqual(inferExpectedFileRoles("Preserve existing tests."), []);
+});
+
+test("role inference separates implementation actions from descriptive clauses", () => {
+  for (const text of [
+    "Add support for the flag - documentation claims the flag already exists.",
+    "Add retry handling — documentation already explains the retry policy.",
+    "Update retry handling; existing tests already cover the protocol.",
+    "The document describes the existing option.",
+    "Refer to the document for the old behavior.",
+  ]) {
+    assert.deepEqual(inferExpectedFileRoles(text), [], text);
+  }
+});
+
+test("role inference retains explicit actions in separate clauses", () => {
+  assert.deepEqual(
+    inferExpectedFileRoles("Add support for the flag; update the operator guide."),
+    ["documentation"]
+  );
+  assert.deepEqual(
+    inferExpectedFileRoles("Update retry handling — add regression tests."),
+    ["test"]
+  );
+  assert.deepEqual(inferExpectedFileRoles("Please document the new flag."), [
+    "documentation",
+  ]);
 });
 
 test("maps exact paths and directory globs to observed changed files", () => {
@@ -156,6 +191,71 @@ test("maps explicit symbols to added or deleted diff lines", () => {
   assert.equal(mappings[1].status, "missing");
   assert.equal(mappings[1].symbolEvidence[0].status, "symbol_not_in_diff");
   assert.equal(mappings[2].symbolEvidence[0].status, "diff_unavailable");
+});
+
+test("deleted test and documentation paths cannot satisfy inferred additions", () => {
+  const diff = `diff --git a/tests/cart.test.ts b/tests/cart.test.ts
+deleted file mode 100644
+--- a/tests/cart.test.ts
++++ /dev/null
+@@ -1 +0,0 @@
+-test('cart', () => {});
+diff --git a/docs/cart.md b/docs/cart.md
+deleted file mode 100644
+--- a/docs/cart.md
++++ /dev/null
+@@ -1 +0,0 @@
+-Cart guide`;
+  const [inferred, explicit] = mapRequirementsToChangedFiles([
+    requirement("R1", "Add regression tests and update documentation."),
+    requirement("R2", "Remove obsolete `change:tests/cart.test.ts`."),
+  ], ["tests/cart.test.ts", "docs/cart.md"], [], diff);
+  assert.equal(inferred.status, "inferred_missing");
+  assert.deepEqual(inferred.missingRoles, ["test", "documentation"]);
+  assert.ok(inferred.roleEvidence.every(row => row.observedFiles.length === 0));
+  assert.deepEqual(inferred.roleEvidence[0].excludedDeletedFiles, ["tests/cart.test.ts"]);
+  assert.equal(explicit.status, "observed", "explicit path changes may legitimately be deletions");
+});
+
+test("task input is not documentation evidence but explicit changes still count", () => {
+  const mappings = mapRequirementsToChangedFiles([
+    requirement("R1", "Update documentation."),
+    requirement("R2", "Revise `change:docs/task.md`."),
+  ], ["docs/task.md"], [], "", { excludedRolePaths: ["docs/task.md"] });
+  assert.equal(mappings[0].status, "inferred_missing");
+  assert.deepEqual(mappings[0].roleEvidence[0].excludedInputFiles, ["docs/task.md"]);
+  assert.equal(mappings[1].status, "observed");
+});
+
+test("hunk content cannot masquerade as file deletion metadata", () => {
+  const diff = `diff --git a/tests/example.test.ts b/tests/example.test.ts
+--- a/tests/example.test.ts
++++ b/tests/example.test.ts
+@@ -0,0 +1,2 @@
++++ /dev/null
++// deleted file mode 100644`;
+  const [mapping] = mapRequirementsToChangedFiles([
+    requirement("R1", "Add tests."),
+  ], ["tests/example.test.ts"], [], diff);
+  assert.equal(mapping.status, "inferred_observed");
+});
+
+test("binary deletions are excluded while replacement tests still count", () => {
+  const diff = `diff --git a/tests/old.test.ts b/tests/old.test.ts
+deleted file mode 100644
+Binary files a/tests/old.test.ts and /dev/null differ
+diff --git a/tests/new.test.ts b/tests/new.test.ts
+new file mode 100644
+--- /dev/null
++++ b/tests/new.test.ts
+@@ -0,0 +1 @@
++test('replacement', () => {});`;
+  const [mapping] = mapRequirementsToChangedFiles([
+    requirement("R1", "Add tests."),
+  ], ["tests/old.test.ts", "tests/new.test.ts"], [], diff);
+  assert.equal(mapping.status, "inferred_observed");
+  assert.deepEqual(mapping.roleEvidence[0].observedFiles, ["tests/new.test.ts"]);
+  assert.deepEqual(mapping.roleEvidence[0].excludedDeletedFiles, ["tests/old.test.ts"]);
 });
 
 test("labels inferred file-role evidence separately from explicit evidence", () => {

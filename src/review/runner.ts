@@ -233,6 +233,19 @@ export async function runCheck(
     });
     let forceKillTimer: NodeJS.Timeout | undefined;
     let storageTimer: NodeJS.Timeout | undefined;
+    const forceTermination = () => {
+      if (childClosed) return;
+      terminateProcessTree(child.pid, "SIGKILL");
+      // ChildProcess.close waits for every inherited pipe, including handles held
+      // by a descendant that escaped the original process group. A deadline must
+      // not depend on that descendant voluntarily closing its descriptors.
+      if (!child.stdout.destroyed || !child.stderr.destroyed) {
+        outputTruncated = true;
+        stderr = append(stderr, Buffer.from("\nAgentShip closed output pipes after the termination deadline; further output was discarded."));
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }
+    };
     const stopForStorage = (message: string, reason: "exceeded" | "accounting") => {
       if (storageFailed) return;
       storageFailed = true;
@@ -242,8 +255,8 @@ export async function runCheck(
       clearTimeout(timer);
       if (!childClosed) {
         terminateProcessTree(child.pid, "SIGTERM");
-        forceKillTimer = setTimeout(
-          () => terminateProcessTree(child.pid, "SIGKILL"),
+        forceKillTimer ??= setTimeout(
+          forceTermination,
           TERMINATION_GRACE_MS
         );
       }
@@ -283,8 +296,8 @@ export async function runCheck(
     const timer = setTimeout(() => {
       timedOut = true;
       terminateProcessTree(child.pid, "SIGTERM");
-      forceKillTimer = setTimeout(
-        () => terminateProcessTree(child.pid, "SIGKILL"),
+      forceKillTimer ??= setTimeout(
+        forceTermination,
         TERMINATION_GRACE_MS
       );
     }, timeoutMs);
@@ -340,6 +353,7 @@ export async function runCheck(
         outputTruncated,
         execution: {
           ...invocation.execution,
+          ...(cleanupFailed ? { cleanupFailed: true as const } : {}),
           ...(workspaceLimitBytes === undefined
             ? {}
             : {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { mapRequirementsToChangedFiles } from "../src/review/requirement-mapper";
 import {
   applyRequirementConfirmations,
   MAX_TASK_DOCUMENT_BYTES,
@@ -58,6 +59,60 @@ Repair refresh handling.
       confirmationBasis: [],
     },
   ]);
+});
+
+test("task parser retains wrapped requirement clauses for evidence mapping", () => {
+  const requirements = parseTaskRequirements("## Requirements\n1. Implement the behavior.\n   Add regression tests in `change:tests/cart.test.ts`.\n   Pass `check:test`.\n2. Preserve compatibility.\n");
+  assert.equal(requirements.length, 2);
+  assert.equal(requirements[0].text, "Implement the behavior.\nAdd regression tests in `change:tests/cart.test.ts`.\nPass `check:test`.");
+  assert.equal(requirements[0].line, 2);
+  assert.equal(requirements[1].line, 5);
+  const [mapping] = mapRequirementsToChangedFiles(requirements, [], [{ name: "test", status: "failed" }]);
+  assert.equal(mapping.status, "missing");
+  assert.deepEqual(mapping.missingReferences, ["tests/cart.test.ts"]);
+  assert.deepEqual(mapping.checkEvidence, [{ name: "test", status: "failed" }]);
+});
+
+test("nested numbered and bullet clauses remain attached to their parent requirement", () => {
+  const requirements = parseTaskRequirements("## Requirements\n1. [confirm] Update the API.\n   1. Preserve `symbol:src/api.ts#handler`.\n   - Add regression tests.\n\n   Update documentation.\n2. Preserve compatibility.\n");
+  assert.deepEqual(requirements.map(row => row.id), ["R1", "R2"]);
+  assert.equal(requirements[0].confirmation, "required");
+  assert.equal(requirements[0].line, 2);
+  const [mapping] = mapRequirementsToChangedFiles(requirements, ["src/api.ts"]);
+  assert.equal(mapping.status, "missing");
+  assert.equal(mapping.symbolEvidence[0].symbol, "handler");
+  assert.deepEqual(mapping.missingRoles, ["test", "documentation"]);
+});
+
+test("continuation indentation accounts for marker width and tab stops", () => {
+  const requirements = parseTaskRequirements("## Requirements\n10. Update the API.\n    Add tests.\n11. Preserve compatibility.\n\tUpdate docs.\n");
+  assert.match(requirements[0].text, /Add tests/);
+  assert.match(requirements[1].text, /Update docs/);
+  assert.throws(() => parseTaskRequirements("## Requirements\n10. Update API.\n   Add tests.\n"), /must align/);
+});
+
+test("continuations do not absorb outside prose, other sections or fenced examples", () => {
+  const requirements = parseTaskRequirements(`## Requirements
+1. Update API.
+   \`\`\`markdown
+   1. Fake \`change:fake.ts\`.
+   \`\`\`
+   Add tests.
+Notes outside the list.
+   Update docs.
+2. Preserve compatibility.
+## Notes
+   Write documentation.
+1. Not a requirement.
+`);
+  assert.equal(requirements.length, 2);
+  assert.equal(requirements[0].text, "Update API.\nAdd tests.");
+  assert.equal(requirements[1].text, "Preserve compatibility.");
+});
+
+test("combined continuation text is subject to the per-requirement byte limit", () => {
+  assert.throws(() => parseTaskRequirements(`## Requirements\n1. ${"x".repeat(8192)}\n   ${"é".repeat(4096)}\n`), /at most 16384 bytes/);
+  assert.deepEqual(parseTaskRequirements("## Requirements\n    1. Indented code outside a parent.\n"), []);
 });
 
 test("task parser marks confirmation requirements and applies operator confirmation", () => {

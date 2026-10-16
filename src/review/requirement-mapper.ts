@@ -1,5 +1,8 @@
 import type { TaskRequirement } from "./task-parser";
 import type { CheckStatus } from "./types";
+import { collectFileDiffEvidence, type FileDiffObservation } from "./git-diff-evidence";
+import { extractPathReferences, extractCheckReferences, extractSymbolReferences, type SymbolReference } from "./evidence-annotations";
+export { extractPathReferences, extractCheckReferences, extractSymbolReferences, type SymbolReference } from "./evidence-annotations";
 
 export interface RequirementCheckEvidence {
   name: string;
@@ -11,11 +14,8 @@ export type InferredFileRole = "test" | "documentation";
 export interface RequirementRoleEvidence {
   role: InferredFileRole;
   observedFiles: string[];
-}
-
-export interface SymbolReference {
-  path: string;
-  symbol: string;
+  excludedDeletedFiles?: string[];
+  excludedInputFiles?: string[];
 }
 
 export interface RequirementSymbolEvidence extends SymbolReference {
@@ -59,9 +59,10 @@ export function mapRequirementsToChangedFiles(
   requirements: TaskRequirement[],
   changedFiles: string[],
   checks: Array<{ name: string; status: CheckStatus }> = [],
-  diff = ""
+  diff = "",
+  options: { excludedRolePaths?: string[] } = {}
 ): RequirementMapping[] {
-  const changedLinesByFile = collectChangedLinesByFile(diff);
+  const changedLinesByFile = collectFileDiffEvidence(diff, changedFiles);
   return requirements.map((requirement) => {
     const references = extractPathReferences(requirement.text);
     const checkReferences = extractCheckReferences(requirement.text);
@@ -111,10 +112,19 @@ export function mapRequirementsToChangedFiles(
       mapSymbolEvidence(reference, changedFiles, changedLinesByFile)
     );
     const symbolsSatisfied = symbolEvidence.every(({ status }) => status === "changed");
-    const roleEvidence = inferredRoles.map((role) => ({
-      role,
-      observedFiles: changedFiles.filter((file) => pathHasRole(file, role)),
-    }));
+    const roleEvidence = inferredRoles.map((role) => {
+      const candidates = changedFiles.filter((file) => pathHasRole(file, role));
+      const excludedDeletedFiles = candidates.filter((file) => changedLinesByFile.get(file)?.deleted);
+      const excludedInputFiles = candidates.filter((file) => options.excludedRolePaths?.includes(file));
+      return {
+        role,
+        observedFiles: candidates.filter((file) =>
+          !changedLinesByFile.get(file)?.deleted && !options.excludedRolePaths?.includes(file)
+        ),
+        ...(excludedDeletedFiles.length ? { excludedDeletedFiles } : {}),
+        ...(excludedInputFiles.length ? { excludedInputFiles } : {}),
+      };
+    });
     const missingRoles = roleEvidence
       .filter(({ observedFiles: files }) => files.length === 0)
       .map(({ role }) => role);
@@ -181,44 +191,11 @@ export function summarizeChangeCoverage(
   };
 }
 
-export function extractPathReferences(text: string): string[] {
-  const candidates = [...text.matchAll(/(?<!`)`change:([^`\n]+)`(?!`)/g)].map((match) =>
-    match[1].trim()
-  );
-  return [...new Set(candidates.filter(isLikelyRepositoryPath).map(normalizePath))];
-}
-
-export function extractCheckReferences(text: string): string[] {
-  const candidates = [...text.matchAll(/(?<!`)`check:([^`\n]+)`(?!`)/g)].map((match) =>
-    match[1].trim()
-  );
-  return [...new Set(candidates.filter((name) => name.length > 0))];
-}
-
-export function extractSymbolReferences(text: string): SymbolReference[] {
-  const candidates = [...text.matchAll(/(?<!`)`symbol:([^`\n]+)`(?!`)/g)]
-    .map((match) => match[1].trim())
-    .map((value) => {
-      const separator = value.lastIndexOf("#");
-      if (separator <= 0) return undefined;
-      const path = normalizePath(value.slice(0, separator).trim());
-      const symbol = value.slice(separator + 1).trim();
-      if (!isLikelyRepositoryPath(path) || !/^[A-Za-z_$][\w$]*$/.test(symbol)) {
-        return undefined;
-      }
-      return { path, symbol };
-    })
-    .filter((reference): reference is SymbolReference => reference !== undefined);
-  return [
-    ...new Map(candidates.map((reference) => [
-      `${reference.path}#${reference.symbol}`,
-      reference,
-    ])).values(),
-  ];
-}
-
 export function inferExpectedFileRoles(text: string): InferredFileRole[] {
   const roles: InferredFileRole[] = [];
+  // An action in one clause must not turn a description in the next into a mandate.
+  // Spaced dashes separate prose; hyphens within names such as end-to-end stay intact.
+  const clauses = text.split(/[.!?;:\r\n]+|\s[-–—]\s/u);
   const testTarget = String.raw`(?:tests?|test\s+coverage|coverage)`;
   const documentationTarget = String.raw`(?:document(?:ation|ing)?|docs?|readme|guide|changelog)`;
   const testIntent = new RegExp(
@@ -226,13 +203,18 @@ export function inferExpectedFileRoles(text: string): InferredFileRole[] {
     "i"
   );
   const documentationIntent = new RegExp(
-    String.raw`(?:\bdocument\b|\b(?:add|create|write|update|extend|include)\b[^.!?\n]{0,80}\b${documentationTarget}\b)`,
+    String.raw`(?:(?:^\s*(?:please\s+)?|\b(?:and|then|must|should|shall)\s+)document\s+\S|\b(?:add|create|write|update|extend|include)\b[^.!?\n]{0,80}\b${documentationTarget}\b)`,
     "i"
   );
-  if (testIntent.test(text) && !hasNegatedTarget(text, testTarget)) roles.push("test");
   if (
-    documentationIntent.test(text) &&
-    !hasNegatedTarget(text, documentationTarget)
+    clauses.some((clause) =>
+      testIntent.test(clause) && !hasNegatedTarget(clause, testTarget)
+    )
+  ) roles.push("test");
+  if (
+    clauses.some((clause) =>
+      documentationIntent.test(clause) && !hasNegatedTarget(clause, documentationTarget)
+    )
   ) {
     roles.push("documentation");
   }
@@ -250,55 +232,15 @@ function combinedCheckStatus(
   return "passed";
 }
 
-function collectChangedLinesByFile(diff: string): Map<string, string[]> {
-  const changedLines = new Map<string, string[]>();
-  let currentPath: string | undefined;
-  let inHunk = false;
-
-  for (const line of diff.split("\n")) {
-    const header = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
-    if (header) {
-      currentPath = header[2];
-      changedLines.set(currentPath, []);
-      inHunk = false;
-      continue;
-    }
-    if (line.startsWith("+++ ") && currentPath) {
-      const path = line.replace(/^\+\+\+\s+(?:b\/)?/, "").trim();
-      if (path !== "/dev/null" && path !== currentPath) {
-        const existing = changedLines.get(currentPath) ?? [];
-        changedLines.delete(currentPath);
-        currentPath = path;
-        changedLines.set(currentPath, existing);
-      }
-      continue;
-    }
-    if (line.startsWith("@@ ")) {
-      inHunk = true;
-      continue;
-    }
-    if (
-      currentPath &&
-      inHunk &&
-      (line.startsWith("+") || line.startsWith("-")) &&
-      !line.startsWith("+++") &&
-      !line.startsWith("---")
-    ) {
-      changedLines.get(currentPath)?.push(line.slice(1));
-    }
-  }
-  return changedLines;
-}
-
 function mapSymbolEvidence(
   reference: SymbolReference,
   changedFiles: string[],
-  changedLinesByFile: Map<string, string[]>
+  changedLinesByFile: Map<string, FileDiffObservation>
 ): RequirementSymbolEvidence {
   if (!changedFiles.includes(reference.path)) {
     return { ...reference, status: "file_unchanged" };
   }
-  const lines = changedLinesByFile.get(reference.path);
+  const lines = changedLinesByFile.get(reference.path)?.lines;
   if (!lines) return { ...reference, status: "diff_unavailable" };
   const escaped = reference.symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const token = new RegExp(`(^|[^A-Za-z0-9_$])${escaped}([^A-Za-z0-9_$]|$)`);
@@ -308,14 +250,6 @@ function mapSymbolEvidence(
       ? "changed"
       : "symbol_not_in_diff",
   };
-}
-
-function isLikelyRepositoryPath(value: string): boolean {
-  return (
-    !value.includes(" ") &&
-    (value.includes("/") || /\.[a-z0-9]+$/i.test(value)) &&
-    !value.includes("://")
-  );
 }
 
 function normalizePath(value: string): string {

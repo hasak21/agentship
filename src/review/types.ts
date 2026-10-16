@@ -2,6 +2,18 @@ export type ReviewMode = "report" | "gate";
 export type ReviewVerdict = "PASS" | "WARN" | "BLOCK";
 export type CheckStatus = "passed" | "failed" | "timed_out" | "skipped";
 
+export type CausalBaseReason =
+  | "normal_nonzero_exit"
+  | "base_not_failed"
+  | "base_timed_out"
+  | "base_signal"
+  | "base_resource_limit"
+  | "base_accounting_failure"
+  | "base_cleanup_failed"
+  | "base_exit_unavailable"
+  | "base_zero_exit"
+  | "base_ambiguous_shell_exit";
+
 export type ReviewFindingKind =
   | "required_check_failed"
   | "required_check_timed_out"
@@ -108,6 +120,7 @@ export interface CheckEvidence {
       | "unsupported"
       | "not_executed";
     resourceLimits?: CheckResourceLimits;
+    cleanupFailed?: true;
     writableStorage?: {
       enforcement: "sampled-logical-bytes";
       limitBytes: number;
@@ -132,6 +145,7 @@ export interface CheckEvidence {
     testPaths: string[];
     overlaidFiles: string[];
     satisfied: boolean;
+    reason?: CausalBaseReason;
     base: Omit<CheckEvidence, "causal" | "selection">;
   };
 }
@@ -148,6 +162,7 @@ export interface ReviewFinding {
     baseCommit?: string;
     baseStatus?: CheckStatus;
     baseExitCode?: number | null;
+    baseFailureReason?: CausalBaseReason;
     beforeHead?: string;
     afterHead?: string;
     beforeDiffSha256?: string;
@@ -303,6 +318,8 @@ export interface ReviewReport {
       roleEvidence: Array<{
         role: "test" | "documentation";
         observedFiles: string[];
+        excludedDeletedFiles?: string[];
+        excludedInputFiles?: string[];
       }>;
       missingRoles: Array<"test" | "documentation">;
       status:

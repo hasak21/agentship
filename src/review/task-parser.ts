@@ -1,4 +1,5 @@
 import { readBoundedRegularFile } from "./bounded-file";
+import { validateEvidenceAnnotations } from "./evidence-annotations";
 
 export interface TaskRequirement {
   id: string;
@@ -33,21 +34,41 @@ export function parseTaskRequirements(markdown: string): TaskRequirement[] {
   const requirements: TaskRequirement[] = [];
   const ids = new Set<string>();
   let inRequirements = false;
+  let active: { requirement: TaskRequirement; contentIndent: number; bytes: number } | undefined;
 
   for (const { text: line, index } of taskContentLines(markdown)) {
-    const heading = line.match(/^#{1,6}\s+(.+?)\s*$/);
+    const whitespace = line.match(/^[ \t]*/)?.[0] ?? "";
+    const indent = indentationColumn(whitespace);
+    if (inRequirements && active && line.trim() && indent >= active.contentIndent) {
+      const continuation = line.trim();
+      const bytes = active.bytes + 1 + Buffer.byteLength(continuation);
+      if (bytes > MAX_REQUIREMENT_BYTES) {
+        throw new Error(`Task requirement '${active.requirement.id}' must contain at most ${MAX_REQUIREMENT_BYTES} bytes of text.`);
+      }
+      active.requirement.text += `\n${continuation}`;
+      active.bytes = bytes;
+      continue;
+    }
+    const heading = indent <= 3 ? line.trimStart().match(/^(#{1,6})\s+(.+?)\s*$/) : null;
     if (heading) {
-      const level = line.match(/^#+/)?.[0].length ?? 0;
+      active = undefined;
+      const level = heading[1].length;
       if (level <= 2) {
-        inRequirements = heading[1].trim().toLowerCase() === "requirements";
+        inRequirements = heading[2].trim().toLowerCase() === "requirements";
       }
       continue;
     }
 
     if (!inRequirements) continue;
-    const match = line.match(/^\s*(\d+)[.)]\s+(.+?)\s*$/);
-    if (!match) continue;
-    const number = Number(match[1]);
+    const match = indent <= 3 ? line.match(/^([ \t]*)(\d+)[.)]([ \t]+)(.+?)\s*$/) : null;
+    if (!match) {
+      if (active && line.trim() && indent > 0) {
+        throw new Error(`Task continuation for '${active.requirement.id}' must align with its content column (${active.contentIndent} spaces).`);
+      }
+      if (line.trim()) active = undefined;
+      continue;
+    }
+    const number = Number(match[2]);
     if (!Number.isSafeInteger(number) || number <= 0 || number > MAX_REQUIREMENT_NUMBER) {
       throw new Error(
         `Task requirement number must be between 1 and ${MAX_REQUIREMENT_NUMBER}.`
@@ -55,10 +76,10 @@ export function parseTaskRequirements(markdown: string): TaskRequirement[] {
     }
     const id = `R${number}`;
     if (ids.has(id)) throw new Error(`Task requirement '${id}' is duplicated.`);
-    const requiresConfirmation = match[2].startsWith("[confirm]");
+    const requiresConfirmation = match[4].startsWith("[confirm]");
     const text = requiresConfirmation
-      ? match[2].slice("[confirm]".length).trim()
-      : match[2];
+      ? match[4].slice("[confirm]".length).trim()
+      : match[4];
     if (!text || Buffer.byteLength(text) > MAX_REQUIREMENT_BYTES) {
       throw new Error(
         `Task requirement '${id}' must contain at most ${MAX_REQUIREMENT_BYTES} bytes of text.`
@@ -68,15 +89,25 @@ export function parseTaskRequirements(markdown: string): TaskRequirement[] {
       throw new Error(`Task document exceeds ${MAX_TASK_REQUIREMENTS} requirements.`);
     }
     ids.add(id);
-    requirements.push({
+    const requirement: TaskRequirement = {
       id,
       text,
       line: index + 1,
       confirmation: requiresConfirmation ? "required" : "not_required",
       confirmationBasis: requiresConfirmation ? ["task_marker"] : [],
-    });
+    };
+    requirements.push(requirement);
+    active = {
+      requirement,
+      contentIndent: indentationColumn(match[3], indent + match[2].length + 1),
+      bytes: Buffer.byteLength(text),
+    };
   }
 
+  for (const requirement of requirements) {
+    try { validateEvidenceAnnotations(requirement.text); }
+    catch (error) { throw new Error(`Task requirement '${requirement.id}': ${error instanceof Error ? error.message : "invalid evidence annotations"}`); }
+  }
   return requirements;
 }
 
@@ -92,6 +123,11 @@ export async function readBoundedTaskDocument(filePath: string): Promise<Buffer>
     "Task document",
     MAX_TASK_DOCUMENT_BYTES
   );
+}
+
+function indentationColumn(whitespace: string, column = 0): number {
+  for (const character of whitespace) column += character === "\t" ? 4 - (column % 4) : 1;
+  return column;
 }
 
 function* taskContentLines(
