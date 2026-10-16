@@ -18,6 +18,7 @@ test("intent benchmark binds aggregate and per-case results to the corpus hash",
 
   assert.equal(report.schemaVersion, 1);
   assert.equal(report.corpus.cases, 8);
+  assert.equal(report.corpus.labelSemantics, "declared_omission");
   assert.match(report.corpus.sha256, /^[a-f0-9]{64}$/);
   assert.equal(report.metrics.precision, 0.8);
   assert.equal(report.metrics.recall, 0.8);
@@ -107,6 +108,7 @@ test("external benchmark preserves corpus and per-candidate provenance", async (
     await writeFile(fixturePath, `${JSON.stringify(externalCorpus())}\n`, "utf8");
     const report = await runIntentBenchmark(fixturePath);
     assert.equal(report.corpus.kind, "external_evaluation");
+    assert.equal(report.corpus.labelSemantics, "task_resolution_proxy");
     assert.equal(report.corpus.provenance?.dataset, "SWE-bench/SWE-bench_Verified");
     assert.equal(report.corpus.provenance?.revision, "a".repeat(40));
     assert.equal(report.results[0].source?.candidate, "model/run-1");
@@ -128,6 +130,13 @@ test("external benchmark preserves corpus and per-candidate provenance", async (
 });
 
 test("external corpus rejects mutable, credentialed, and duplicate provenance", () => {
+  assert.throws(
+    () => parseExternalEvaluationCorpus({
+      ...externalCorpus(),
+      labelSemantics: "adjudicated_requirement_omission",
+    }),
+    /task_resolution_proxy/
+  );
   const mutable = externalCorpus();
   mutable.provenance.revision = "main";
   assert.throws(

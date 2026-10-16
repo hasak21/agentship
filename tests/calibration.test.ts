@@ -132,6 +132,8 @@ test("calibration derives reproducible metrics from three evidence sets", async 
       rejected: 1,
     });
     assert.equal(result.recall.omissions, 2 / 3);
+    assert.equal(result.recall.labelSemantics, "file_oracle_omission");
+    assert.equal(result.recall.taskResolutionProxy, null);
     assert.equal(result.recall.cases, 12);
     assert.deepEqual(result.falseBlocks, { count: 1, per100Reviews: 50 });
     assert.deepEqual(result.triage, { samples: 4, medianMs: 3 * HOUR });
@@ -192,6 +194,10 @@ test("calibration retains external benchmark provenance", async () => {
     const result = await measure();
     assert.equal(result.inputs.benchmark.kind, "external_evaluation");
     assert.deepEqual(result.inputs.benchmark.provenance, provenance);
+    assert.equal(result.inputs.benchmark.labelSemantics, "task_resolution_proxy");
+    assert.equal(result.recall.omissions, null);
+    assert.equal(result.recall.taskResolutionProxy, 1);
+    assert.equal(result.recall.labelSemantics, "task_resolution_proxy");
   });
 });
 

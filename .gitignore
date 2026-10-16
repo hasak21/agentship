@@ -17,6 +17,8 @@
 /.agentship/history/
 /.agentship/outcomes/
 /.agentship/missed-findings/
+/.agentship/external/
+/.agentship/adjudications/
 
 # next.js
 /.next/

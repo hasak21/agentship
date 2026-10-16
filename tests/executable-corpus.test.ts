@@ -12,6 +12,18 @@ const fixtureUrl = new URL(
   import.meta.url
 );
 
+test("destructive role corpus catches deletions without rejecting replacements", async () => {
+  const fixture = new URL("../fixtures/intent/destructive-role-corpus.json", import.meta.url);
+  const report = await runIntentBenchmark(fixture.pathname);
+  assert.equal(report.corpus.cases, 4);
+  assert.equal(report.metrics.truePositives, 2);
+  assert.equal(report.metrics.trueNegatives, 2);
+  assert.equal(report.metrics.falseNegatives, 0);
+  assert.equal(report.metrics.falsePositives, 0);
+  assert.equal(report.corpus.labelSemantics, "file_oracle_omission");
+  assert.ok(report.results.every(row => row.oracle !== undefined && row.correct));
+});
+
 test("executable corpus derives outcomes from safe file oracles", async () => {
   const corpus = parseExecutableCorpus(
     JSON.parse(await readFile(fixtureUrl, "utf8")) as unknown
@@ -35,6 +47,7 @@ test("executable corpus derives outcomes from safe file oracles", async () => {
 test("executable benchmark reports oracle evidence and measured blind spots", async () => {
   const report = await runIntentBenchmark(fixtureUrl.pathname);
   assert.equal(report.corpus.kind, "executable_patch");
+  assert.equal(report.corpus.labelSemantics, "file_oracle_omission");
   assert.equal(report.corpus.cases, 12);
   assert.deepEqual(report.metrics, {
     cases: 12,

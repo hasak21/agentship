@@ -5,7 +5,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { measureCalibration } from "../review/calibration";
 import { importSweBenchCorpus } from "../review/external-corpus-import";
-import { runIntentBenchmark } from "../review/intent-benchmark";
+import { prepareOmissionAdjudications, runIntentBenchmark } from "../review/intent-benchmark";
 import { compileLeaderboard } from "../review/leaderboard";
 import { diagnoseRepository, initializeRepository } from "../review/onboarding";
 import { initializeCi } from "../review/ci-onboarding";
@@ -88,13 +88,14 @@ Usage:
   agentship init
   agentship ci-init --ref <full-commit-sha> [--repository <owner/repository>]
   agentship doctor
-  agentship benchmark --fixtures <path>
+  agentship benchmark --fixtures <path> [--adjudications <path>]
+  agentship adjudication-init --fixtures <path> --output <new-path>
   agentship import-swebench --dataset <path> --predictions <path> --reports <dir> --output <path> [provenance options]
   agentship leaderboard --submissions <directory>
   agentship outcome --report <path> --finding-id <id> --finding-kind <kind> --status <status> --actor <actor> --reason <reason>
   agentship missed --report <path> --finding-id <id> --finding-kind <kind> --severity <severity> --title <title> --actor <actor> --reason <reason>
   agentship outcome-metrics [--outcomes <directory>] [--reports <directory>] [--missed-findings <directory>]
-  agentship metrics --outcomes <dir> --reports <dir> --benchmark-fixtures <path>
+  agentship metrics --outcomes <dir> --reports <dir> --benchmark-fixtures <path> [--adjudications <path>]
   agentship verify-signature --report <path> --signature <path> --public-key <path>
   npm run review -- [options]
 
@@ -106,7 +107,7 @@ Options:
   --baseline <path> Prior AgentShip JSON report for finding comparison
   --override <path> Bounded override record referencing a prior report hash
   --history <dir>  Record history and select the latest compatible baseline
-  --output <path>  JSON report path
+  --output <path>  JSON report path inside the repository (no linked ancestors/leaves)
   --signing-key <path> Sign exact JSON evidence with an external Ed25519 private key
   --signature-output <path> Detached signature path (default: report .sig.json)
   --confirm <ids>  Confirm comma-separated requirements marked [confirm]
@@ -139,9 +140,10 @@ function parseMetricsArgs(args: string[]): {
   outcomesDirectory: string;
   reportsDirectory: string;
   benchmarkFixturePath: string;
+  adjudicationPath?: string;
 } {
   const values = new Map<string, string>();
-  const supported = new Set(["--outcomes", "--reports", "--benchmark-fixtures"]);
+  const supported = new Set(["--outcomes", "--reports", "--benchmark-fixtures", "--adjudications"]);
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (!supported.has(arg)) throw new Error(`Unknown metrics argument: ${arg}`);
@@ -159,6 +161,7 @@ function parseMetricsArgs(args: string[]): {
     outcomesDirectory: required("--outcomes"),
     reportsDirectory: required("--reports"),
     benchmarkFixturePath: required("--benchmark-fixtures"),
+    adjudicationPath: values.get("--adjudications"),
   };
 }
 
@@ -249,19 +252,25 @@ function parseOutcomeArgs(args: string[]): OutcomeCliOptions {
   };
 }
 
-function parseBenchmarkArgs(args: string[]): string {
-  let fixturePath: string | undefined;
+function parseBenchmarkArgs(args: string[], initialize = false): {
+  fixturePath: string; adjudicationPath?: string; outputPath?: string;
+} {
+  const values = new Map<string, string>();
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    if (arg === "--fixtures") {
-      fixturePath = args[++index];
-      if (!fixturePath) throw new Error("--fixtures requires a value.");
+    if (arg === "--fixtures" || arg === (initialize ? "--output" : "--adjudications")) {
+      const value = args[++index];
+      if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value.`);
+      if (values.has(arg)) throw new Error(`Duplicate argument: ${arg}`);
+      values.set(arg, path.resolve(process.cwd(), value));
       continue;
     }
     throw new Error(`Unknown benchmark argument: ${arg}`);
   }
-  if (!fixturePath) throw new Error("benchmark requires --fixtures <path>.");
-  return fixturePath;
+  const fixturePath = values.get("--fixtures");
+  if (!fixturePath) throw new Error("--fixtures <path> is required.");
+  if (initialize && !values.has("--output")) throw new Error("--output <new-path> is required.");
+  return { fixturePath, adjudicationPath: values.get("--adjudications"), outputPath: values.get("--output") };
 }
 
 function parseSweBenchImportArgs(args: string[]): {
@@ -398,9 +407,16 @@ async function main() {
     return;
   }
   if (args[0] === "benchmark") {
-    const fixturePath = path.resolve(process.cwd(), parseBenchmarkArgs(args.slice(1)));
-    const benchmark = await runIntentBenchmark(fixturePath);
+    const { fixturePath, adjudicationPath } = parseBenchmarkArgs(args.slice(1));
+    const benchmark = await runIntentBenchmark(fixturePath, adjudicationPath);
     writeStdout(`${JSON.stringify(benchmark, null, 2)}\n`);
+    return;
+  }
+  if (args[0] === "adjudication-init") {
+    const { fixturePath, outputPath } = parseBenchmarkArgs(args.slice(1), true);
+    const packet = await prepareOmissionAdjudications(fixturePath);
+    await writeFile(outputPath!, `${JSON.stringify(packet, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    writeStdout(`Prepared ${packet.cases.length} unreviewed cases: ${outputPath}\nNo omission labels have been assigned.\n`);
     return;
   }
   if (args[0] === "import-swebench") {

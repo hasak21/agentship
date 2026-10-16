@@ -12,8 +12,22 @@ import {
   type SeededOmissionResult,
 } from "./intent-evaluator";
 import type { CheckStatus } from "./types";
+import { readBoundedRegularFile } from "./bounded-file";
+import {
+  applyOmissionAdjudications,
+  createOmissionAdjudicationPacket,
+  MAX_ADJUDICATION_BYTES,
+  type AdjudicationCoverage,
+  type OmissionAdjudicationCase,
+} from "./omission-adjudication";
 
 const MAX_BENCHMARK_BYTES = 5 * 1024 * 1024;
+
+export type BenchmarkLabelSemantics =
+  | "declared_omission"
+  | "file_oracle_omission"
+  | "reviewer_asserted_omission"
+  | "task_resolution_proxy";
 
 export interface IntentBenchmarkReport {
   schemaVersion: 1;
@@ -22,13 +36,16 @@ export interface IntentBenchmarkReport {
     sha256: string;
     cases: number;
     kind: "labeled_scenario" | "executable_patch" | "external_evaluation";
+    labelSemantics: BenchmarkLabelSemantics;
     provenance?: ExternalCorpusProvenance;
+    adjudication?: AdjudicationCoverage & { path: string; sha256: string };
   };
   metrics: ReturnType<typeof evaluateSeededOmissions>;
   results: Array<
     SeededOmissionResult & {
       oracle?: { passed: boolean; assertions: OracleAssertionResult[] };
       source?: ExternalCaseSource;
+      adjudication?: Pick<OmissionAdjudicationCase, "decision" | "rationale" | "evidence">;
     }
   >;
 }
@@ -62,10 +79,12 @@ export interface ExternalEvaluationCorpus {
 }
 
 export async function runIntentBenchmark(
-  fixturePath: string
+  fixturePath: string,
+  adjudicationPath?: string
 ): Promise<IntentBenchmarkReport> {
   const source = await readBoundedBenchmark(fixturePath);
   const parsed = JSON.parse(source) as unknown;
+  const corpusSha256 = createHash("sha256").update(source).digest("hex");
   let kind: IntentBenchmarkReport["corpus"]["kind"];
   let cases: SeededOmissionCase[];
   const oracleById = new Map<
@@ -100,23 +119,57 @@ export async function runIntentBenchmark(
     kind = "labeled_scenario";
     cases = parseSeededOmissionCases(parsed);
   }
+  const totalCases = cases.length;
+  let adjudication: IntentBenchmarkReport["corpus"]["adjudication"];
+  let decisions: ReturnType<typeof applyOmissionAdjudications>["decisions"] | undefined;
+  if (adjudicationPath) {
+    if (kind !== "external_evaluation") {
+      throw new Error("Adjudications require an external evaluation corpus.");
+    }
+    const labels = await readBoundedRegularFile(adjudicationPath, "Adjudication packet", MAX_ADJUDICATION_BYTES);
+    const applied = applyOmissionAdjudications(
+      parseExternalEvaluationCorpus(parsed).cases, corpusSha256, JSON.parse(labels.toString("utf8"))
+    );
+    cases = applied.cases;
+    decisions = applied.decisions;
+    adjudication = {
+      ...applied.coverage, path: adjudicationPath,
+      sha256: createHash("sha256").update(labels).digest("hex"),
+    };
+  }
   const results = evaluateSeededOmissionCases(cases).map((result) => ({
     ...result,
     ...(oracleById.has(result.id) ? { oracle: oracleById.get(result.id) } : {}),
     ...(sourceById.has(result.id) ? { source: sourceById.get(result.id) } : {}),
+    ...(decisions ? { adjudication: decisions.get(result.id) } : {}),
   }));
   return {
     schemaVersion: 1,
     corpus: {
       path: fixturePath,
-      sha256: createHash("sha256").update(source).digest("hex"),
-      cases: cases.length,
+      sha256: corpusSha256,
+      cases: totalCases,
       kind,
+      labelSemantics:
+        adjudication ? "reviewer_asserted_omission" : kind === "external_evaluation"
+          ? "task_resolution_proxy"
+          : kind === "executable_patch"
+            ? "file_oracle_omission"
+            : "declared_omission",
       ...(provenance ? { provenance } : {}),
+      ...(adjudication ? { adjudication } : {}),
     },
     metrics: evaluateSeededOmissions(cases),
     results,
   };
+}
+
+export async function prepareOmissionAdjudications(fixturePath: string) {
+  const source = await readBoundedBenchmark(fixturePath);
+  return createOmissionAdjudicationPacket(
+    parseExternalEvaluationCorpus(JSON.parse(source)).cases,
+    createHash("sha256").update(source).digest("hex")
+  );
 }
 
 export function parseExternalEvaluationCorpus(value: unknown): ExternalEvaluationCorpus {
@@ -127,6 +180,14 @@ export function parseExternalEvaluationCorpus(value: unknown): ExternalEvaluatio
   if (candidate.schemaVersion !== 1 || candidate.kind !== "external_evaluation") {
     throw new Error(
       "External evaluation corpus must declare schemaVersion: 1 and kind: external_evaluation."
+    );
+  }
+  if (
+    candidate.labelSemantics !== undefined &&
+    candidate.labelSemantics !== "task_resolution_proxy"
+  ) {
+    throw new Error(
+      "External evaluation labels must use task_resolution_proxy; task outcomes are not adjudicated requirement omissions."
     );
   }
   const provenance = parseExternalProvenance(candidate.provenance);

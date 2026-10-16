@@ -56,8 +56,10 @@ export interface CalibrationMetricsReport {
       path: string;
       sha256: string;
       kind: IntentBenchmarkReport["corpus"]["kind"];
+      labelSemantics: IntentBenchmarkReport["corpus"]["labelSemantics"];
       cases: number;
       provenance?: ExternalCorpusProvenance;
+      adjudication?: IntentBenchmarkReport["corpus"]["adjudication"];
     };
   };
   samples: {
@@ -72,7 +74,12 @@ export interface CalibrationMetricsReport {
     confirmed: number;
     rejected: number;
   };
-  recall: { omissions: number; cases: number };
+  recall: {
+    omissions: number | null;
+    taskResolutionProxy: number | null;
+    labelSemantics: IntentBenchmarkReport["corpus"]["labelSemantics"];
+    cases: number;
+  };
   falseBlocks: { count: number; per100Reviews: number };
   triage: { samples: number; medianMs: number | null };
   overrides: {
@@ -89,6 +96,7 @@ export interface MeasureCalibrationOptions {
   outcomesDirectory: string;
   reportsDirectory: string;
   benchmarkFixturePath: string;
+  adjudicationPath?: string;
 }
 
 export async function measureCalibration(
@@ -227,7 +235,10 @@ export async function measureCalibration(
     "Benchmark fixture",
     MAX_BENCHMARK_BYTES
   );
-  const benchmark = await runIntentBenchmark(benchmarkPath.absolutePath);
+  const adjudicationPath = options.adjudicationPath
+    ? await resolveRepositoryFile(repositoryRoot, options.adjudicationPath, "Adjudication packet", 8 * 1024 * 1024)
+    : undefined;
+  const benchmark = await runIntentBenchmark(benchmarkPath.absolutePath, adjudicationPath?.absolutePath);
   const adjudicated = confirmed + rejected;
   const adjudicatedBlockers = blockerConfirmed + blockerRejected;
   return {
@@ -240,7 +251,11 @@ export async function measureCalibration(
         path: benchmarkPath.relativePath,
         sha256: benchmark.corpus.sha256,
         kind: benchmark.corpus.kind,
+        labelSemantics: benchmark.corpus.labelSemantics,
         cases: benchmark.corpus.cases,
+        ...(benchmark.corpus.adjudication ? {
+          adjudication: { ...benchmark.corpus.adjudication, path: adjudicationPath!.relativePath },
+        } : {}),
         ...(benchmark.corpus.provenance
           ? { provenance: benchmark.corpus.provenance }
           : {}),
@@ -259,7 +274,15 @@ export async function measureCalibration(
       rejected,
     },
     recall: {
-      omissions: benchmark.metrics.recall,
+      omissions:
+        benchmark.corpus.labelSemantics === "task_resolution_proxy"
+          ? null
+          : benchmark.metrics.recall,
+      taskResolutionProxy:
+        benchmark.corpus.labelSemantics === "task_resolution_proxy"
+          ? benchmark.metrics.recall
+          : null,
+      labelSemantics: benchmark.corpus.labelSemantics,
       cases: benchmark.metrics.cases,
     },
     falseBlocks: {

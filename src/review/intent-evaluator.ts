@@ -14,9 +14,9 @@ export interface IntentFixtureCase {
 export interface IntentMetrics {
   cases: number;
   correct: number;
-  accuracy: number;
-  missingPrecision: number;
-  missingRecall: number;
+  accuracy: number | null;
+  missingPrecision: number | null;
+  missingRecall: number | null;
   falsePositives: number;
   falseNegatives: number;
 }
@@ -38,10 +38,10 @@ export interface SeededOmissionMetrics {
   trueNegatives: number;
   falsePositives: number;
   falseNegatives: number;
-  accuracy: number;
-  precision: number;
-  recall: number;
-  falsePositiveRate: number;
+  accuracy: number | null;
+  precision: number | null;
+  recall: number | null;
+  falsePositiveRate: number | null;
 }
 
 export interface SeededOmissionResult {
@@ -153,8 +153,8 @@ export function evaluateSeededOmissionCases(
   });
 }
 
-function ratio(numerator: number, denominator: number): number {
-  return denominator === 0 ? 1 : numerator / denominator;
+function ratio(numerator: number, denominator: number): number | null {
+  return denominator === 0 ? null : numerator / denominator;
 }
 
 function isMissing(status: RequirementMapping["status"]): boolean {

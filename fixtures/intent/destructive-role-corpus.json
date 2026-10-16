@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "kind": "executable_patch",
+  "cases": [
+    {
+      "id": "deleted-tests-are-not-added-tests",
+      "category": "destructive test omission",
+      "requirement": "Add regression tests.",
+      "rationale": "Deleting the only test leaves the required test file absent.",
+      "baseFiles": { "tests/cart.test.ts": "test('cart', () => {});\n" },
+      "patch": { "tests/cart.test.ts": null },
+      "oracle": [{ "type": "file_exists", "path": "tests/cart.test.ts" }]
+    },
+    {
+      "id": "deleted-guide-is-not-updated-guide",
+      "category": "destructive documentation omission",
+      "requirement": "Update documentation.",
+      "rationale": "Deleting the guide does not produce the required guide update.",
+      "baseFiles": { "docs/guide.md": "Old guide\n" },
+      "patch": { "docs/guide.md": null },
+      "oracle": [{ "type": "file_exists", "path": "docs/guide.md" }]
+    },
+    {
+      "id": "replacement-test-is-valid-role-evidence",
+      "category": "test replacement control",
+      "requirement": "Add regression tests.",
+      "rationale": "A deleted legacy test does not invalidate a newly supplied test path.",
+      "baseFiles": { "tests/old.test.ts": "test('old', () => {});\n" },
+      "patch": {
+        "tests/old.test.ts": null,
+        "tests/cart.test.ts": "test('cart', () => {});\n"
+      },
+      "oracle": [{ "type": "file_exists", "path": "tests/cart.test.ts" }]
+    },
+    {
+      "id": "retained-guide-update-is-valid-role-evidence",
+      "category": "documentation modification control",
+      "requirement": "Update documentation.",
+      "rationale": "A changed retained documentation file remains weak role evidence.",
+      "baseFiles": { "docs/guide.md": "Old guide\n" },
+      "patch": { "docs/guide.md": "Updated guide\n" },
+      "oracle": [{ "type": "file_contains", "path": "docs/guide.md", "value": "Updated" }]
+    }
+  ]
+}

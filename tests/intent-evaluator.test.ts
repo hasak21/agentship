@@ -44,3 +44,40 @@ test("seeded omission corpus exposes deterministic semantic blind spots", async 
     falsePositiveRate: 1 / 3,
   });
 });
+
+test("omission precision is undefined when the detector emits no findings", () => {
+  const cases = [{
+    id: "no-detection",
+    category: "semantic omission",
+    requirement: "Reject expired tokens.",
+    changedFiles: ["src/session.ts"],
+    omissionExpected: true,
+    rationale: "A behavior-only omission has no explicit evidence annotation.",
+  }];
+  const seeded = evaluateSeededOmissions(cases);
+  assert.equal(seeded.precision, null);
+  assert.equal(seeded.recall, 0);
+  const explicit = evaluateIntentFixtures([{
+    id: "unmapped",
+    requirement: "Reject expired tokens.",
+    changedFiles: ["src/session.ts"],
+    expectedStatus: "missing",
+  }]);
+  assert.equal(explicit.missingPrecision, null);
+});
+
+test("benchmark rates stay undefined when their truth-label denominator is absent", () => {
+  const base = {
+    id: "one-label-class",
+    category: "denominator fixture",
+    requirement: "Preserve behavior.",
+    changedFiles: ["src/behavior.ts"],
+    rationale: "Check metric semantics without a positive or negative truth class.",
+  };
+  const allComplete = evaluateSeededOmissions([{ ...base, omissionExpected: false }]);
+  assert.equal(allComplete.recall, null);
+  assert.equal(allComplete.falsePositiveRate, 0);
+  const allIncomplete = evaluateSeededOmissions([{ ...base, omissionExpected: true }]);
+  assert.equal(allIncomplete.recall, 0);
+  assert.equal(allIncomplete.falsePositiveRate, null);
+});

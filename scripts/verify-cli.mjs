@@ -58,6 +58,7 @@ try {
   if (
     report.schemaVersion !== 1 ||
     report.corpus.kind !== "executable_patch" ||
+    report.corpus.labelSemantics !== "file_oracle_omission" ||
     report.corpus.cases !== 12
   ) {
     throw new Error("Bundled CLI benchmark output is incomplete.");
@@ -136,12 +137,42 @@ try {
   const importedBenchmark = JSON.parse(importedBenchmarkRun.stdout);
   if (
     importedBenchmark.corpus?.kind !== "external_evaluation" ||
+    importedBenchmark.corpus?.labelSemantics !== "task_resolution_proxy" ||
     importedBenchmark.corpus?.cases !== 1 ||
     importedBenchmark.results?.[0]?.source?.instanceId !== "project__repo-1"
   ) {
     throw new Error("Bundled CLI could not benchmark its imported SWE-bench corpus.");
   }
   const initializedRepository = path.join(temporaryDirectory, "initialized");
+  const reviewPacketPath = path.join(importedCorpusDirectory, "review.json");
+  await execFileAsync(process.execPath, [isolatedCli, "adjudication-init", "--fixtures", "corpus.json", "--output", "review.json"], {
+    cwd: importedCorpusDirectory,
+  });
+  const reviewPacket = JSON.parse(await readFile(reviewPacketPath, "utf8"));
+  if (reviewPacket.reviewer !== "" || reviewPacket.cases[0].decision !== "unreviewed" || "omissionExpected" in reviewPacket.cases[0] || "source" in reviewPacket.cases[0]) {
+    throw new Error("Bundled CLI did not prepare a blinded, unreviewed packet.");
+  }
+  for (const args of [
+    ["adjudication-init", "--fixtures", "corpus.json", "--output", "review.json"],
+    ["benchmark", "--fixtures", "corpus.json", "--adjudications", "review.json"],
+  ]) {
+    let rejected = false;
+    try { await execFileAsync(process.execPath, [isolatedCli, ...args], { cwd: importedCorpusDirectory }); }
+    catch { rejected = true; }
+    if (!rejected) throw new Error("Bundled CLI accepted overwrite or unreviewed labels.");
+  }
+  reviewPacket.reviewer = "Synthetic CLI test; not an independent human review";
+  Object.assign(reviewPacket.cases[0], {
+    decision: "omission", rationale: "Synthetic omission assertion", evidence: ["fixture:patch"],
+  });
+  await writeFile(reviewPacketPath, JSON.stringify(reviewPacket));
+  const reviewedRun = await execFileAsync(process.execPath, [isolatedCli, "benchmark", "--fixtures", "corpus.json", "--adjudications", "review.json"], {
+    cwd: importedCorpusDirectory, encoding: "utf8",
+  });
+  const reviewedBenchmark = JSON.parse(reviewedRun.stdout);
+  if (reviewedBenchmark.corpus.labelSemantics !== "reviewer_asserted_omission" || reviewedBenchmark.corpus.adjudication.decided !== 1) {
+    throw new Error("Bundled CLI lost explicit reviewer labels or coverage.");
+  }
   await mkdir(initializedRepository);
   await execFileAsync("git", ["init", "-q"], { cwd: initializedRepository });
   await writeFile(path.join(initializedRepository, "package.json"), JSON.stringify({
@@ -289,7 +320,38 @@ try {
   ) {
     throw new Error("Bundled CLI calibration metrics are incomplete.");
   }
+  const proxyCalibrationRun = await execFileAsync(
+    process.execPath,
+    [
+      isolatedCliCommand,
+      "metrics",
+      "--outcomes", ".agentship/outcomes",
+      "--reports", "reports",
+      "--benchmark-fixtures", "swebench-import/corpus.json",
+    ],
+    { cwd: temporaryDirectory, encoding: "utf8" }
+  );
+  const proxyCalibration = JSON.parse(proxyCalibrationRun.stdout);
+  if (
+    proxyCalibration.inputs.benchmark.labelSemantics !== "task_resolution_proxy" ||
+    proxyCalibration.recall.labelSemantics !== "task_resolution_proxy" ||
+    proxyCalibration.recall.omissions !== null ||
+    proxyCalibration.recall.taskResolutionProxy !== importedBenchmark.metrics.recall
+  ) {
+    throw new Error("Bundled CLI conflated task-resolution proxies with omission recall.");
+  }
   const leaderboardDirectory = path.join(temporaryDirectory, "leaderboard");
+  const reviewedMetricsRun = await execFileAsync(process.execPath, [isolatedCliCommand, "metrics",
+    "--outcomes", ".agentship/outcomes", "--reports", "reports",
+    "--benchmark-fixtures", "swebench-import/corpus.json", "--adjudications", "swebench-import/review.json",
+  ], { cwd: temporaryDirectory, encoding: "utf8" });
+  const reviewedMetrics = JSON.parse(reviewedMetricsRun.stdout);
+  if (reviewedMetrics.recall.labelSemantics !== "reviewer_asserted_omission" ||
+    reviewedMetrics.recall.taskResolutionProxy !== null ||
+    reviewedMetrics.inputs.benchmark.adjudication.decided !== 1 ||
+    reviewedMetrics.recall.omissions !== reviewedBenchmark.metrics.recall) {
+    throw new Error("Calibration failed to retain reviewer-label evidence semantics.");
+  }
   await mkdir(leaderboardDirectory);
   const leaderboardTaskSha = createHash("sha256").update("task").digest("hex");
   const leaderboardSuiteSha = createHash("sha256").update("suite").digest("hex");
@@ -427,6 +489,40 @@ try {
   if (!verifiedSignature.stdout.includes("AgentShip signature: VALID")) {
     throw new Error("Bundled CLI did not verify detached signature evidence.");
   }
+  await writeFile(path.join(reviewRepository, "subject.txt"), "updated subject\n");
+  await writeFile(path.join(reviewRepository, "task.md"), [
+    "## Requirements",
+    "1. Update `change:subject.txt`.",
+    "   - Add regression tests in `change:tests/regression.test.ts`.",
+    "   Pass `check:smoke`.",
+    "",
+  ].join("\n"));
+  await execFileAsync(process.execPath, [isolatedCli, "review", "--task", "task.md", "--output", ".agentship/reviews/wrapped.json"], {
+    cwd: reviewRepository,
+  });
+  const wrappedReview = JSON.parse(await readFile(path.join(reviewRepository, ".agentship/reviews/wrapped.json"), "utf8"));
+  const wrappedMapping = wrappedReview.task?.mappings?.[0];
+  if (wrappedReview.task?.requirements?.length !== 1 || wrappedMapping?.status !== "missing" ||
+      JSON.stringify(wrappedMapping.missingReferences) !== JSON.stringify(["tests/regression.test.ts"]) ||
+      wrappedMapping.checkEvidence?.[0]?.status !== "passed") {
+    throw new Error("Bundled CLI dropped a wrapped test requirement despite passing smoke evidence.");
+  }
+  await writeFile(path.join(reviewRepository, "task.md"), "## Requirements\n1. Update `change:Dockerfile` and `change:src/my file.ts`.\n");
+  await execFileAsync(process.execPath, [isolatedCli, "review", "--task", "task.md", "--output", ".agentship/reviews/explicit-paths.json"], {
+    cwd: reviewRepository,
+  });
+  const explicitPaths = JSON.parse(await readFile(path.join(reviewRepository, ".agentship/reviews/explicit-paths.json"), "utf8"));
+  if (JSON.stringify(explicitPaths.task?.mappings?.[0]?.missingReferences) !== JSON.stringify(["Dockerfile", "src/my file.ts"])) {
+    throw new Error("Bundled CLI silently ignored root or space-containing explicit paths.");
+  }
+  await writeFile(path.join(reviewRepository, "task.md"), "## Requirements\n1. Pass `check:`.\n");
+  let invalidAnnotationRejected = false;
+  try {
+    await execFileAsync(process.execPath, [isolatedCli, "review", "--task", "task.md"], { cwd: reviewRepository });
+  } catch (error) {
+    invalidAnnotationRejected = error.code === 2 && error.stderr.includes("Task requirement 'R1': Invalid check");
+  }
+  if (!invalidAnnotationRejected) throw new Error("Bundled CLI accepted an empty explicit check annotation.");
   console.log("Bundled CLI init, ci-init, doctor, review, benchmark, SWE-bench import, leaderboard, outcome, missed, outcome-metrics, metrics, and signature commands run outside the repository without node_modules.");
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
