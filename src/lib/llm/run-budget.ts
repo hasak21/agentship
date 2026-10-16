@@ -114,7 +114,7 @@ export class LLMRunBudget {
     };
   }
 
-  private remainingDurationMs(): number {
+  remainingDurationMs(): number {
     const remaining = Math.floor(
       this.limits.maxDurationMs - (this.now() - this.startedAt)
     );

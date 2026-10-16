@@ -1,4 +1,5 @@
 // Universal LLM Provider and Request/Response Types for AgentShip
+import type { LLMRunBudget } from "./run-budget";
 
 export type LLMProvider =
   | "openai-compatible"
@@ -23,6 +24,8 @@ export interface LLMRequestOptions {
   responseFormat?: "text" | "json_object";
   webSearch?: boolean;
   timeoutMs?: number;
+  /** Internal request-scoped budget; never populated from public request options. */
+  runBudget?: LLMRunBudget;
 }
 
 export interface LLMTokenUsage {

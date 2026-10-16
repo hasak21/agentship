@@ -104,3 +104,40 @@ test("research fan-out stops making provider calls when the run budget is exhaus
     else process.env.AGENTSHIP_LLM_MAX_CALLS = previousCalls;
   }
 });
+
+test("research call budget includes provider transport retries", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousCalls = process.env.AGENTSHIP_LLM_MAX_CALLS;
+  process.env.OPENAI_API_KEY = "test-key";
+  process.env.AGENTSHIP_LLM_MAX_CALLS = "1";
+  let fetches = 0;
+  globalThis.fetch = (async () => {
+    fetches++;
+    return new Response("temporary failure", { status: 503 });
+  }) as typeof fetch;
+
+  try {
+    const streamed = await events(
+      await POST(request({
+        question: "Give a concise answer.",
+        pattern: "single",
+        provider: "openai-compatible",
+        model: "test-model",
+      }))
+    );
+    const finalBudget = streamed.find(
+      (event) => event.type === "budget" && event.phase === "final"
+    );
+    assert.equal(fetches, 1, "transport retry must reserve its own call");
+    assert.equal(finalBudget?.calls, fetches);
+    assert.equal(finalBudget?.exhausted, true);
+    assert.equal(streamed.some((event) => event.type === "node_retry"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousCalls === undefined) delete process.env.AGENTSHIP_LLM_MAX_CALLS;
+    else process.env.AGENTSHIP_LLM_MAX_CALLS = previousCalls;
+  }
+});

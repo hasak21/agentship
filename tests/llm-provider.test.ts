@@ -10,6 +10,78 @@ import {
   UNIVERSAL_MODEL_PRESETS,
 } from "../src/lib/llm/client";
 import { parsePublicLLMOptions, PublicLLMInputError } from "../src/lib/llm/public-options";
+import {
+  DEFAULT_LLM_RUN_BUDGET,
+  LLMRunBudget,
+  LLMRunBudgetError,
+} from "../src/lib/llm/run-budget";
+
+test("every provider reserves actual transport calls before fetching", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = (async () => {
+    fetches++;
+    return Response.json({
+      choices: [{ message: { content: "ok" } }],
+      content: [{ type: "text", text: "ok" }],
+      candidates: [{ content: { parts: [{ text: "ok" }] } }],
+    });
+  }) as typeof fetch;
+  try {
+    for (const provider of ["openai-compatible", "anthropic", "gemini"] as const) {
+      const runBudget = new LLMRunBudget({
+        ...DEFAULT_LLM_RUN_BUDGET,
+        maxCalls: 1,
+      });
+      const options = {
+        provider,
+        model: "test-model",
+        baseUrl: "https://provider.example/v1",
+        apiKey: "test-key",
+        runBudget,
+      };
+      const messages = [{ role: "user" as const, content: "review" }];
+      const before = fetches;
+      await callUniversalLLM(messages, options);
+      await assert.rejects(callUniversalLLM(messages, options), LLMRunBudgetError);
+      assert.equal(fetches - before, 1, provider);
+      assert.equal(runBudget.snapshot().calls, 1);
+      assert.equal(runBudget.snapshot().inputBytes, 6);
+      assert.equal(runBudget.snapshot().reservedOutputTokens, 4096);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("provider retry backoff stops at the shared run deadline", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = (async () => {
+    fetches++;
+    return new Response("unavailable", { status: 503 });
+  }) as typeof fetch;
+  const runBudget = new LLMRunBudget({
+    ...DEFAULT_LLM_RUN_BUDGET,
+    maxDurationMs: 40,
+  });
+  try {
+    await assert.rejects(
+      callUniversalLLM([{ role: "user", content: "review" }], {
+        provider: "openai-compatible",
+        model: "test-model",
+        baseUrl: "https://provider.example/v1",
+        apiKey: "test-key",
+        runBudget,
+      }),
+      LLMRunBudgetError
+    );
+    assert.equal(fetches, 1);
+    assert.equal(runBudget.snapshot().exhausted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("UNIVERSAL_MODEL_PRESETS contains essential providers", () => {
   const ids = UNIVERSAL_MODEL_PRESETS.map((p) => p.id);

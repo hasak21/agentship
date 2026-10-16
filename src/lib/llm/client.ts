@@ -10,6 +10,7 @@ import {
   LLMSource,
   ModelPreset,
 } from "./types";
+import { LLMRunBudgetError } from "./run-budget";
 
 interface OpenAIResponseBody {
   choices?: Array<{
@@ -316,7 +317,7 @@ async function callOpenAICompatibleChat(
         method: "POST",
         headers,
         body: JSON.stringify(payload),
-      }, options.timeoutMs);
+      }, options.timeoutMs, { messages, options });
 
       if (res.ok) {
         const data = parseBoundedResponseJson<OpenAIResponseBody>(responseBody);
@@ -347,16 +348,17 @@ async function callOpenAICompatibleChat(
       if (res.status === 429) {
         tripCircuit(circuitKey);
         if (attempt === 0) {
-          await new Promise((r) => setTimeout(r, 2000));
+          await waitForRetry(2000, options);
           continue;
         }
       }
 
       throw new Error(lastError);
     } catch (err) {
+      if (err instanceof LLMRunBudgetError) throw err;
       lastError = err instanceof Error ? err.message : String(err);
       if (attempt === 0) {
-        await new Promise((r) => setTimeout(r, 1500));
+        await waitForRetry(1500, options);
       }
     }
   }
@@ -406,7 +408,7 @@ async function callAnthropicMessages(
       method: "POST",
       headers,
       body: JSON.stringify(payload),
-    }, options.timeoutMs);
+    }, options.timeoutMs, { messages, options });
 
     if (res.ok) {
       const data = parseBoundedResponseJson<AnthropicResponseBody>(responseBody);
@@ -439,6 +441,7 @@ async function callAnthropicMessages(
 
     throw new Error(`Anthropic HTTP ${res.status}: ${responseBody.slice(0, 200)}`);
   } catch (err) {
+    if (err instanceof LLMRunBudgetError) throw err;
     throw new Error(`Anthropic call failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -489,7 +492,7 @@ async function callGeminiAPI(
         "X-goog-api-key": options.apiKey,
       },
       body: JSON.stringify(payload),
-    }, options.timeoutMs);
+    }, options.timeoutMs, { messages, options });
 
     if (res.ok) {
       const data = parseBoundedResponseJson<GeminiResponseBody>(responseBody);
@@ -530,6 +533,7 @@ async function callGeminiAPI(
 
     throw new Error(`Gemini HTTP ${res.status}: ${responseBody.slice(0, 200)}`);
   } catch (err) {
+    if (err instanceof LLMRunBudgetError) throw err;
     throw new Error(`Gemini API call failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -661,9 +665,19 @@ async function fetchProviderResponse(
   input: string | URL | Request,
   init: RequestInit,
   timeoutMs = Number(process.env.LLM_REQUEST_TIMEOUT_MS) ||
-    DEFAULT_LLM_REQUEST_TIMEOUT_MS
+    DEFAULT_LLM_REQUEST_TIMEOUT_MS,
+  context?: { messages: LLMMessage[]; options: LLMRequestOptions }
 ): Promise<{ response: Response; body: string }> {
   assertRequestTimeout(timeoutMs);
+  if (context?.options.runBudget) {
+    timeoutMs = Math.min(
+      timeoutMs,
+      context.options.runBudget.claim(
+        context.messages,
+        context.options.maxTokens ?? DEFAULT_LLM_MAX_TOKENS
+      )
+    );
+  }
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new Error(`LLM request timed out after ${timeoutMs}ms.`)),
@@ -676,6 +690,14 @@ async function fetchProviderResponse(
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function waitForRetry(ms: number, options: LLMRequestOptions): Promise<void> {
+  const remainingMs = options.runBudget?.remainingDurationMs();
+  await new Promise((resolve) =>
+    setTimeout(resolve, Math.min(ms, remainingMs ?? ms))
+  );
+  options.runBudget?.remainingDurationMs();
 }
 
 export async function fetchWithTimeout(

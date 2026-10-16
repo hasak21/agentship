@@ -9,8 +9,6 @@ import {
   callUniversalLLM,
   createDefaultLLMRunBudget,
   createIsolatedPromptMessages,
-  DEFAULT_LLM_MAX_TOKENS,
-  DEFAULT_LLM_REQUEST_TIMEOUT_MS,
   extractJsonFromResponse,
   IsolatedPromptInput,
   LLMRunBudget,
@@ -64,24 +62,13 @@ async function callText(
   budget?: LLMRunBudget
 ): Promise<Leaf> {
   const messages = createIsolatedPromptMessages(system, input);
-  const remainingMs = budget?.claim(
-    messages,
-    llmOptions?.maxTokens ?? DEFAULT_LLM_MAX_TOKENS
-  );
   const res: LLMResponse = await callUniversalLLM(
     messages,
     {
       ...llmOptions,
       temperature: temperature ?? 0.7,
       webSearch: web,
-      ...(remainingMs === undefined
-        ? {}
-        : {
-            timeoutMs: Math.min(
-              llmOptions?.timeoutMs ?? DEFAULT_LLM_REQUEST_TIMEOUT_MS,
-              remainingMs
-            ),
-          }),
+      runBudget: budget,
     }
   );
   budget?.recordReportedTokens(res.usage.totalTokens);
@@ -104,10 +91,6 @@ async function callJSON<T>(
 ): Promise<{ value: T; usage: number; model?: string }> {
   const fullSystem = `${system}\n\nIMPORTANT: Return ONLY a valid JSON object or array according to this requirement:\n${schemaDescription}`;
   const messages = createIsolatedPromptMessages(fullSystem, input);
-  const remainingMs = budget?.claim(
-    messages,
-    llmOptions?.maxTokens ?? DEFAULT_LLM_MAX_TOKENS
-  );
 
   const res: LLMResponse = await callUniversalLLM(
     messages,
@@ -115,14 +98,7 @@ async function callJSON<T>(
       ...llmOptions,
       temperature: 0.2,
       responseFormat: "json_object",
-      ...(remainingMs === undefined
-        ? {}
-        : {
-            timeoutMs: Math.min(
-              llmOptions?.timeoutMs ?? DEFAULT_LLM_REQUEST_TIMEOUT_MS,
-              remainingMs
-            ),
-          }),
+      runBudget: budget,
     }
   );
   budget?.recordReportedTokens(res.usage.totalTokens);
