@@ -2,6 +2,35 @@
 
 AgentShip verifies agent-written changes; it does not trust an agent's account of what it changed or executed.
 
+Untracked working-tree evidence uses NUL-delimited Git path lists and JSON-escaped
+single-line manifest records (`untracked:{path,kind,mode,bytes,sha256}`), not raw path
+interpolation. Regular files are hashed sequentially with a 1 MiB buffer, limited to
+32 MiB per file, 128 MiB aggregate and 10,000 unique untracked entries. The capture
+rejects special files (including FIFOs), multiply linked regular files and ambiguous
+paths, and aborts when observed identity/size/mode/timestamps change. A symbolic link
+is evidence about its target text only: neither existing nor dangling targets are
+opened. Changing a link's external target contents therefore does not mutate repository
+evidence. Permission changes to untracked regular files are now hash-bound metadata.
+
+On Linux, source ancestors use the same pinned, no-follow directory traversal as
+causal overlays. The non-Linux local fallback checks ancestors and uses available
+no-follow open flags, but is not equivalent protection against concurrent host
+mutation. These changes intentionally alter working-tree diff hashes for untracked
+files compared with the former content-only/raw-line record format; old artifacts
+remain historical snapshots, not byte-identical replays under the new capture format.
+Git's own tracked diff capture and sandbox workspace copying are separate input paths;
+the latter's additional confinement is described below. Neither establishes that every
+pre-sandbox filesystem operation or concurrent host mutation is confined.
+
+Omission-adjudication packets bind reviewer assertions to exact corpus bytes, task text,
+patches, file lists and base revisions. `reviewer_asserted_omission` is not authenticated
+human identity or executed evidence: reviewer names and evidence locators are supplied
+claims, and locators are not fetched or independently verified. Unreviewed/abstained
+cases are excluded from metrics with coverage retained; partial selection can bias
+results. Outcome-blinded packets omit explicit model/outcome/detector fields, but patch
+and issue text may still reveal identity or clues. Independent adjudication remains
+an operational requirement, not a guarantee of this format.
+
 ## Evidence hierarchy
 
 1. **Claimed** — supplied by an agent, contributor, or model. Never sufficient to pass a check.
@@ -120,11 +149,34 @@ calls and are emitted as start/final SSE evidence. Deployment environment overri
 bounded and invalid values fail closed. Reported usage remains a provider claim, and these
 limits are resource proxies—not a currency-denominated or service-wide spending cap.
 
+Reservations occur in the provider transport immediately before each fetch, including
+internal HTTP retries. A failed attempt retains its call, prompt-byte, and output-token
+reservation. Retry backoff is bounded by the remaining run lifetime, and budget exceptions
+keep their type through all provider adapters so the node supervisor does not retry them.
+Regression tests reproduce the former bypass (two HTTP requests under a one-call budget)
+and now require exactly one fetch and matching final SSE accounting.
+
 ## Local check environment
 
 Local checks receive a minimal cross-platform environment allowlist. A repository may request additional variable names for a check, but captured evidence records only those names. Values whose names indicate credentials, tokens, cookies, passwords, secrets, or authenticated proxies are redacted from stdout and stderr.
 
-Timeouts terminate the spawned process tree rather than only the shell parent. A repository-owned `limits.maxCheckSeconds` deadline covers cumulative check preparation/execution, initiates termination when the remaining time expires, and prevents later applicable checks from starting after exhaustion. Forced kill has a one-second grace and sandbox cleanup may extend observed elapsed time beyond the configured deadline. Checks with a `resources` policy execute on Linux through `/usr/bin/prlimit` with exact CPU-time, virtual-address-space, file-size, and open-file limits; configuration fails closed when that backend is unavailable. Children inherit kernel limits, but CPU, memory, process-count, and disk consumption are not aggregated across the process tree. This is a reliability boundary, not hostile-code isolation: direct checks still retain the host filesystem and network view.
+Timeouts target the spawned POSIX process group (or Windows `taskkill /t`), not only
+the shell parent. A repository-owned `limits.maxCheckSeconds` deadline covers
+cumulative check preparation/execution, initiates termination when the remaining
+time expires, and prevents later applicable checks from starting after exhaustion.
+Forced kill has a one-second grace; outstanding stdout/stderr pipes are then closed
+and output marked truncated so escaped descendants holding inherited descriptors
+cannot indefinitely delay report finalization. Timeout/failure status is preserved
+even if the original shell exited zero. This closes a verifier-hang path, not an
+escape-containment boundary: detached direct-mode descendants can survive the
+original process group and require external cleanup. Sandbox cleanup and
+uninterruptible kernel operations can extend observed time beyond the deadline.
+Checks with a `resources` policy execute on Linux through `/usr/bin/prlimit` with
+exact CPU-time, virtual-address-space, file-size, and open-file limits; configuration
+fails closed when that backend is unavailable. Children inherit kernel limits, but
+CPU, memory, process-count, and disk consumption are not aggregated across the
+process tree. This is a reliability boundary, not hostile-code isolation: direct
+checks still retain the host filesystem and network view.
 
 For direct checks, the `network` field remains a declared capability recorded in evidence
 rather than an enforced boundary. For checks with `isolation: bubblewrap`, it is enforced: absent or
@@ -137,6 +189,21 @@ consumer cannot confuse a direct check with an isolated one.
 The bubblewrap worker makes a bounded copy of Git-tracked and non-ignored untracked
 repository content, omitting `.git`, `.agentship`, ignored local secrets, and
 `node_modules`; a host-installed dependency tree is mounted read-only.
+Workspace preparation now pins both roots and each traversed directory through Linux
+directory descriptors and no-follow opens. It refuses an existing destination root,
+creates regular destination files exclusively, and never traverses copied links as
+parents. Leaf links retain their raw target bytes rather than target contents, including
+dangling or absolute links (their runtime meaning is constrained by the worker mount
+namespace). Non-regular/multiply linked file sources and observed identity/size/mode/
+timestamp changes fail preparation. Modes retain ordinary executable permissions but
+not setuid/setgid bits. Copies use a fixed 1 MiB buffer and charge actual copied bytes
+plus link-target bytes against 2 GiB; the 200,000-entry limit includes conservatively
+projected parent directories as well as listed leaves. Missing tracked paths are
+omitted as deletions. Temporary preparation trees are discarded by the caller on
+failure, and no check is executed from a partial copy. Reflink optimization is no
+longer used in this path. Git/runtime integrity, trusted source/destination root
+ownership, dependency mounts and concurrent same-UID host mutation remain separate
+trust assumptions; this is not a hard disk quota or VM/kernel boundary.
 The worker receives only `/usr`, essential library paths, the active Node distribution,
 a private `/proc`, minimal `/dev`, and fresh temporary/home directories. It does not see
 the host home, `/etc`, or repository writes made inside the disposable copy. An explicitly
@@ -168,15 +235,79 @@ Outbound provider calls use aborting deadlines. The default provider deadline is
 
 ## Task intent input
 
+Review/history artifact publication is also a host-side boundary. Review `--output`
+must resolve to a repository child outside `.git` administration paths; absolute
+external output paths previously accepted by the local runner are now rejected.
+Linux publication pins parent directories with no-follow traversal, preflights all
+destinations, rejects linked/non-regular leaves, and stages private (0600) files
+exclusively before atomic rename. Existing regular reports may be replaced, but their
+hardlink aliases are not modified. History directory creation uses the same confined
+traversal before writing, rather than creating through a link and checking afterward.
+No report file is published when preflight rejects another member of its batch;
+safe parent directories may already have been created. Publication is atomic per file,
+not a multi-file transaction or crash-durability guarantee. The non-Linux local fallback
+checks directory ancestry but does not provide Linux descriptor pinning. Concurrent
+same-UID host mutation and compromised runtime/root ownership remain outside these
+guarantees; other command-specific output writers have separate validation boundaries.
+
 Version 1 extracts only numbered items written under a Markdown `Requirements` heading. Each receives a stable identifier and source line in the evidence manifest. These items are explicit task input, not proof that the implementation satisfies them. Inferred or ambiguous requirements remain a later, separately labeled layer.
 
+Top-level markers may be indented by up to three columns. Continuations at or beyond
+the marker's content column are joined with newlines into the same requirement;
+nested numbered/bullet clauses therefore do not acquire duplicate top-level IDs.
+For `1. text`, align continuations with three spaces; `10. text` needs four. Tab
+indentation uses four-column stops. Under-indented non-list continuation text fails
+with an alignment error instead of silently disappearing. The 16 KiB requirement
+limit applies to the complete joined UTF-8 text, not each line separately. The ID,
+starting source line and top-level `[confirm]` marker remain those of the parent.
+Path/check/symbol mapping and role inference see all retained clauses.
+
+This is a documented Markdown subset, not a full CommonMark parser. Unindented prose
+terminates continuation (lazy paragraph continuation is not supported), headings end
+the active item, and fenced examples remain excluded while following indented prose
+can continue the parent. Unattached four-space numbered blocks are not top-level
+requirements. Within a retained body, indented text is task content; use fenced
+blocks for code examples whose annotations must not become requirements. The content
+column convention follows [CommonMark list indentation](https://spec.commonmark.org/0.31.2/#list-items),
+but retaining the text does not establish that the implementation satisfies it.
+
 Paths explicitly annotated as ``change:path`` inside requirements are mapped to the observed changed-file set. Every annotation in a requirement must match at least one changed file; partial coverage remains `missing`, and the unmatched references are recorded. Ordinary code-formatted paths remain context and are not treated as mandates. This mapping proves only that named paths changed, not that behavior is correct or the requirement is satisfied. Requirements without change annotations remain `unmapped`; AgentShip does not guess.
+
+Explicit paths now include extensionless root names (`Dockerfile`, `Makefile`), dotfiles,
+internal spaces and literal route brackets. One leading `./` and Windows-style separators
+are normalized; surrounding annotation padding is trimmed. Paths must be repository-relative
+and at most 4,096 UTF-8 bytes, without absolute/drive/URL forms, empty/dot/parent components,
+or unsupported star patterns. A trailing `/**` is allowed only for change-directory
+annotations, not symbol paths; other paths match literally. Check references are limited
+to the configured 128-character identity bound. Symbol identifiers retain the existing
+ASCII identifier grammar.
+
+Recognized single-backtick evidence annotations that are empty, unsafe, malformed,
+multiline or unclosed now fail task preflight with the parent requirement ID, before
+repository commands run. This intentionally replaces the old silent-ignore behavior.
+Annotation discovery respects whole code spans: multi-backtick or escaped examples and
+ordinary code containing annotation-like text are context, not additional mandates.
+Use double-backtick examples when describing invalid syntax. Unknown prefixes are
+still ordinary text, and syntactic validation is not proof of behavioral coverage.
 
 Checks explicitly annotated as ``check:name`` are mapped after execution to the captured status of the identically named configured check. Every check annotation must resolve to a passing check; failed, timed-out, and unconfigured names are recorded as unsatisfied evidence. A passing check proves only that the recorded command exited successfully for the reviewed diff. It does not prove that the check exercises the requirement or that the behavior is correct.
 
 Symbols explicitly annotated as ``symbol:path#identifier`` are matched only against added or deleted lines in the captured unified diff for that exact path. The report distinguishes an unchanged file, a changed file without the symbol token, and changed content unavailable to the diff mapper. Binary and untracked working-tree content may be unavailable. A match proves only that the identifier token appeared on a changed line; it does not prove which declaration it names, that its behavior changed correctly, or that all changes to the symbol were captured.
 
 For requirements without an equivalent explicit path annotation, AgentShip conservatively infers test or documentation file roles from imperative phrases such as “add regression tests” and “update the operator guide.” It checks only whether a changed path has the inferred role and labels the result `inferred_observed` or `inferred_missing`. Common negations are suppressed. These heuristic results are warning-level inferred evidence: a matching file does not prove adequate coverage, and unmatched wording or unconventional repository layouts can cause misses or false positives.
+
+Files explicitly marked deleted by captured Git diff metadata are excluded from
+inferred roles, and the task document itself is excluded from role matching during
+review. JSON and Markdown retain `excludedDeletedFiles`/`excludedInputFiles` when
+present, so a removed test or edited task cannot silently masquerade as added test
+or product-documentation work. Replacement paths still count. This is not a
+content/existence oracle: inputs without recognized deletion metadata retain path-only
+inference, and a retained empty/comment-only file can still match. Explicit `change:`
+annotations intentionally continue accepting deletions; `symbol:` remains changed-line
+token evidence, including removals, comments and strings. The separate four-case
+`fixtures/intent/destructive-role-corpus.json` uses file oracles for deletion and
+replacement regression coverage, not representative semantic accuracy. Existing
+12-case and frozen external snapshots are not overwritten by this regression suite.
 
 The report also lists changed files not matched by any explicit change annotation. These files are **unattributed**, not proven unrelated. This reverse-coverage view is evidence for human review and does not produce a finding by itself.
 
@@ -229,6 +360,27 @@ fetch them, authenticate the named candidate, rerun the external evaluator, or p
 selection was followed. A representative result still requires independently produced
 candidates and a published sampling method; see `docs/EXTERNAL_CORPUS.md`.
 
+The first public-artifact pilot uses 20 candidates selected by repository and instance
+identity before outcomes were read, from immutable dataset and submission commits. Raw
+material stays local; a checked-in summary retains the selected identities, byte hashes,
+and detector results. None of the downloaded code is executed. Published task-resolution
+outcomes are external claims and a proxy for incomplete work, not independently verified
+semantic omission labels. The original pilot has zero recall on five unresolved candidates
+and one flag on a resolved candidate. A clause-aware heuristic repair removes that flag on
+the development set, and a subsequently evaluated, preselected disjoint holdout detects
+one of three unresolved candidates with zero flags on 13 resolved candidates. Both
+summaries are retained; neither establishes publishable accuracy. Inferred role matching
+remains warning-level evidence and does not prove semantic behavior. Empty
+predicted-positive denominators emit `null` precision rather than a perfect-score convention.
+
+The machine-readable measurement boundary enforces this distinction as well: benchmark
+output derives `labelSemantics` from corpus kind; external task outcomes always use
+`task_resolution_proxy`, and conflicting semantics declarations are rejected. Calibration
+never fills `recall.omissions` from this proxy class, exposing `recall.taskResolutionProxy`
+instead. Declared omissions and file-oracle omissions retain separate semantics without
+claiming independent semantic adjudication. Rates with absent denominator classes remain
+`null`; missing evidence must not appear as perfect detection performance.
+
 ## CI report boundary
 
 The subject GitHub workflow uses the unprivileged `pull_request` event with `contents: read`, no repository secrets, blank CLI token variables, a GitHub-hosted disposable runner, and full-commit-SHA-pinned official actions. A minimal caller pins the reusable AgentShip verifier workflow to an immutable commit. That verifier checks out three distinct trust roots: its own executable and task extractor from the pinned AgentShip revision, repository policy from the target repository's base revision, and the exact pull-request subject under review. Pull-request changes cannot replace the verifier or effective policy for that run. The PR title/body is passed as data through the GitHub event file, never interpolated into a shell program. JSON, Markdown, and SARIF reports are uploaded as artifacts, and the Markdown is copied into the workflow job summary.
@@ -259,10 +411,46 @@ Base-owned `whenChanged` patterns select checks using only exact repository path
 Opt-in causal checks require an explicit base revision and bubblewrap. After a head pass,
 AgentShip creates a detached merge-base worktree, overlays only changed regular files
 matching trusted `causal.testPaths`, and reruns the command in a fresh sandbox while
-sharing the head installation's dependencies. A normal base failure is retained as
-reproduced evidence; base pass, timeout, or infrastructure failure is a core blocker.
-This establishes revision discrimination for the declared overlay, not test semantics or
-dependency causality.
+sharing the head installation's dependencies. A base run qualifies only when it has
+status `failed`, no termination signal, an integer exit code in 1–125, and no recorded
+writable-storage/accounting or workspace-cleanup failure. Zero exit is never a
+reproduced regression, even if cleanup or resource monitoring made the run fail.
+Shell codes 126 and above are conservatively rejected as ambiguous execution/signal
+outcomes, including deliberate test exits in that range. This follows the reserved
+status conventions in the [POSIX shell specification](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_08_02).
+The report retains `causal.reason`, the underlying base execution evidence, and the
+blocker's `baseFailureReason`; workspace removal failure is separately recorded as
+`execution.cleanupFailed`. Base pass, timeout, or recognized infrastructure failure
+is a core blocker regardless of a precomputed `satisfied` flag.
+
+This establishes revision discrimination for the declared overlay, not test semantics
+or dependency causality. In particular, syntax, redirection, assertion, dependency
+startup and arbitrary program failures can share codes 1–125. A normal nonzero exit
+is not proof that the intended assertion ran or failed. Commands can also mask errors
+or signals with their own exit codes; this assessment cannot recover hidden causes.
+
+Overlay preparation runs on the host before sandbox execution, so it has its own
+path boundary. On Linux it pins source/destination directories through open directory
+descriptors and `/proc/self/fd`, opens each repository-controlled component with
+`O_DIRECTORY | O_NOFOLLOW`, and opens source files without following links. It rejects
+symbolic-link ancestors/leaves, non-regular and multiply linked source files,
+unnormalized paths, filesystem roots and administrative `.git` components. Destination
+updates use exclusively created temporary files plus atomic rename, not truncation
+of an existing inode; destination hardlinks therefore do not alter their other names.
+Missing source files remove only a validated counterpart entry. Executable permission
+bits are retained, but setuid/setgid bits are not. These operations use the
+[Linux no-follow/directory-descriptor semantics](https://man7.org/linux/man-pages/man2/open.2.html).
+
+Preparation accepts at most 256 unique selected paths, 16 MiB per file and 64 MiB
+of copied bytes with fixed 64 KiB buffers. Observed source size/timestamp changes
+abort copying; temporary entries and descriptors are cleaned up, and the detached
+worktree is removed by the caller on failure. Rejection currently fails the command
+rather than fabricating a completed verification report. This requires ordinary Linux
+procfs descriptor access and deliberately refuses linked test fixtures even when a
+link would stay inside the repository. It does not defend against a same-UID hostile
+host process relocating directories, mount replacement, compromised Git/runtime, or
+kernel attacks. Source/base roots and host namespace ownership remain trusted; this
+does not complete adversarial maintainer-mode isolation.
 
 Repository-owned suppressions match an exact finding ID and warning kind. Each entry has a stable suppression ID, owner, reason, and calendar-date expiry. An active suppression is attached to—not removed from—the finding, is represented as an accepted external SARIF suppression, and removes only that warning's verdict impact. Expired entries are ignored. The schema rejects blocker kinds, duplicate identities, duplicate targets, invalid dates, and unbounded ownership/reason text.
 

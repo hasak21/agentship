@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 1,
+  "measuredAt": "2026-10-16",
+  "purpose": "external outcome-proxy calibration baseline; not semantic omission ground truth",
+  "detectorCommit": "26dd0d89b9b244c7bd6c24610cbc9b1a97678434",
+  "sampleManifestSha256": "ee6de8fe6362da6c9b206221cf417515c805f26215cec6434a5891b750f264af",
+  "upstream": {
+    "indexRevision": "40f164d5b8f1d249bf95a6df8b74b577fd8e519d",
+    "assetRepository": "john-b-yang/20260901_mini-v2.4.2_gemini-3-5-flash",
+    "assetRevision": "2f6637a2557da1f7b5f2b583ab7090a077bbeed2",
+    "datasetParquetSha256": "030cfd7f2a704c4c0226e7f104c725a3b41230b1d3517f9c915ad7ea5be3fa25",
+    "predictionsSha256": "74e15b9ceb4b4e2e53a92fc8b87465aaf594a7754a2f707bc02ab69487b212f9"
+  },
+  "corpus": {
+    "sha256": "b75beeb1a78941996401cdbb668260ba0adf6dc3a357cc985d4479dd63698a12",
+    "cases": 20,
+    "provenance": {
+      "dataset": "SWE-bench/SWE-bench_Verified",
+      "revision": "78f471bf655a3137b2e8a75af1501690ec009ec3",
+      "datasetSha256": "8a864efc93dca78ee449f0e3e581e4aab6fb4dbaf6e0504c057a822a65469ca9",
+      "predictionsSha256": "7c18acd1d19c1c94bd30785113d035a274f90a8522b3c437fc9dd35231e23b06",
+      "split": "test",
+      "sourceUrl": "https://huggingface.co/datasets/SWE-bench/SWE-bench_Verified",
+      "selection": "Join pinned task and prediction identities, group by repo, then take the first two instance IDs per repo lexicographically before inspecting outcomes or AgentShip results.",
+      "retrievedAt": "2026-10-16"
+    }
+  },
+  "repositories": [
+    "astropy/astropy",
+    "django/django",
+    "matplotlib/matplotlib",
+    "mwaskom/seaborn",
+    "pallets/flask",
+    "psf/requests",
+    "pydata/xarray",
+    "pylint-dev/pylint",
+    "pytest-dev/pytest",
+    "scikit-learn/scikit-learn",
+    "sphinx-doc/sphinx",
+    "sympy/sympy"
+  ],
+  "metrics": {
+    "cases": 20,
+    "truePositives": 0,
+    "trueNegatives": 14,
+    "falsePositives": 1,
+    "falseNegatives": 5,
+    "accuracy": 0.7,
+    "precision": 0,
+    "recall": 0,
+    "falsePositiveRate": 0.06666666666666667
+  },
+  "results": [
+    {
+      "instanceId": "astropy__astropy-12907",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "7f233cc776d064f8e1d7d39bf0a846434e59d14cc07ac33aab803b7b758ee755",
+      "outcomeSha256": "c0d4229660a6e54df069a5393d311ea4aac0522b2ecfec053cad28e915b0bc6d"
+    },
+    {
+      "instanceId": "astropy__astropy-13033",
+      "unresolved": true,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "c154fd122486ae8083e63611ecc10facd14745d36cace9e58b35b18610f4551f",
+      "outcomeSha256": "273825f447a7903894b8aa9b1de85b56f7b85b5d07fd5842be9e69010622079a"
+    },
+    {
+      "instanceId": "django__django-10097",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "220188ff58bc6d2ab82557e396f6ed6865618a8f1f82aa8ca15fa64060af604f",
+      "outcomeSha256": "f125ca2ce9dd0e583d9c40a308b47f0a8d97fddceb59b3edff048207061e1ae8"
+    },
+    {
+      "instanceId": "django__django-10554",
+      "unresolved": true,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "abcca883cd340bc5511b6715b987852a8983f1779487ae94aaad5816ec7a8376",
+      "outcomeSha256": "b442c68c8b825d3350bbef1141af3a3848657cf61cc0f56bd1775767a25dccdb"
+    },
+    {
+      "instanceId": "matplotlib__matplotlib-13989",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "da299aaf089064efb91ffbd52a4f7981171fea58c6b3c6727b6eeb2dd46ee769",
+      "outcomeSha256": "e554f4f1b31928d94ac8868f2ad4deed3628aeb460b7a16794f57de4d0a7c0b8"
+    },
+    {
+      "instanceId": "mwaskom__seaborn-3069",
+      "unresolved": true,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "bcae27e4f0432c394f4bbf969978b6e332020deaddcbba9f908ed6e2e85d24f9",
+      "outcomeSha256": "fe414ed329103c5a5997c2a85e6576d2fad6b7bf9a59ae42614bf8344e273688"
+    },
+    {
+      "instanceId": "pallets__flask-5014",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "180357c836129112fd098f103c72dae9cefe5814d16575e35efe86a8e15dd1a9",
+      "outcomeSha256": "0a2ad8be764698b129e3371cbf63c3363c816b87a6d1404c42779f49afafce9a"
+    },
+    {
+      "instanceId": "psf__requests-1142",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "49cbb3f460d03105f2d1fbbf9bb63b07478ec588366d6929e555c9de9ec153de",
+      "outcomeSha256": "fef1a4904d2916273de368b58292ed7f0d579d62c79d83144009f1147d8a1213"
+    },
+    {
+      "instanceId": "psf__requests-1724",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "63b438b41c949e25861b12527e77ce6bac28eee33a416c96d7264b746cc29180",
+      "outcomeSha256": "5cd03c51e762ab224bd6f61f897c00cd775f743fabdd96859e40cfc9fce37854"
+    },
+    {
+      "instanceId": "pydata__xarray-3095",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "b0585dcb41b990bcaace2d5d76fc87141bd61aeafeab01449ae2806f54633803",
+      "outcomeSha256": "02f1f7007bc6108e30f6b9446ac271fc6c6d2994e3b62449b5617737bbf7eddc"
+    },
+    {
+      "instanceId": "pydata__xarray-3151",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "05918e62a67261a87592f96b8821725a78c14e3da9ac344515263d02c0ce24ff",
+      "outcomeSha256": "7c92138c7f3aa5f24b26d49c3c6d30a1f83d7e49774635903a45bbee05168a05"
+    },
+    {
+      "instanceId": "pylint-dev__pylint-8898",
+      "unresolved": true,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "7398a493714de6b870895d3c33baedecfca678f7865e6e7d7fcc1fd141c2c818",
+      "outcomeSha256": "5a77be3c03cbd0616ad581a8e02585dbfbffd63399a0c47d867ef81be003fc54"
+    },
+    {
+      "instanceId": "pytest-dev__pytest-10051",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "c5209d2d0198d24bc78db4e51ea340d0c6f2533e9f987288f32c251b51470977",
+      "outcomeSha256": "416440a150fbd6cae4fbf5cc8a8c03e1b1a6c3104bfeea0bb17a06a38cb27c83"
+    },
+    {
+      "instanceId": "pytest-dev__pytest-10081",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "957f030227504563c963b9e4db45264059f993ef7a5da1d9e18ee8f0a8c6c764",
+      "outcomeSha256": "b5dab887d8c46221e009a7e57486fcbea2f61512b473caec37912beb3267aefb"
+    },
+    {
+      "instanceId": "scikit-learn__scikit-learn-10297",
+      "unresolved": false,
+      "detected": true,
+      "mappingStatus": "inferred_missing",
+      "predictionSha256": "619f7f4df05d7fac06f97b2ad1b3dc0b552e70feed3d63d86346ea209ce9c12a",
+      "outcomeSha256": "55debaf7ddc6b4e99a7d9c3159c593afce3a01d104553028f6ecfbd464ed71c3"
+    },
+    {
+      "instanceId": "scikit-learn__scikit-learn-10844",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "464c06f1a0a94d96983a10bb081c360a47c6752cd95338c29216608b37c5552b",
+      "outcomeSha256": "0de85d57c4082a5d80f24d50edadda45ccd3bd5de72bd80abfd731e60f0f8985"
+    },
+    {
+      "instanceId": "sphinx-doc__sphinx-10323",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "3ba611ad7cc285b2b47971f475ce58a1d90195262b11ecc26c73b46d254724d1",
+      "outcomeSha256": "70c798977c87070d6bce2aca57f3d6c31cecc7057f26bc063cc70a1df6222b5e"
+    },
+    {
+      "instanceId": "sphinx-doc__sphinx-10435",
+      "unresolved": true,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "a44de13f7afd53d9a8bac087aa9970222c931354ee964e979bb2a926e382e00c",
+      "outcomeSha256": "50c15d0ddb7fe6372232dd6830c85afafd6692bbe75e8701c093451d337f5628"
+    },
+    {
+      "instanceId": "sympy__sympy-11618",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "e1832d231ed66806a621da3caea49bf40578e32adcabfbbab05cb3c6f05ff795",
+      "outcomeSha256": "72d0bd34e8e3e8ceae35b1e9d02d07a4409dae172504cb7ee374db67f506ab4c"
+    },
+    {
+      "instanceId": "sympy__sympy-12096",
+      "unresolved": false,
+      "detected": false,
+      "mappingStatus": "unmapped",
+      "predictionSha256": "4d72ff9af26a49447792941c658b811df664009608cbb5afd648b19e1e9eace4",
+      "outcomeSha256": "228141ed78d4687e09305e910853cca9895ceac2fce7a756ccd43b8ee8ef7cc6"
+    }
+  ]
+}

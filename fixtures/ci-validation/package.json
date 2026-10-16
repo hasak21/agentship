@@ -1,0 +1,10 @@
+{
+  "name": "agentship-ci-validation",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "lint": "node --check src/clamp.mjs",
+    "test": "node --test test/*.test.mjs",
+    "build": "node --check src/clamp.mjs"
+  }
+}

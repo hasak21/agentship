@@ -46,3 +46,9 @@ the hosted workflow uses `npm ci --ignore-scripts`. It does not publish the CLI,
 repository settings, enable a required check, or claim that fork behavior is validated.
 Keep the caller references and `verifier_ref` inputs identical and immutable when
 upgrading; rerun is intentionally refused, so upgrades are reviewed edits.
+
+For a dependency-free adoption project and a positive/negative/fork validation sequence,
+see `fixtures/ci-validation/README.md`. The fixture has been exercised locally in a
+separate disposable Git repository; it does not establish hosted cross-repository or
+fork-PR behavior. Retain the live workflow and attestation evidence described there before
+expanding deployment claims.
