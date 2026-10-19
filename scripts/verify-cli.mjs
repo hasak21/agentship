@@ -359,6 +359,8 @@ try {
     schemaVersion: 1,
     verdict: "PASS",
     task: { sha256: leaderboardTaskSha },
+    configuration: { sha256: createHash("sha256").update("standalone-policy").digest("hex") },
+    repository: { reviewScope: "working-tree" },
     checks: [],
     findings: [],
   })}\n`;
@@ -382,9 +384,42 @@ try {
     { cwd: temporaryDirectory, encoding: "utf8" }
   );
   const leaderboard = JSON.parse(leaderboardRun.stdout);
-  if (leaderboard.submissions?.[0]?.metrics?.passRate !== 1) {
+  if (leaderboard.submissions?.[0]?.metrics?.passRate !== 1 || leaderboard.suite?.reviewContexts?.[0]?.reviewScope !== "working-tree") {
     throw new Error("Bundled CLI leaderboard output is incomplete.");
   }
+  const incomparableReport = JSON.parse(leaderboardReport);
+  incomparableReport.configuration.sha256 = createHash("sha256").update("weaker-policy").digest("hex");
+  const incomparableBytes = JSON.stringify(incomparableReport);
+  await writeFile(path.join(leaderboardDirectory, "weaker.json"), incomparableBytes);
+  const incomparableManifest = JSON.parse(await readFile(path.join(leaderboardDirectory, "agent.submission.json"), "utf8"));
+  incomparableManifest.submissionId = "weaker-agent";
+  incomparableManifest.tasks[0].report = "weaker.json";
+  incomparableManifest.tasks[0].reportSha256 = createHash("sha256").update(incomparableBytes).digest("hex");
+  const incomparableManifestPath = path.join(leaderboardDirectory, "weaker.submission.json");
+  await writeFile(incomparableManifestPath, JSON.stringify(incomparableManifest));
+  let incomparableRankingRejected = false;
+  try {
+    await execFileAsync(process.execPath, [isolatedCli, "leaderboard", "--submissions", leaderboardDirectory], { cwd: temporaryDirectory });
+  } catch (error) {
+    incomparableRankingRejected = error.code === 2 && error.stderr.includes("same review policy and scope");
+  }
+  if (!incomparableRankingRejected) throw new Error("Bundled CLI ranked reports produced under different policies.");
+  await rm(incomparableManifestPath);
+  const contradictoryReport = JSON.parse(leaderboardReport);
+  contradictoryReport.findings = [{ id: "block", kind: "required_check_failed", severity: "blocker" }];
+  const contradictoryBytes = JSON.stringify(contradictoryReport);
+  await writeFile(path.join(leaderboardDirectory, "report.json"), contradictoryBytes);
+  const contradictoryManifestPath = path.join(leaderboardDirectory, "agent.submission.json");
+  const contradictoryManifest = JSON.parse(await readFile(contradictoryManifestPath, "utf8"));
+  contradictoryManifest.tasks[0].reportSha256 = createHash("sha256").update(contradictoryBytes).digest("hex");
+  await writeFile(contradictoryManifestPath, JSON.stringify(contradictoryManifest));
+  let contradictoryRankingRejected = false;
+  try {
+    await execFileAsync(process.execPath, [isolatedCli, "leaderboard", "--submissions", leaderboardDirectory], { cwd: temporaryDirectory });
+  } catch (error) {
+    contradictoryRankingRejected = error.code === 2 && error.stderr.includes("inconsistent verdict");
+  }
+  if (!contradictoryRankingRejected) throw new Error("Bundled CLI ranked a PASS report containing an active blocker.");
 
   const reviewRepository = path.join(temporaryDirectory, "signed-review");
   const keyDirectory = path.join(temporaryDirectory, "trusted-keys");
@@ -529,6 +564,24 @@ try {
   if (quotedReview.task?.mappings?.[0]?.symbolEvidence?.[0]?.status !== "changed") {
     throw new Error("Bundled CLI lost symbol evidence in a Git-quoted UTF-8 path.");
   }
+  let dirtyBaseRejected = false;
+  try {
+    await execFileAsync(process.execPath, [isolatedCli, "review", "--base", "HEAD", "--output", ".agentship/reviews/dirty-base.json"], { cwd: reviewRepository });
+  } catch (error) {
+    dirtyBaseRejected = error.code === 2 && error.stderr.includes("Base review requires clean tracked state");
+  }
+  if (!dirtyBaseRejected) throw new Error("Bundled CLI reviewed committed diffs against dirty tracked source.");
+  await execFileAsync("git", ["add", "--", "subject.txt", quotedPath], { cwd: reviewRepository });
+  await execFileAsync("git", ["commit", "-qm", "clean committed-base fixture"], { cwd: reviewRepository });
+  await execFileAsync(process.execPath, [isolatedCli, "review", "--base", "HEAD", "--output", ".agentship/reviews/pinned-base.json"], { cwd: reviewRepository });
+  const pinnedBaseReview = JSON.parse(await readFile(path.join(reviewRepository, ".agentship/reviews/pinned-base.json"), "utf8"));
+  const expectedBase = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: reviewRepository })).stdout.trim();
+  if (pinnedBaseReview.repository.baseCommit !== expectedBase || pinnedBaseReview.repository.baseReferenceCommit !== expectedBase || pinnedBaseReview.repository.postCheckBaseReferenceCommit !== expectedBase) {
+    throw new Error("Bundled CLI did not retain the exact resolved base commit identity.");
+  }
+  if (pinnedBaseReview.repository.postCheckTrackedState?.dirtyFiles?.length !== 0 || pinnedBaseReview.repository.postCheckTrackedState?.hiddenFiles?.length !== 0) {
+    throw new Error("Bundled CLI did not record clean post-check tracked state.");
+  }
   await writeFile(path.join(reviewRepository, "task.md"), "## Requirements\n1. Pass `check:`.\n");
   let invalidAnnotationRejected = false;
   try {
@@ -548,6 +601,41 @@ try {
   try {
     await stat(path.join(reviewRepository, ".agentship/reviews/unclosed-fence.json"));
     throw new Error("Bundled CLI published a review despite invalid task fence syntax.");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  await writeFile(path.join(reviewRepository, "task.md"), Buffer.concat([
+    Buffer.from("## Requirements\n1. Change `change:"), Buffer.from([0xff]), Buffer.from(".ts`.\n"),
+  ]));
+  let invalidTaskEncodingRejected = false;
+  try {
+    await execFileAsync(process.execPath, [isolatedCli, "review", "--task", "task.md", "--output", ".agentship/reviews/invalid-encoding.json"], { cwd: reviewRepository });
+  } catch (error) {
+    invalidTaskEncodingRejected = error.code === 2 && error.stderr.includes("Task document must contain valid UTF-8");
+  }
+  if (!invalidTaskEncodingRejected) throw new Error("Bundled CLI accepted replacement-decoded task requirements.");
+  try {
+    await stat(path.join(reviewRepository, ".agentship/reviews/invalid-encoding.json"));
+    throw new Error("Bundled CLI published a review despite invalid task encoding.");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  // Invalid policy encoding must fail before executing even the first check.
+  await writeFile(path.join(reviewRepository, "task.md"), "## Requirements\n1. Update API.\n");
+  await writeFile(path.join(reviewRepository, ".agentship.yml"), Buffer.concat([
+    Buffer.from('version: 1\nmode: report\nchecks:\n  - name: smoke\n    run: node -e "require(\'fs\').writeFileSync(\'must-not-run\', \'marker\')"\n# '),
+    Buffer.from([0xff]), Buffer.from("\n"),
+  ]));
+  let invalidConfigurationRejected = false;
+  try {
+    await execFileAsync(process.execPath, [isolatedCli, "review", "--task", "task.md"], { cwd: reviewRepository });
+  } catch (error) {
+    invalidConfigurationRejected = error.code === 2 && error.stderr.includes("AgentShip configuration must contain valid UTF-8");
+  }
+  if (!invalidConfigurationRejected) throw new Error("Bundled CLI accepted invalid configuration encoding.");
+  try {
+    await stat(path.join(reviewRepository, "must-not-run"));
+    throw new Error("Bundled CLI executed a check despite invalid configuration encoding.");
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }

@@ -22,6 +22,32 @@ Git's own tracked diff capture and sandbox workspace copying are separate input 
 the latter's additional confinement is described below. Neither establishes that every
 pre-sandbox filesystem operation or concurrent host mutation is confined.
 
+Host-side Git evidence commands and sandbox file enumeration explicitly set
+`core.fsmonitor=false`, so a configured filesystem-monitor executable is not invoked
+while reading the index. Temporary causal worktrees use a private empty hooks directory
+for creation/removal, overriding both default hooks and configured `core.hooksPath`,
+and set `submodule.recurse=false`. These are command-local options, not persisted
+configuration changes. Regression controls prove the installed Git can invoke the
+configured hooks, while AgentShip capture/copy and worktree creation do not run them.
+Before tracked diff/stat inspection, AgentShip checks effective working-tree and
+cached `filter` attributes for tracked paths, using bounded literal-path argument
+batches. Active filter attributes are refused before Git can invoke clean conversion.
+Unused configured drivers remain allowed. Configured drivers literally named `unset`
+or `unspecified` are conservatively refused because Git's attribute output cannot
+distinguish those strings from its Boolean/missing-value markers.
+
+Temporary worktrees are now registered with `--no-checkout`, populated via a private
+index only, and inspected with cached attributes from the requested commit before
+file checkout. This matters when historical base attributes differ from the source
+checkout. Active filter attributes abort preparation and remove the temporary
+registration; no smudge/process driver runs and no silent unfiltered fallback is used.
+Ordinary filter-free trees (including explicit `-filter`) still materialize normally.
+These command-local guards do not rewrite filter configuration. Repositories needing
+filter transformations require future isolated materialization and currently fail
+closed. This is not a complete checkout sandbox or native Git I/O/resource quota;
+other host-side transformations and concurrent same-user host mutation remain outside
+the completed boundary.
+
 Omission-adjudication packets bind reviewer assertions to exact corpus bytes, task text,
 patches, file lists and base revisions. `reviewer_asserted_omission` is not authenticated
 human identity or executed evidence: reviewer names and evidence locators are supplied
@@ -251,6 +277,128 @@ same-UID host mutation and compromised runtime/root ownership remain outside the
 guarantees; other command-specific output writers have separate validation boundaries.
 
 Version 1 extracts only numbered items written under a Markdown `Requirements` heading. Each receives a stable identifier and source line in the evidence manifest. These items are explicit task input, not proof that the implementation satisfies them. Inferred or ambiguous requirements remain a later, separately labeled layer.
+
+Task-file bytes must be valid UTF-8 before parsing. Invalid sequences are rejected
+rather than replaced with U+FFFD, which could otherwise change an explicit path
+requirement. Valid replacement characters and a leading BOM remain intact, and the
+original bytes, not a re-encoded string, supply the task digest. The shared bounded
+reader for task/configuration/benchmark/adjudication files opens nonblocking before checking
+the descriptor's regular-file type, so a writerless FIFO or a link to one does not
+wait for a writer. Links to regular files remain accepted; this is not an input-path
+confinement guarantee, filesystem I/O deadline, or defense against hostile host mutation.
+
+Policy YAML, benchmark corpus JSON and adjudication JSON also reject invalid UTF-8
+before structural parsing. The strict decoder preserves BOMs and literal U+FFFD;
+format-specific parsing still applies (JSON does not accept a leading BOM). Accepted
+UTF-8 input round-trips byte-for-byte for source hashing instead of hashing a lossy
+replacement-decoded representation. Policy decoding occurs before any configured
+command executes. Benchmark corpus reads now enforce the 5 MiB bound during reading,
+not only before/after an unbounded `readFile`; they retain non-empty input validation.
+These guarantees do not authenticate reviewer identity or establish semantic labels.
+
+Leaderboard compilation additionally limits the full read set to 64 MiB, including
+manifests and repeated report reads. It reads one report at a time, retaining scalar
+ranking metrics instead of every parsed report, and refuses malformed UTF-8 even when
+the submitted digest matches those malformed bytes. Per-file read limits are clamped
+to the remaining aggregate budget. A rejected compilation produces no partial ranking.
+This reduces input-driven allocation/concurrency risk; it is not an OS memory quota,
+runner authentication, or proof that submitted verdicts are true.
+
+Baseline, history, override and override-source-report JSON use the same strict
+decoder and bounded nonblocking regular-file reader. Invalid UTF-8 fails rather
+than changing run IDs, actor names or finding identities, even if an override's
+declared digest correctly matches malformed source bytes. History selection fails
+on a malformed candidate rather than treating its replacement-decoded fields as
+compatible. Baselines and override inputs reject writerless FIFOs before waiting
+for data. Valid literal U+FFFD is not itself an encoding error.
+
+Signing and signature verification also require valid UTF-8 report/signature JSON.
+Report, key and detached-signature reads enforce their byte limits while reading;
+keys remain raw buffers for cryptographic parsers, not text-normalized inputs.
+Existing root/key-location/permission rules remain in force. These changes do not
+authenticate override actors or key ownership, eliminate path-check/open races on
+a hostile host, or impose aggregate budgets on all other evidence-directory scans.
+
+Disposition metrics and calibration evidence also use bounded nonblocking reads
+and strict UTF-8 before parsing outcome events, human missed-finding labels and
+their source reports. The outcome, report-corpus and missed-label directories now
+reject non-regular entries named `*.json` instead of silently ignoring them and
+publishing a smaller apparent sample set. Unrelated non-JSON entries remain ignored.
+Missed-label report scans enforce the same 10,000-JSON-entry bound as outcome corpus
+scans. These guards do not establish a representative denominator or authenticate
+human labels. Outcome metrics now share a 64 MiB aggregate input budget across
+disposition events, report-corpus scans, missed labels and every referenced report
+reread. Calibration has a separate 64 MiB budget covering both evidence directories
+and its benchmark corpus/adjudication packet. Repeated reads are charged again;
+scanning the same corpus in two phases does not reset the budget. Exhaustion throws
+instead of returning partial metrics. Standalone benchmark runs retain per-file
+bounds rather than implicitly sharing another command's budget.
+
+Leaderboard, outcome and calibration reads use one shared budget implementation.
+Reads are clamped to remaining allowance; capacity is reserved before I/O so
+concurrent requests cannot overspend it. Successful short reads refund unused
+reservation; failed reads retain it. One extra probe byte can detect a growing file
+exceeding its read limit. These are accepted-input byte limits, not a process-memory
+quota, CPU/filesystem deadline, or aggregate quota on all other commands. Large
+evaluations require explicit partitioning; no silent truncation or automatic sample
+selection is performed.
+
+Leaderboard validation now independently recomputes the verdict implied by active
+findings and checks ranking-relevant structure, unique identities and typed metadata.
+A truthy string/object cannot stand in for a causal flag or a complete disposition.
+Causal reproduction counts require boolean claims consistent with the recorded
+head result and base-failure classification, including resource/cleanup/accounting
+failures and known non-execution backends. Candidate manifest entries with invalid
+file types fail rather than disappearing from the candidate set. This is internal
+consistency validation only, not full schema validation, authorization of historical
+suppression/override metadata, authenticity of execution, or semantic correctness.
+Comparability additionally requires each task's reports to share the same declared
+configuration digest, review scope and (for base scope) base-reference string and
+full resolved comparison commit. Missing
+context is not a wildcard. Output exposes these per-task bindings in sorted
+`suite.reviewContexts`; differing policies across different tasks remain allowed.
+The resolved commit must match causal base evidence, and old base-scope reports
+without it cannot silently stand in for current reports. This does not authenticate
+that the declared policy/runner actually executed.
+
+Base-scope capture resolves the requested reference and HEAD to full commit IDs,
+requires a unique merge base, and uses those immutable comparison operands for both
+patch bytes and the changed-file list. JSON records `repository.baseCommit` (the
+effective merge base), `baseReferenceCommit` (the requested ref's initial target),
+and `postCheckBaseReferenceCommit`. Causal worktrees use the captured merge base,
+not a fresh lookup of the mutable ref. Post-check diff capture reuses that base
+while checking the current head; reference-target drift independently triggers the
+core repository-mutation blocker even if diff/head hashes did not change. Ambiguous
+criss-cross histories require an explicit common ancestor. Automatic history matching
+also includes the effective base commit. Missing/deleted refs or unavailable objects
+fail closed. This pins comparison identity, not hostile-host object availability or
+the contents executed by local checks from an immutable snapshot.
+
+Local base reviews now require clean tracked working-tree and index state against
+the resolved head before any check runs. Index-only staged changes are also rejected,
+as are assume-unchanged, skip-worktree/sparse and other non-normal cached index tags
+that could hide dirty files. Submodule changes are not ignored; on POSIX, executable
+mode differences are checked even if `core.filemode=false`. Commit tracked changes
+before using `--base`, or use default working-tree review for uncommitted work. Git
+flags are never silently changed or cleared by verification.
+
+After checks, JSON includes `repository.postCheckTrackedState`. Dirty/hidden tracked
+paths independently trigger a core mutation blocker even when the committed diff did
+not change. This is pre/post validation, not a private immutable execution snapshot:
+untracked/ignored helpers, dependencies and changes introduced then restored between
+observations can still influence local checks. Head-snapshot isolation remains an
+explicit plan item; these guards must not be advertised as complete execution binding.
+
+Outcome and missed-finding events now share the descriptor-rooted output boundary,
+but use a separate immutable-publication operation rather than report replacement.
+It refuses `.git` paths and linked directory ancestors, writes/syncs a private staged
+file, then hard-links complete bytes into the final name without replacement. Existing
+regular files, hardlinks, symlinks and directories all prevent publication; duplicate
+concurrent writers cannot overwrite each other. Temporary links are removed on normal
+success/failure. This requires hard-link support and does not enforce host-level
+append-only storage, directory-entry crash durability, post-crash staging cleanup or
+isolation against hostile same-user host mutation. Non-Linux traversal retains the
+weaker ancestry-check fallback documented for report output.
 
 Top-level markers may be indented by up to three columns. Continuations at or beyond
 the marker's content column are joined with newlines into the same requirement;
