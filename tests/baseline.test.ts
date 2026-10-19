@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,22 @@ import {
   parseBaselineReport,
 } from "../src/review/baseline";
 import type { ReviewFinding } from "../src/review/types";
+
+test("baseline requires valid UTF-8 and retains exact valid source identity", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-baseline-encoding-"));
+  try {
+    const prefix = Buffer.from('{"schemaVersion":1,"runId":"');
+    const suffix = Buffer.from('","repository":{"head":"head"},"findings":[]}');
+    const filename = path.join(directory, "prior.json");
+    await writeFile(filename, Buffer.concat([prefix, Buffer.from([0xff]), suffix]));
+    await assert.rejects(loadBaseline(directory, "prior.json"), /Baseline report must contain valid UTF-8/);
+    const valid = Buffer.concat([prefix, Buffer.from("\ufffd"), suffix]);
+    await writeFile(filename, valid);
+    const baseline = await loadBaseline(directory, "prior.json");
+    assert.equal(baseline.runId, "\ufffd");
+    assert.equal(baseline.sha256, createHash("sha256").update(valid).digest("hex"));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 function finding(
   id: string,
@@ -116,7 +133,7 @@ test("baseline limits reject oversized files and excessive finding counts", asyn
     );
     await assert.rejects(
       loadBaseline(directory, "oversized.json"),
-      /exceeds 5242880 bytes/
+      /(?:exceeds|at most) 5242880 bytes/
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

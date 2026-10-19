@@ -26,11 +26,21 @@ resolution reports must have the same configuration hash, task hash, review scop
 base reference. It must be newer and describe a changed head or diff, while the exact
 target finding must be absent. Other statuses reject a resolution report.
 
-Events are written with exclusive creation under `.agentship/outcomes` by default; use
+Events are published atomically without replacement under `.agentship/outcomes` by default; use
 `--output-dir` to choose another repository-relative directory. Each event binds the
 source report bytes by SHA-256 and retains the run, repository, policy, task, finding,
 actor, reason, timestamp, and elapsed triage time. Reports are limited to 5 MiB and 10,000
 findings, and input/output paths must remain inside the repository.
+
+Both outcome and missed-finding output reject Git administration paths and linked
+directory ancestors. On Linux, traversal is rooted in pinned no-follow directory
+descriptors, so a rejected linked ancestor cannot first create directories outside
+the repository. Each event is staged privately (mode 0600), fully written and synced,
+then published by a same-directory hard link that fails if any destination entry
+already exists. The filesystem must support hard links; no overwriting/non-atomic
+fallback is used. Normal success/failure removes staging files. This protects API
+publication, not later modification by the host owner, multi-event transactions,
+crash cleanup or crash durability of directory entries.
 
 `accepted` and `rejected` are human dispositions, not independently reproduced facts.
 Actor strings are claims and are not authenticated or signed in version 1. A `fixed`

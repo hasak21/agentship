@@ -37,6 +37,23 @@ async function writeKeyPair(directory: string, name: string) {
   return { privateKeyPath, publicKeyPath };
 }
 
+test("signing refuses a replacement-decodable report rather than attesting altered text", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentship-signature-encoding-"));
+  try {
+    const repositoryRoot = path.join(root, "repository");
+    await mkdir(repositoryRoot);
+    const keys = await writeKeyPair(root, "signer");
+    const reportPath = path.join(repositoryRoot, "report.json");
+    const valid = Buffer.from(JSON.stringify(report("\ufffd")));
+    const position = valid.indexOf(Buffer.from("\ufffd"));
+    await writeFile(reportPath, Buffer.concat([valid.subarray(0, position), Buffer.from([0xff]), valid.subarray(position + 3)]));
+    await assert.rejects(signEvidenceReport({ repositoryRoot, reportPath, privateKeyPath: keys.privateKeyPath }), /Report must contain valid UTF-8/);
+    await writeFile(reportPath, valid);
+    const signed = await signEvidenceReport({ repositoryRoot, reportPath, privateKeyPath: keys.privateKeyPath });
+    await verifyEvidenceSignature({ reportPath, signaturePath: signed.outputPath, publicKeyPath: keys.publicKeyPath });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("detached Ed25519 evidence signatures verify exact report bytes", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agentship-signature-"));
   const repositoryRoot = path.join(root, "repository");

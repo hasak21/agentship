@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -127,6 +128,22 @@ test("external benchmark preserves corpus and per-candidate provenance", async (
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("benchmark corpus refuses replacement decoding and hashes exact valid UTF-8 bytes", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-benchmark-encoding-"));
+  try {
+    const fixture = path.join(directory, "corpus.json");
+    const corpus = externalCorpus();
+    corpus.cases[0].rationale = "Valid literal \ufffd";
+    const source = Buffer.from(JSON.stringify(corpus));
+    await writeFile(fixture, source);
+    assert.equal((await runIntentBenchmark(fixture)).corpus.sha256, createHash("sha256").update(source).digest("hex"));
+    const position = source.indexOf(Buffer.from("\ufffd"));
+    assert.ok(position >= 0);
+    await writeFile(fixture, Buffer.concat([source.subarray(0, position), Buffer.from([0xff]), source.subarray(position + 3)]));
+    await assert.rejects(runIntentBenchmark(fixture), /Intent benchmark corpus must contain valid UTF-8/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("external corpus rejects mutable, credentialed, and duplicate provenance", () => {

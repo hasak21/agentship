@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { open, readdir, realpath } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { decodeUtf8Input, EvidenceReadBudget } from "./bounded-file";
 import { runIntentBenchmark } from "./intent-benchmark";
 import type { ExternalCorpusProvenance, IntentBenchmarkReport } from "./intent-benchmark";
 import type { FindingOutcomeStatus } from "./outcome";
@@ -107,11 +108,13 @@ export async function measureCalibration(
     throw new Error("Calibration generatedAt must be a valid date.");
   }
   const repositoryRoot = await realpath(options.repositoryRoot);
+  const budget = new EvidenceReadBudget("Calibration evidence");
   const outcomeFiles = await readEvidenceDirectory(
     repositoryRoot,
     options.outcomesDirectory,
     MAX_OUTCOME_BYTES,
-    "Outcome"
+    "Outcome",
+    budget
   );
   if (outcomeFiles.length === 0) {
     throw new Error("Calibration requires at least one outcome event.");
@@ -120,7 +123,8 @@ export async function measureCalibration(
     repositoryRoot,
     options.reportsDirectory,
     MAX_REPORT_BYTES,
-    "Review report"
+    "Review report",
+    budget
   );
   if (reportFiles.length === 0) {
     throw new Error("Calibration requires at least one review report.");
@@ -238,7 +242,7 @@ export async function measureCalibration(
   const adjudicationPath = options.adjudicationPath
     ? await resolveRepositoryFile(repositoryRoot, options.adjudicationPath, "Adjudication packet", 8 * 1024 * 1024)
     : undefined;
-  const benchmark = await runIntentBenchmark(benchmarkPath.absolutePath, adjudicationPath?.absolutePath);
+  const benchmark = await runIntentBenchmark(benchmarkPath.absolutePath, adjudicationPath?.absolutePath, budget);
   const adjudicated = confirmed + rejected;
   const adjudicatedBlockers = blockerConfirmed + blockerRejected;
   return {
@@ -307,7 +311,8 @@ async function readEvidenceDirectory(
   repositoryRoot: string,
   directory: string,
   maxBytes: number,
-  label: string
+  label: string,
+  budget: EvidenceReadBudget
 ): Promise<EvidenceFile[]> {
   const resolved = await resolveRepositoryDirectory(repositoryRoot, directory, label);
   const entries = await readdir(resolved.absolutePath, { withFileTypes: true });
@@ -321,24 +326,13 @@ async function readEvidenceDirectory(
   for (const entry of jsonEntries) {
     if (!entry.isFile()) throw new Error(`${label} '${entry.name}' must be a regular file.`);
     const absolutePath = path.join(resolved.absolutePath, entry.name);
-    const handle = await open(absolutePath, "r");
-    try {
-      const stats = await handle.stat();
-      if (!stats.isFile() || stats.size > maxBytes) {
-        throw new Error(`${label} '${entry.name}' exceeds its file bound.`);
-      }
-      const source = await handle.readFile();
-      if (source.length > maxBytes) {
-        throw new Error(`${label} '${entry.name}' exceeds its file bound.`);
-      }
-      files.push({
-        relativePath: path.posix.join(resolved.relativePath, entry.name),
-        sha256: createHash("sha256").update(source).digest("hex"),
-        value: parseJsonObject(source.toString("utf8"), `${label} '${entry.name}'`),
-      });
-    } finally {
-      await handle.close();
-    }
+    const inputLabel = `${label} '${entry.name}'`;
+    const source = await budget.read(absolutePath, inputLabel, maxBytes);
+    files.push({
+      relativePath: path.posix.join(resolved.relativePath, entry.name),
+      sha256: createHash("sha256").update(source).digest("hex"),
+      value: parseJsonObject(decodeUtf8Input(source, inputLabel), inputLabel),
+    });
   }
   return files;
 }
@@ -517,14 +511,9 @@ async function resolveRepositoryFile(
   const relativePath = repositoryRelativePath(value, `${label} path`);
   const absolutePath = await realpath(path.resolve(repositoryRoot, relativePath));
   assertInsideRepository(repositoryRoot, absolutePath, `${label} path`);
-  const handle = await open(absolutePath, "r");
-  try {
-    const stats = await handle.stat();
-    if (!stats.isFile() || stats.size > maxBytes) {
-      throw new Error(`${label} exceeds ${maxBytes} bytes.`);
-    }
-  } finally {
-    await handle.close();
+  const stats = await stat(absolutePath);
+  if (!stats.isFile() || stats.size > maxBytes) {
+    throw new Error(`${label} must be a regular file of at most ${maxBytes} bytes.`);
   }
   return { absolutePath, relativePath };
 }

@@ -252,3 +252,21 @@ test("task reader rejects oversized and non-regular files before parsing", async
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("task reader rejects malformed UTF-8 while preserving valid source bytes", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-task-encoding-"));
+  const filename = path.join(directory, "task.md");
+  try {
+    for (const invalid of [[0xff], [0xc0, 0xaf], [0xed, 0xa0, 0x80], [0xe2, 0x82]]) {
+      await writeFile(filename, Buffer.concat([
+        Buffer.from("## Requirements\n1. Change `change:"), Buffer.from(invalid), Buffer.from(".ts`.\n"),
+      ]));
+      await assert.rejects(readBoundedTaskDocument(filename), /Task document must contain valid UTF-8/);
+    }
+    const valid = Buffer.from("\ufeff# Task\n## Requirements\n1. Change `change:\ufffd.ts` and `change:会话.ts`.\n");
+    await writeFile(filename, valid);
+    const source = await readBoundedTaskDocument(filename);
+    assert.deepEqual(source, valid, "validation must not rewrite hash-bound source bytes");
+    assert.equal(parseTaskRequirements(source.toString("utf8"))[0].text, "Change `change:\ufffd.ts` and `change:会话.ts`.");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

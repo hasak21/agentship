@@ -20,6 +20,23 @@ const adversarialPolicyCases = JSON.parse(
   )
 ) as Array<{ id: string; expected: string; source: string }>;
 
+test("configuration refuses invalid UTF-8 command bytes and retains valid byte identity", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-config-encoding-"));
+  const filename = path.join(directory, ".agentship.yml");
+  try {
+    await writeFile(filename, Buffer.concat([
+      Buffer.from("version: 1\nmode: report\nchecks:\n  - name: smoke\n    run: echo "),
+      Buffer.from([0xff]), Buffer.from("\n"),
+    ]));
+    await assert.rejects(loadConfig(directory), /AgentShip configuration must contain valid UTF-8/);
+    const valid = Buffer.from("\ufeffversion: 1\nmode: report\nchecks:\n  - name: smoke\n    run: echo 会话 \ufffd\n");
+    await writeFile(filename, valid);
+    const loaded = await loadConfig(directory);
+    assert.deepEqual(Buffer.from(loaded.source), valid);
+    assert.equal(loaded.config.checks[0].run, "echo 会话 \ufffd");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 async function withConfig(source: string, run: (directory: string) => Promise<void>) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-config-"));
   try {

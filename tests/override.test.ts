@@ -88,6 +88,37 @@ test("a current hash-bound override records actor and removes verdict impact", a
   });
 });
 
+test("override actor bytes cannot be silently replacement decoded", async () => {
+  await withOverrideFixture(async ({ root, overridePath, binding, override }) => {
+    override.actor = "\ufffd";
+    const source = Buffer.from(JSON.stringify(override));
+    const position = source.indexOf(Buffer.from("\ufffd"));
+    const invalid = Buffer.concat([source.subarray(0, position), Buffer.from([0xff]), source.subarray(position + 3)]);
+    await writeFile(path.join(root, overridePath), invalid);
+    await assert.rejects(loadOverride(root, overridePath, binding, new Date("2026-09-21")), /Override must contain valid UTF-8/);
+    await writeFile(path.join(root, overridePath), source);
+    const loaded = await loadOverride(root, overridePath, binding, new Date("2026-09-21"));
+    assert.equal(loaded.actor, "\ufffd");
+    assert.equal(loaded.sha256, createHash("sha256").update(source).digest("hex"));
+  });
+});
+
+test("override refuses malformed source report text even with an exact declared digest", async () => {
+  await withOverrideFixture(async ({ root, overridePath, binding, override }) => {
+    const reference = override.report as { path: string; sha256: string };
+    const reportPath = path.join(root, reference.path);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    report.runId = "\ufffd";
+    const source = Buffer.from(JSON.stringify(report));
+    const position = source.indexOf(Buffer.from("\ufffd"));
+    const invalid = Buffer.concat([source.subarray(0, position), Buffer.from([0xff]), source.subarray(position + 3)]);
+    await writeFile(reportPath, invalid);
+    reference.sha256 = createHash("sha256").update(invalid).digest("hex");
+    await writeFile(path.join(root, overridePath), JSON.stringify(override));
+    await assert.rejects(loadOverride(root, overridePath, binding, new Date("2026-09-21")), /Override source report must contain valid UTF-8/);
+  });
+});
+
 test("override rejects expired records and mismatched source report bindings", async () => {
   await withOverrideFixture(async ({ root, overridePath, binding, override }) => {
     await assert.rejects(

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { applyOmissionAdjudications, createOmissionAdjudicationPacket } from "../src/review/omission-adjudication";
 import { prepareOmissionAdjudications, runIntentBenchmark, type ExternalEvaluationCorpus } from "../src/review/intent-benchmark";
+import { EvidenceReadBudget } from "../src/review/bounded-file";
 
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 function corpus(): ExternalEvaluationCorpus {
@@ -96,6 +97,8 @@ test("benchmark distinguishes reviewer assertions from task-resolution proxies",
     const prepared = await prepareOmissionAdjudications(fixture);
     assert.equal(prepared.corpusSha256, packet.corpusSha256);
     const report = await runIntentBenchmark(fixture, labels);
+    await assert.rejects(runIntentBenchmark(fixture, labels, new EvidenceReadBudget("Calibration evidence", Buffer.byteLength(content) - 1)), /Calibration evidence.*aggregate byte budget/);
+    await assert.rejects(runIntentBenchmark(fixture, labels, new EvidenceReadBudget("Calibration evidence", Buffer.byteLength(content) + Buffer.byteLength(JSON.stringify(packet)) - 1)), /Calibration evidence.*aggregate byte budget/);
     assert.equal(report.corpus.labelSemantics, "reviewer_asserted_omission");
     assert.equal(report.corpus.cases, 4);
     assert.equal(report.metrics.cases, 2);
@@ -103,6 +106,14 @@ test("benchmark distinguishes reviewer assertions from task-resolution proxies",
     assert.equal(report.corpus.adjudication?.sha256, digest(JSON.stringify(packet)));
     assert.equal(report.results[0].adjudication?.decision, "omission");
     assert.equal((await runIntentBenchmark(fixture)).corpus.labelSemantics, "task_resolution_proxy");
+    packet.reviewer = "Valid literal \ufffd reviewer";
+    const validLabels = Buffer.from(JSON.stringify(packet));
+    await writeFile(labels, validLabels);
+    assert.equal((await runIntentBenchmark(fixture, labels)).corpus.adjudication?.sha256, createHash("sha256").update(validLabels).digest("hex"));
+    const position = validLabels.indexOf(Buffer.from("\ufffd"));
+    assert.ok(position >= 0);
+    await writeFile(labels, Buffer.concat([validLabels.subarray(0, position), Buffer.from([0xff]), validLabels.subarray(position + 3)]));
+    await assert.rejects(runIntentBenchmark(fixture, labels), /Adjudication packet must contain valid UTF-8/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

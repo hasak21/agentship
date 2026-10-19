@@ -1,4 +1,4 @@
-import { readBoundedRegularFile } from "./bounded-file";
+import { decodeUtf8Input, readBoundedRegularFile } from "./bounded-file";
 import { validateEvidenceAnnotations } from "./evidence-annotations";
 
 export interface TaskRequirement {
@@ -119,11 +119,13 @@ export function assertTaskDocumentBounds(markdown: string): void {
 }
 
 export async function readBoundedTaskDocument(filePath: string): Promise<Buffer> {
-  return readBoundedRegularFile(
+  const source = await readBoundedRegularFile(
     filePath,
     "Task document",
     MAX_TASK_DOCUMENT_BYTES
   );
+  decodeUtf8Input(source, "Task document");
+  return source;
 }
 
 function indentationColumn(whitespace: string, column = 0): number {

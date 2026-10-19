@@ -1,6 +1,6 @@
 import path from "node:path";
 import { parse } from "yaml";
-import { readBoundedRegularFile } from "./bounded-file";
+import { decodeUtf8Input, readBoundedRegularFile } from "./bounded-file";
 import type {
   AgentShipConfig,
   ReviewCheckConfig,
@@ -395,13 +395,14 @@ export async function loadConfig(
   configPath = ".agentship.yml"
 ): Promise<{ config: AgentShipConfig; absolutePath: string; source: string }> {
   const absolutePath = path.resolve(repositoryRoot, configPath);
-  const source = (
+  const source = decodeUtf8Input(
     await readBoundedRegularFile(
       absolutePath,
       "AgentShip configuration",
       MAX_CONFIG_BYTES
-    )
-  ).toString("utf8");
+    ),
+    "AgentShip configuration"
+  );
   const parsed = parse(source) as Record<string, unknown> | null;
 
   if (!parsed || parsed.version !== 1) {

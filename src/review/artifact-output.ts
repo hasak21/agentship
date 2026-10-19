@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, rename, unlink, type FileHandle } from "node:fs/promises";
+import { link, lstat, mkdir, open, rename, unlink, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { descriptorChildPath, openRepositoryParent } from "./repository-directory";
 
@@ -33,6 +33,34 @@ export async function ensureArtifactDirectory(root: string, directory: string): 
   const handles: FileHandle[] = [];
   try { await pinnedParent(root, [...outputParts(root, directory), ".directory-marker"], handles); }
   finally { await Promise.all(handles.reverse().map(handle => handle.close())); }
+}
+
+/** Publish one complete immutable event without replacing any existing entry. */
+export async function writeNewEvidenceArtifact(root: string, artifact: { path: string; source: string }): Promise<void> {
+  const parts = outputParts(root, artifact.path);
+  const parents: FileHandle[] = [];
+  let temporary: string | undefined;
+  let file: FileHandle | undefined;
+  try {
+    const destination = await pinnedParent(root, parts, parents);
+    const candidate = path.join(path.dirname(destination), `.agentship-artifact-${randomUUID()}.tmp`);
+    file = await open(candidate, "wx", 0o600);
+    temporary = candidate;
+    await file.writeFile(artifact.source, "utf8");
+    await file.sync();
+    await file.close();
+    file = undefined;
+    // A same-directory hard link publishes complete bytes atomically and fails
+    // with EEXIST for any existing leaf. Rename would overwrite prior events.
+    await link(temporary, destination);
+  } finally {
+    try {
+      if (file) await file.close();
+    } finally {
+      try { if (temporary) await unlink(temporary); }
+      finally { await Promise.all(parents.reverse().map(handle => handle.close())); }
+    }
+  }
 }
 
 /** Per-file atomic publication; this is not a multi-file transaction. */

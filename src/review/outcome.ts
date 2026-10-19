@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readdir, realpath } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import path from "node:path";
+import { decodeUtf8Input, EvidenceReadBudget, readBoundedRegularFile } from "./bounded-file";
+import { writeNewEvidenceArtifact } from "./artifact-output";
 
 const MAX_REPORT_BYTES = 5 * 1024 * 1024;
 const MAX_REPORT_FINDINGS = 10_000;
@@ -174,20 +176,12 @@ export async function recordMissedFinding(
     options.outputDirectory ?? ".agentship/missed-findings",
     "Missed-finding output directory"
   );
-  const absoluteDirectory = path.resolve(repositoryRoot, outputDirectory);
-  await mkdir(absoluteDirectory, { recursive: true });
-  const resolvedDirectory = await realpath(absoluteDirectory);
-  assertInsideRepository(repositoryRoot, resolvedDirectory, "Missed-finding output directory");
   const outputPath = path.join(
-    resolvedDirectory,
+    repositoryRoot,
+    outputDirectory,
     `${label.recordedAt.replaceAll(":", "-")}-${label.id}.json`
   );
-  const handle = await open(outputPath, "wx", 0o600);
-  try {
-    await handle.writeFile(`${JSON.stringify(label, null, 2)}\n`, "utf8");
-  } finally {
-    await handle.close();
-  }
+  await writeNewEvidenceArtifact(repositoryRoot, { path: outputPath, source: `${JSON.stringify(label, null, 2)}\n` });
   return { label, outputPath: path.relative(repositoryRoot, outputPath) };
 }
 
@@ -278,21 +272,13 @@ export async function recordFindingOutcome(
     options.outputDirectory ?? ".agentship/outcomes",
     "Outcome output directory"
   );
-  const absoluteDirectory = path.resolve(repositoryRoot, outputDirectory);
-  await mkdir(absoluteDirectory, { recursive: true });
-  const resolvedDirectory = await realpath(absoluteDirectory);
-  assertInsideRepository(repositoryRoot, resolvedDirectory, "Outcome output directory");
   const timestamp = recordedAtIso.replaceAll(":", "-");
   const absoluteOutputPath = path.join(
-    resolvedDirectory,
+    repositoryRoot,
+    outputDirectory,
     `${timestamp}-${outcome.id}.json`
   );
-  const handle = await open(absoluteOutputPath, "wx", 0o600);
-  try {
-    await handle.writeFile(`${JSON.stringify(outcome, null, 2)}\n`, "utf8");
-  } finally {
-    await handle.close();
-  }
+  await writeNewEvidenceArtifact(repositoryRoot, { path: absoluteOutputPath, source: `${JSON.stringify(outcome, null, 2)}\n` });
   return {
     outcome,
     outputPath: path.relative(repositoryRoot, absoluteOutputPath),
@@ -305,6 +291,7 @@ export async function measureFindingOutcomes(
   reportsDirectoryInput?: string,
   missedFindingsDirectoryInput?: string
 ): Promise<OutcomeMetrics> {
+  const budget = new EvidenceReadBudget("Outcome metrics evidence");
   const repositoryRoot = await realpath(repositoryRootInput);
   const directory = repositoryRelativePath(directoryInput, "Outcome metrics directory");
   const absoluteDirectory = path.resolve(repositoryRoot, directory);
@@ -312,7 +299,7 @@ export async function measureFindingOutcomes(
   const resolvedDirectory = await realpath(absoluteDirectory);
   assertInsideRepository(repositoryRoot, resolvedDirectory, "Outcome metrics directory");
   const entries = await readdir(resolvedDirectory, { withFileTypes: true });
-  const jsonFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json"));
+  const jsonFiles = entries.filter((entry) => entry.name.endsWith(".json"));
   if (jsonFiles.length > MAX_OUTCOME_FILES) {
     throw new Error(`Outcome metrics directory exceeds ${MAX_OUTCOME_FILES} JSON files.`);
   }
@@ -320,30 +307,19 @@ export async function measureFindingOutcomes(
   const outcomes: FindingOutcome[] = [];
   const targets = new Set<string>();
   for (const entry of jsonFiles.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isFile()) throw new Error(`Outcome file '${entry.name}' must be a regular file.`);
     const filePath = path.join(resolvedDirectory, entry.name);
-    const handle = await open(filePath, "r");
-    try {
-      const stats = await handle.stat();
-      if (stats.size > MAX_OUTCOME_BYTES) {
-        throw new Error(`Outcome file '${entry.name}' exceeds ${MAX_OUTCOME_BYTES} bytes.`);
-      }
-      const source = await handle.readFile();
-      if (source.length > MAX_OUTCOME_BYTES) {
-        throw new Error(`Outcome file '${entry.name}' exceeds ${MAX_OUTCOME_BYTES} bytes.`);
-      }
-      const outcome = parseOutcome(
-        parseJsonObject(source.toString("utf8"), `Outcome file '${entry.name}'`),
-        `Outcome file '${entry.name}'`
-      );
-      const target = `${outcome.sourceReport.sha256}\0${outcome.finding.id}\0${outcome.finding.kind}`;
-      if (targets.has(target)) {
-        throw new Error(`Outcome file '${entry.name}' duplicates a source finding disposition.`);
-      }
-      targets.add(target);
-      outcomes.push(outcome);
-    } finally {
-      await handle.close();
+    const source = await budget.read(filePath, `Outcome file '${entry.name}'`, MAX_OUTCOME_BYTES);
+    const outcome = parseOutcome(
+      parseJsonObject(decodeUtf8Input(source, `Outcome file '${entry.name}'`), `Outcome file '${entry.name}'`),
+      `Outcome file '${entry.name}'`
+    );
+    const target = `${outcome.sourceReport.sha256}\0${outcome.finding.id}\0${outcome.finding.kind}`;
+    if (targets.has(target)) {
+      throw new Error(`Outcome file '${entry.name}' duplicates a source finding disposition.`);
     }
+    targets.add(target);
+    outcomes.push(outcome);
   }
 
   const byStatus: Record<FindingOutcomeStatus, number> = {
@@ -359,13 +335,14 @@ export async function measureFindingOutcomes(
   const rejectedBlockers = blockers.filter(({ status }) => status === "rejected").length;
   const durations = outcomes.map(({ triageDurationMs }) => triageDurationMs).sort((a, b) => a - b);
   const reviewCorpus = reportsDirectoryInput
-    ? await measureReviewCorpus(repositoryRoot, reportsDirectoryInput, outcomes)
+    ? await measureReviewCorpus(repositoryRoot, reportsDirectoryInput, outcomes, budget)
     : undefined;
   const missedFindingLabels = missedFindingsDirectoryInput
     ? await loadMissedFindingLabels(
         repositoryRoot,
         missedFindingsDirectoryInput,
-        reportsDirectoryInput
+        reportsDirectoryInput,
+        budget
       )
     : undefined;
 
@@ -419,20 +396,24 @@ export async function measureFindingOutcomes(
 async function loadMissedFindingLabels(
   repositoryRoot: string,
   directoryInput: string,
-  reportsDirectoryInput?: string
+  reportsDirectoryInput: string | undefined,
+  budget: EvidenceReadBudget
 ): Promise<{ directory: string; labels: MissedFindingLabel[] }> {
   if (!reportsDirectoryInput) throw new Error("Missed-finding metrics require --reports.");
   const reportsDirectory = repositoryRelativePath(reportsDirectoryInput, "Review metrics directory");
   const reportsAbsoluteDirectory = await realpath(path.resolve(repositoryRoot, reportsDirectory));
   assertInsideRepository(repositoryRoot, reportsAbsoluteDirectory, "Review metrics directory");
   const reportEntries = (await readdir(reportsAbsoluteDirectory, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"));
+    .filter((entry) => entry.name.endsWith(".json"));
+  if (reportEntries.length > MAX_OUTCOME_FILES) throw new Error(`Review metrics directory exceeds ${MAX_OUTCOME_FILES} JSON files.`);
   const corpusHashes = new Set<string>();
   for (const entry of reportEntries) {
+    if (!entry.isFile()) throw new Error(`Review corpus file '${entry.name}' must be a regular file.`);
     const report = await loadReport(
       repositoryRoot,
       path.posix.join(reportsDirectory, entry.name),
-      `Review corpus file '${entry.name}'`
+      `Review corpus file '${entry.name}'`,
+      budget
     );
     corpusHashes.add(report.binding.sha256);
   }
@@ -442,35 +423,31 @@ async function loadMissedFindingLabels(
   const resolvedDirectory = await realpath(absoluteDirectory);
   assertInsideRepository(repositoryRoot, resolvedDirectory, "Missed-finding metrics directory");
   const entries = (await readdir(resolvedDirectory, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"));
+    .filter((entry) => entry.name.endsWith(".json"));
   if (entries.length > MAX_OUTCOME_FILES) {
     throw new Error(`Missed-finding metrics directory exceeds ${MAX_OUTCOME_FILES} JSON files.`);
   }
   const labels: MissedFindingLabel[] = [];
   const identities = new Set<string>();
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isFile()) throw new Error(`Missed-finding file '${entry.name}' must be a regular file.`);
     const filePath = path.join(resolvedDirectory, entry.name);
-    const handle = await open(filePath, "r");
-    try {
-      const stats = await handle.stat();
-      if (stats.size > MAX_OUTCOME_BYTES) throw new Error(`Missed-finding file '${entry.name}' exceeds ${MAX_OUTCOME_BYTES} bytes.`);
-      const value = parseJsonObject((await handle.readFile()).toString("utf8"), `Missed-finding file '${entry.name}'`);
-      const label = parseMissedFinding(value, `Missed-finding file '${entry.name}'`);
-      if (!corpusHashes.has(label.sourceReport.sha256)) {
-        throw new Error(`Missed-finding file '${entry.name}' source report is absent from the review corpus.`);
-      }
-      const report = await loadReport(repositoryRoot, label.sourceReport.path, `Missed-finding file '${entry.name}' source report`);
-      if (report.binding.sha256 !== label.sourceReport.sha256) throw new Error(`Missed-finding file '${entry.name}' source report hash does not match.`);
-      if (report.findings.some(({ id, kind }) => id === label.finding.id && kind === label.finding.kind)) {
-        throw new Error(`Missed-finding file '${entry.name}' target is present in its source report.`);
-      }
-      const identity = `${label.sourceReport.sha256}\0${label.finding.id}\0${label.finding.kind}`;
-      if (identities.has(identity)) throw new Error(`Missed-finding file '${entry.name}' duplicates a label.`);
-      identities.add(identity);
-      labels.push(label);
-    } finally {
-      await handle.close();
+    const inputLabel = `Missed-finding file '${entry.name}'`;
+    const bytes = await budget.read(filePath, inputLabel, MAX_OUTCOME_BYTES);
+    const value = parseJsonObject(decodeUtf8Input(bytes, inputLabel), inputLabel);
+    const label = parseMissedFinding(value, inputLabel);
+    if (!corpusHashes.has(label.sourceReport.sha256)) {
+      throw new Error(`Missed-finding file '${entry.name}' source report is absent from the review corpus.`);
     }
+    const report = await loadReport(repositoryRoot, label.sourceReport.path, `Missed-finding file '${entry.name}' source report`, budget);
+    if (report.binding.sha256 !== label.sourceReport.sha256) throw new Error(`Missed-finding file '${entry.name}' source report hash does not match.`);
+    if (report.findings.some(({ id, kind }) => id === label.finding.id && kind === label.finding.kind)) {
+      throw new Error(`Missed-finding file '${entry.name}' target is present in its source report.`);
+    }
+    const identity = `${label.sourceReport.sha256}\0${label.finding.id}\0${label.finding.kind}`;
+    if (identities.has(identity)) throw new Error(`Missed-finding file '${entry.name}' duplicates a label.`);
+    identities.add(identity);
+    labels.push(label);
   }
   return { directory, labels };
 }
@@ -500,7 +477,8 @@ function parseMissedFinding(value: Record<string, unknown>, label: string): Miss
 async function measureReviewCorpus(
   repositoryRoot: string,
   directoryInput: string,
-  outcomes: FindingOutcome[]
+  outcomes: FindingOutcome[],
+  budget: EvidenceReadBudget
 ): Promise<NonNullable<OutcomeMetrics["reviewCorpus"]>> {
   const directory = repositoryRelativePath(directoryInput, "Review metrics directory");
   const absoluteDirectory = path.resolve(repositoryRoot, directory);
@@ -508,15 +486,16 @@ async function measureReviewCorpus(
   const resolvedDirectory = await realpath(absoluteDirectory);
   assertInsideRepository(repositoryRoot, resolvedDirectory, "Review metrics directory");
   const entries = await readdir(resolvedDirectory, { withFileTypes: true });
-  const jsonFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json"));
+  const jsonFiles = entries.filter((entry) => entry.name.endsWith(".json"));
   if (jsonFiles.length > MAX_OUTCOME_FILES) {
     throw new Error(`Review metrics directory exceeds ${MAX_OUTCOME_FILES} JSON files.`);
   }
 
   const reportHashes = new Set<string>();
   for (const entry of jsonFiles.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isFile()) throw new Error(`Review corpus file '${entry.name}' must be a regular file.`);
     const relativePath = path.posix.join(directory, entry.name);
-    const report = await loadReport(repositoryRoot, relativePath, `Review corpus file '${entry.name}'`);
+    const report = await loadReport(repositoryRoot, relativePath, `Review corpus file '${entry.name}'`, budget);
     if (reportHashes.has(report.binding.sha256)) {
       throw new Error(`Review corpus file '${entry.name}' duplicates report bytes.`);
     }
@@ -627,31 +606,21 @@ function percentile(sorted: number[], fraction: number): number | null {
 async function loadReport(
   repositoryRoot: string,
   reportPath: string,
-  label: string
+  label: string,
+  budget?: EvidenceReadBudget
 ): Promise<ParsedReport> {
   const absolutePath = path.resolve(repositoryRoot, reportPath);
   assertInsideRepository(repositoryRoot, absolutePath, `${label} path`);
   const resolvedPath = await realpath(absolutePath);
   assertInsideRepository(repositoryRoot, resolvedPath, `${label} path`);
-  const handle = await open(resolvedPath, "r");
-  try {
-    const stats = await handle.stat();
-    if (!stats.isFile()) throw new Error(`${label} must be a regular file.`);
-    if (stats.size > MAX_REPORT_BYTES) {
-      throw new Error(`${label} exceeds ${MAX_REPORT_BYTES} bytes.`);
-    }
-    const source = await handle.readFile();
-    if (source.length > MAX_REPORT_BYTES) {
-      throw new Error(`${label} exceeds ${MAX_REPORT_BYTES} bytes.`);
-    }
-    const value = parseJsonObject(source.toString("utf8"), label);
-    const parsed = parseReport(value, label);
-    parsed.binding.path = reportPath;
-    parsed.binding.sha256 = createHash("sha256").update(source).digest("hex");
-    return parsed;
-  } finally {
-    await handle.close();
-  }
+  const source = await (budget
+    ? budget.read(resolvedPath, label, MAX_REPORT_BYTES)
+    : readBoundedRegularFile(resolvedPath, label, MAX_REPORT_BYTES));
+  const value = parseJsonObject(decodeUtf8Input(source, label), label);
+  const parsed = parseReport(value, label);
+  parsed.binding.path = reportPath;
+  parsed.binding.sha256 = createHash("sha256").update(source).digest("hex");
+  return parsed;
 }
 
 function parseReport(report: Record<string, unknown>, label: string): ParsedReport {

@@ -6,8 +6,9 @@ import {
   sign,
   verify,
 } from "node:crypto";
-import { open, readFile, realpath, rename, rm, stat } from "node:fs/promises";
+import { open, realpath, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { decodeUtf8Input, readBoundedRegularFile } from "./bounded-file";
 
 const MAX_REPORT_BYTES = 5 * 1024 * 1024;
 const MAX_KEY_BYTES = 64 * 1024;
@@ -139,9 +140,10 @@ export async function verifyEvidenceSignature(options: {
 }
 
 function parseSignature(source: Buffer): EvidenceSignature {
+  const text = decodeUtf8Input(source, "Signature");
   let value: unknown;
   try {
-    value = JSON.parse(source.toString("utf8"));
+    value = JSON.parse(text);
   } catch {
     throw new Error("Signature must contain valid JSON.");
   }
@@ -179,9 +181,10 @@ function parseSignature(source: Buffer): EvidenceSignature {
 }
 
 function assertAgentShipReport(source: Buffer): void {
+  const text = decodeUtf8Input(source, "Report");
   let value: unknown;
   try {
-    value = JSON.parse(source.toString("utf8"));
+    value = JSON.parse(text);
   } catch {
     throw new Error("Report must contain valid JSON before signature processing.");
   }
@@ -229,9 +232,7 @@ async function readBounded(
   maxBytes: number,
   label: string
 ): Promise<Buffer> {
-  const source = await readFile(candidate);
-  if (source.length > maxBytes) throw new Error(`${label} exceeds ${maxBytes} bytes.`);
-  return source;
+  return readBoundedRegularFile(candidate, label, maxBytes);
 }
 
 function assertContained(candidate: string, root: string, label: string): void {

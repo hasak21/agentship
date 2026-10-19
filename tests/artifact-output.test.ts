@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { link, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { ensureArtifactDirectory, writeEvidenceArtifacts } from "../src/review/artifact-output";
+import { ensureArtifactDirectory, writeEvidenceArtifacts, writeNewEvidenceArtifact } from "../src/review/artifact-output";
 import { prepareHistoryDirectory } from "../src/review/history";
 
 async function fixture(run: (repository: string, outside: string) => Promise<void>) {
@@ -16,6 +16,40 @@ async function fixture(run: (repository: string, outside: string) => Promise<voi
     await run(repository, outside);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test("immutable artifact publication selects one complete concurrent writer without replacing bytes", async () => fixture(async repository => {
+  const destination = "events/nested/event.json";
+  const sources = ["one".repeat(10000), "two".repeat(10000)];
+  const results = await Promise.allSettled(sources.map(source => writeNewEvidenceArtifact(repository, { path: destination, source })));
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  const rejected = results.find(result => result.status === "rejected") as PromiseRejectedResult;
+  assert.equal(rejected.reason.code, "EEXIST");
+  const actual = await readFile(path.join(repository, destination), "utf8");
+  assert.ok(sources.includes(actual));
+  await assert.rejects(writeNewEvidenceArtifact(repository, { path: destination, source: "replace" }), { code: "EEXIST" });
+  assert.equal(await readFile(path.join(repository, destination), "utf8"), actual);
+  const stats = await stat(path.join(repository, destination));
+  assert.equal(stats.mode & 0o777, 0o600);
+  assert.equal(stats.nlink, 1);
+  assert.deepEqual(await readdir(path.join(repository, "events/nested")), ["event.json"]);
+}));
+
+test("immutable artifacts preserve linked leaves and refuse linked ancestors and administration paths", async () => fixture(async (repository, outside) => {
+  const sentinel = path.join(outside, "sentinel");
+  await writeFile(sentinel, "outside sentinel");
+  await link(sentinel, path.join(repository, "hard.json"));
+  await symlink(sentinel, path.join(repository, "soft.json"));
+  await symlink(outside, path.join(repository, "redirect"));
+  for (const destination of ["hard.json", "soft.json"]) {
+    await assert.rejects(writeNewEvidenceArtifact(repository, { path: destination, source: "new" }), { code: "EEXIST" });
+  }
+  for (const destination of ["redirect/new/event.json", ".git/events/event.json", "../outside/event.json"]) {
+    await assert.rejects(writeNewEvidenceArtifact(repository, { path: destination, source: "new" }));
+  }
+  assert.equal(await readFile(sentinel, "utf8"), "outside sentinel");
+  assert.deepEqual(await readdir(outside), ["sentinel"]);
+  assert.deepEqual((await readdir(repository)).sort(), ["hard.json", "redirect", "soft.json"]);
+}));
 
 test("artifact publication creates nested private reports and replaces regular files atomically", async () => fixture(async repository => {
   const artifacts = ["json", "md", "sarif"].map(extension => ({ path: `reports/nested/ci.${extension}`, source: extension }));

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { open } from "node:fs/promises";
 import path from "node:path";
+import { decodeUtf8Input, readBoundedRegularFile } from "./bounded-file";
 import type {
   BaselineComparison,
   FindingIdentity,
@@ -23,26 +23,13 @@ export async function loadBaseline(
   baselinePath: string
 ): Promise<LoadedBaseline> {
   const absolutePath = path.resolve(repositoryRoot, baselinePath);
-  const handle = await open(absolutePath, "r");
-  try {
-    const stats = await handle.stat();
-    if (!stats.isFile()) throw new Error("Baseline report must be a regular file.");
-    if (stats.size > MAX_BASELINE_BYTES) {
-      throw new Error(`Baseline report exceeds ${MAX_BASELINE_BYTES} bytes.`);
-    }
-    const source = await handle.readFile();
-    if (source.length > MAX_BASELINE_BYTES) {
-      throw new Error(`Baseline report exceeds ${MAX_BASELINE_BYTES} bytes.`);
-    }
-    const parsed = parseBaselineReport(source.toString("utf8"));
-    return {
-      path: path.relative(repositoryRoot, absolutePath),
-      sha256: createHash("sha256").update(source).digest("hex"),
-      ...parsed,
-    };
-  } finally {
-    await handle.close();
-  }
+  const source = await readBoundedRegularFile(absolutePath, "Baseline report", MAX_BASELINE_BYTES);
+  const parsed = parseBaselineReport(decodeUtf8Input(source, "Baseline report"));
+  return {
+    path: path.relative(repositoryRoot, absolutePath),
+    sha256: createHash("sha256").update(source).digest("hex"),
+    ...parsed,
+  };
 }
 
 export function parseBaselineReport(source: string): Omit<LoadedBaseline, "path" | "sha256"> {

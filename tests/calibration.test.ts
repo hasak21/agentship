@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -147,6 +147,33 @@ test("calibration derives reproducible metrics from three evidence sets", async 
     assert.match(result.inputs.outcomes.sha256, /^[a-f0-9]{64}$/);
     assert.match(result.inputs.reports.sha256, /^[a-f0-9]{64}$/);
     assert.match(result.inputs.benchmark.sha256, /^[a-f0-9]{64}$/);
+  });
+});
+
+test("calibration refuses replacement-decodable JSON before using outcome or report fields", async () => {
+  await withCalibrationFixture(async ({ root, sourcePath, measure }) => {
+    for (const filename of [path.join("outcomes", (await readdir(path.join(root, "outcomes")))[0]), sourcePath]) {
+      const absolute = path.join(root, filename);
+      const original = await readFile(absolute);
+      // Add an ordinary extra field so malformed bytes, not structural validity or binding, cause refusal.
+      const invalid = Buffer.concat([Buffer.from('{"encoding":"'), Buffer.from([0xff]), Buffer.from('",'), original.subarray(1)]);
+      await writeFile(absolute, invalid);
+      await assert.rejects(measure(), /(?:Outcome|Review report).*must contain valid UTF-8/);
+      await writeFile(absolute, original);
+    }
+    assert.equal((await measure()).samples.reviews, 2);
+  });
+});
+
+test("calibration rejects an aggregate report corpus that exceeds 64 MiB before returning metrics", async () => {
+  await withCalibrationFixture(async ({ root, measure }) => {
+    const padding = "x".repeat(2 * 1024 * 1024);
+    for (let index = 0; index < 33; index++) {
+      await writeFile(path.join(root, "reports", `bulk-${index}.json`), JSON.stringify({
+        ...report(`bulk-${index}`, "2026-09-24T00:00:00.000Z", "head", []), padding,
+      }));
+    }
+    await assert.rejects(measure(), /Calibration evidence exceeds 67108864 aggregate byte budget/);
   });
 });
 

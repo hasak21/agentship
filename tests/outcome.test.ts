@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -127,6 +127,57 @@ test("accepted outcome is immutable and binds the exact source report", async ()
   });
 });
 
+test("outcome metrics reject invalid UTF-8 dispositions instead of altering actor identity", async () => {
+  await withFixture(async ({ root, sourcePath }) => {
+    const result = await recordFindingOutcome({
+      repositoryRoot: root, reportPath: sourcePath, findingId: target.id, findingKind: target.kind,
+      status: "accepted", actor: "\ufffd", reason: "Reproduced locally.",
+    }, new Date("2026-09-24T02:00:00.000Z"), "encoding-event");
+    assert.equal((await measureFindingOutcomes(root)).outcomes, 1);
+    const filename = path.join(root, result.outputPath);
+    const source = await readFile(filename);
+    const position = source.indexOf(Buffer.from("\ufffd"));
+    await writeFile(filename, Buffer.concat([source.subarray(0, position), Buffer.from([0xff]), source.subarray(position + 3)]));
+    await assert.rejects(measureFindingOutcomes(root), /Outcome file.*must contain valid UTF-8/);
+  });
+});
+
+test("metrics refuse non-regular JSON entries rather than silently reducing sample counts", async () => {
+  await withFixture(async ({ root }) => {
+    const outcomes = ".agentship/outcomes";
+    const missed = ".agentship/missed-findings";
+    await mkdir(path.join(root, outcomes), { recursive: true });
+    await mkdir(path.join(root, missed), { recursive: true });
+    for (const [directory, expected] of [
+      [outcomes, /Outcome file.*must be a regular file/],
+      [".agentship/reviews", /Review corpus file.*must be a regular file/],
+      [missed, /Missed-finding file.*must be a regular file/],
+    ] as const) {
+      const invalid = path.join(root, directory, "hidden.json");
+      await mkdir(invalid);
+      await assert.rejects(measureFindingOutcomes(root, outcomes, ".agentship/reviews", missed), expected);
+      await rm(invalid, { recursive: true });
+    }
+  });
+});
+
+test("outcome metrics share a budget across corpus and repeated missed-label corpus reads", async () => {
+  await withFixture(async ({ root }) => {
+    const outcomes = ".agentship/outcomes";
+    const missed = ".agentship/missed-findings";
+    await mkdir(path.join(root, outcomes), { recursive: true });
+    await mkdir(path.join(root, missed), { recursive: true });
+    const padding = "x".repeat(2 * 1024 * 1024);
+    for (let index = 0; index < 17; index++) {
+      await writeFile(path.join(root, ".agentship/reviews", `bulk-${index}.json`), JSON.stringify({
+        ...report({ runId: `bulk-${index}`, finishedAt: "2026-09-24T00:00:00.000Z", head: "head", findings: [] }), padding,
+      }));
+    }
+    assert.ok((await measureFindingOutcomes(root, outcomes, ".agentship/reviews")).reviewCorpus);
+    await assert.rejects(measureFindingOutcomes(root, outcomes, ".agentship/reviews", missed), /Outcome metrics evidence exceeds 67108864 aggregate byte budget/);
+  });
+});
+
 test("fixed outcome requires a compatible report where the finding is absent", async () => {
   await withFixture(async ({ root, sourcePath, resolutionPath }) => {
     const result = await recordFindingOutcome(
@@ -235,6 +286,33 @@ test("outcome inputs and outputs must stay inside the repository", async () => {
       recordFindingOutcome({ ...common, outputDirectory: "../outcomes" }),
       /within the repository/
     );
+  });
+});
+
+test("audit event rejection does not create directories outside the repository through a link", async (context) => {
+  if (process.platform === "win32") return context.skip("requires symlink creation");
+  const outside = await mkdtemp(path.join(os.tmpdir(), "agentship-event-outside-"));
+  try {
+    await withFixture(async ({ root, sourcePath }) => {
+      await symlink(outside, path.join(root, "redirect"));
+      const common = { repositoryRoot: root, reportPath: sourcePath, actor: "maintainer", reason: "Audited locally." };
+      await assert.rejects(recordFindingOutcome({
+        ...common, findingId: target.id, findingKind: target.kind, status: "accepted", outputDirectory: "redirect/new-outcome",
+      }, new Date("2026-09-24T02:00:00.000Z"), "outcome-link"));
+      assert.deepEqual(await readdir(outside), [], "refusal must precede external directory creation");
+      await assert.rejects(recordMissedFinding({
+        ...common, findingId: "missing", findingKind: "missing_security_validation", severity: "blocker", title: "Missing validation", outputDirectory: "redirect/new-missed",
+      }, new Date("2026-09-24T02:00:00.000Z"), "missed-link"));
+      assert.deepEqual(await readdir(outside), []);
+    });
+  } finally { await rm(outside, { recursive: true, force: true }); }
+});
+
+test("audit event destinations exclude Git administration paths", async () => {
+  await withFixture(async ({ root, sourcePath }) => {
+    const common = { repositoryRoot: root, reportPath: sourcePath, actor: "maintainer", reason: "Audited locally.", outputDirectory: ".git/events" };
+    await assert.rejects(recordFindingOutcome({ ...common, findingId: target.id, findingKind: target.kind, status: "accepted" }), /outside .git/);
+    await assert.rejects(recordMissedFinding({ ...common, findingId: "missing", findingKind: "missing_security_validation", severity: "blocker", title: "Missing validation" }), /outside .git/);
   });
 });
 

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { open } from "node:fs/promises";
 import path from "node:path";
+import { decodeUtf8Input, readBoundedRegularFile } from "./bounded-file";
 import type {
   OverrideableFindingKind,
   ReviewFinding,
@@ -192,21 +192,12 @@ async function readBoundedFile(
   limit: number,
   label: string
 ): Promise<{ absolutePath: string; source: string; sha256: string }> {
-  const handle = await open(absolutePath, "r");
-  try {
-    const stats = await handle.stat();
-    if (!stats.isFile()) throw new Error(`${label} must be a regular file.`);
-    if (stats.size > limit) throw new Error(`${label} exceeds ${limit} bytes.`);
-    const source = await handle.readFile();
-    if (source.length > limit) throw new Error(`${label} exceeds ${limit} bytes.`);
-    return {
-      absolutePath,
-      source: source.toString("utf8"),
-      sha256: createHash("sha256").update(source).digest("hex"),
-    };
-  } finally {
-    await handle.close();
-  }
+  const source = await readBoundedRegularFile(absolutePath, label, limit);
+  return {
+    absolutePath,
+    source: decodeUtf8Input(source, label),
+    sha256: createHash("sha256").update(source).digest("hex"),
+  };
 }
 
 function parseJsonObject(source: string, label: string): Record<string, unknown> {

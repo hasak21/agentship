@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { open } from "node:fs/promises";
 import {
   executePatchCase,
   parseExecutableCorpus,
@@ -12,7 +11,7 @@ import {
   type SeededOmissionResult,
 } from "./intent-evaluator";
 import type { CheckStatus } from "./types";
-import { readBoundedRegularFile } from "./bounded-file";
+import { decodeUtf8Input, EvidenceReadBudget, readBoundedRegularFile } from "./bounded-file";
 import {
   applyOmissionAdjudications,
   createOmissionAdjudicationPacket,
@@ -80,9 +79,10 @@ export interface ExternalEvaluationCorpus {
 
 export async function runIntentBenchmark(
   fixturePath: string,
-  adjudicationPath?: string
+  adjudicationPath?: string,
+  inputBudget?: EvidenceReadBudget
 ): Promise<IntentBenchmarkReport> {
-  const source = await readBoundedBenchmark(fixturePath);
+  const source = await readBoundedBenchmark(fixturePath, inputBudget);
   const parsed = JSON.parse(source) as unknown;
   const corpusSha256 = createHash("sha256").update(source).digest("hex");
   let kind: IntentBenchmarkReport["corpus"]["kind"];
@@ -126,9 +126,11 @@ export async function runIntentBenchmark(
     if (kind !== "external_evaluation") {
       throw new Error("Adjudications require an external evaluation corpus.");
     }
-    const labels = await readBoundedRegularFile(adjudicationPath, "Adjudication packet", MAX_ADJUDICATION_BYTES);
+    const labels = await (inputBudget
+      ? inputBudget.read(adjudicationPath, "Adjudication packet", MAX_ADJUDICATION_BYTES)
+      : readBoundedRegularFile(adjudicationPath, "Adjudication packet", MAX_ADJUDICATION_BYTES));
     const applied = applyOmissionAdjudications(
-      parseExternalEvaluationCorpus(parsed).cases, corpusSha256, JSON.parse(labels.toString("utf8"))
+      parseExternalEvaluationCorpus(parsed).cases, corpusSha256, JSON.parse(decodeUtf8Input(labels, "Adjudication packet"))
     );
     cases = applied.cases;
     decisions = applied.decisions;
@@ -327,21 +329,14 @@ function isCalendarDate(value: string): boolean {
   );
 }
 
-async function readBoundedBenchmark(fixturePath: string): Promise<string> {
-  const handle = await open(fixturePath, "r");
-  try {
-    const stats = await handle.stat();
-    if (!stats.isFile() || stats.size === 0 || stats.size > MAX_BENCHMARK_BYTES) {
-      throw new Error(`Intent benchmark corpus must be a non-empty regular file of at most ${MAX_BENCHMARK_BYTES} bytes.`);
-    }
-    const source = await handle.readFile();
-    if (source.length === 0 || source.length > MAX_BENCHMARK_BYTES) {
-      throw new Error(`Intent benchmark corpus must be a non-empty regular file of at most ${MAX_BENCHMARK_BYTES} bytes.`);
-    }
-    return source.toString("utf8");
-  } finally {
-    await handle.close();
+async function readBoundedBenchmark(fixturePath: string, inputBudget?: EvidenceReadBudget): Promise<string> {
+  const source = await (inputBudget
+    ? inputBudget.read(fixturePath, "Intent benchmark corpus", MAX_BENCHMARK_BYTES)
+    : readBoundedRegularFile(fixturePath, "Intent benchmark corpus", MAX_BENCHMARK_BYTES));
+  if (source.length === 0) {
+    throw new Error("Intent benchmark corpus must be a non-empty regular file.");
   }
+  return decodeUtf8Input(source, "Intent benchmark corpus");
 }
 
 export function parseSeededOmissionCases(value: unknown): SeededOmissionCase[] {
