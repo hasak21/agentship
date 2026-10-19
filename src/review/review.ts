@@ -10,6 +10,7 @@ import {
   collectGitEvidence,
   getGitProvenance,
   getHead,
+  inspectTrackedHeadState,
   prepareBaseWorktree,
   resolveRepositoryRoot,
 } from "./git";
@@ -97,7 +98,13 @@ export async function runReview(options: RunReviewOptions): Promise<{
     staged: options.staged ?? false,
     base: options.base,
   });
-  const head = await getHead(repositoryRoot);
+  const head = gitEvidence.headCommit ?? await getHead(repositoryRoot);
+  if (gitEvidence.scope === "base") {
+    const state = await inspectTrackedHeadState(repositoryRoot, head);
+    if (state.dirtyFiles.length || state.hiddenFiles.length) {
+      throw new Error("Base review requires clean tracked state without assume-unchanged/skip-worktree flags; commit tracked changes or use working-tree review.");
+    }
+  }
   const diffSha256 = sha256(gitEvidence.diff);
   const configurationSha256 = sha256(configSource);
   const budgetExcesses = evaluateReviewBudgets(
@@ -147,7 +154,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
       maxTimeoutMs: remainingCheckMs,
     });
     if (check.causal && evidence.status === "passed") {
-      const baseWorktree = await prepareBaseWorktree(repositoryRoot, options.base!);
+      const baseWorktree = await prepareBaseWorktree(repositoryRoot, gitEvidence.baseCommit!);
       try {
         const overlaidFiles = await overlayCausalTestFiles(
           repositoryRoot,
@@ -220,8 +227,12 @@ export async function runReview(options: RunReviewOptions): Promise<{
   const postCheckGitEvidence = await collectGitEvidence(repositoryRoot, {
     staged: options.staged ?? false,
     base: options.base,
+    comparisonBaseCommit: gitEvidence.baseCommit,
   });
-  const postCheckHead = await getHead(repositoryRoot);
+  const postCheckHead = postCheckGitEvidence.headCommit ?? await getHead(repositoryRoot);
+  const postCheckTrackedState = gitEvidence.scope === "base"
+    ? await inspectTrackedHeadState(repositoryRoot, postCheckHead)
+    : undefined;
   const postCheckGitProvenance = await getGitProvenance(repositoryRoot);
   if (
     gitProvenance.executable !== postCheckGitProvenance.executable ||
@@ -233,7 +244,9 @@ export async function runReview(options: RunReviewOptions): Promise<{
   }
   const postCheckDiffSha256 = sha256(postCheckGitEvidence.diff);
   const stableDuringChecks =
-    head === postCheckHead && diffSha256 === postCheckDiffSha256;
+    head === postCheckHead && diffSha256 === postCheckDiffSha256 &&
+    gitEvidence.baseReferenceCommit === postCheckGitEvidence.baseReferenceCommit &&
+    (!postCheckTrackedState || (!postCheckTrackedState.dirtyFiles.length && !postCheckTrackedState.hiddenFiles.length));
   const budget = config.limits
     ? {
         changedFiles: gitEvidence.changedFiles.length,
@@ -250,6 +263,10 @@ export async function runReview(options: RunReviewOptions): Promise<{
       afterHead: postCheckHead,
       beforeDiffSha256: diffSha256,
       afterDiffSha256: postCheckDiffSha256,
+      beforeBaseReferenceCommit: gitEvidence.baseReferenceCommit,
+      afterBaseReferenceCommit: postCheckGitEvidence.baseReferenceCommit,
+      dirtyTrackedFiles: postCheckTrackedState?.dirtyFiles,
+      hiddenTrackedFiles: postCheckTrackedState?.hiddenFiles,
     },
     task?.mappings,
     task?.requirements,
@@ -293,6 +310,7 @@ export async function runReview(options: RunReviewOptions): Promise<{
             taskSha256: task?.sha256,
             reviewScope: gitEvidence.scope,
             base: options.base,
+            baseCommit: gitEvidence.baseCommit,
           }
         )
       : undefined;
@@ -334,6 +352,10 @@ export async function runReview(options: RunReviewOptions): Promise<{
       head,
       postCheckHead,
       base: options.base,
+      baseCommit: gitEvidence.baseCommit,
+      baseReferenceCommit: gitEvidence.baseReferenceCommit,
+      postCheckBaseReferenceCommit: postCheckGitEvidence.baseReferenceCommit,
+      postCheckTrackedState,
       reviewScope: gitEvidence.scope,
       diffSha256,
       postCheckDiffSha256,
@@ -435,6 +457,10 @@ export function buildFindings(
     afterHead: string;
     beforeDiffSha256: string;
     afterDiffSha256: string;
+    beforeBaseReferenceCommit?: string;
+    afterBaseReferenceCommit?: string;
+    dirtyTrackedFiles?: string[];
+    hiddenTrackedFiles?: string[];
   },
   mappings: Array<{
     requirementId: string;
@@ -550,6 +576,10 @@ export function buildFindings(
         afterHead: repository.afterHead,
         beforeDiffSha256: repository.beforeDiffSha256,
         afterDiffSha256: repository.afterDiffSha256,
+        beforeBaseReferenceCommit: repository.beforeBaseReferenceCommit,
+        afterBaseReferenceCommit: repository.afterBaseReferenceCommit,
+        ...(repository.dirtyTrackedFiles ? { dirtyTrackedFiles: repository.dirtyTrackedFiles } : {}),
+        ...(repository.hiddenTrackedFiles ? { hiddenTrackedFiles: repository.hiddenTrackedFiles } : {}),
       },
     });
   }

@@ -26,7 +26,7 @@ export async function copySandboxWorkspace(
   if (process.platform !== "linux" || [sourceRoot, destinationRoot].some(root => path.resolve(root) === path.parse(path.resolve(root)).root)) {
     throw new Error("Workspace copying requires Linux and refuses filesystem roots.");
   }
-  const { stdout } = await exec("/usr/bin/git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+  const { stdout } = await exec("/usr/bin/git", ["-c", "core.fsmonitor=false", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
     cwd: sourceRoot, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
   });
   const files = stdout.split("\0").filter(Boolean).filter(name => !OMITTED.has(name.split("/", 1)[0])).sort();

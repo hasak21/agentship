@@ -13,6 +13,26 @@ import { runReview } from "../src/review/review";
 
 const execFileAsync = promisify(execFile);
 
+test("history refuses malformed UTF-8 and oversized report bytes before compatibility selection", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentship-history-encoding-"));
+  const directory = path.join(root, ".agentship/history");
+  const context = { configurationSha256: "config", reviewScope: "working-tree" as const };
+  try {
+    await mkdir(directory, { recursive: true });
+    const filename = path.join(directory, "latest.json");
+    const source = Buffer.from(JSON.stringify({
+      schemaVersion: 1, runId: "\ufffd", repository: { reviewScope: "working-tree" }, configuration: { sha256: "config" },
+    }));
+    await writeFile(filename, source);
+    assert.equal(await findLatestCompatibleHistory(root, ".agentship/history", context), path.relative(root, filename));
+    const position = source.indexOf(Buffer.from("\ufffd"));
+    await writeFile(filename, Buffer.concat([source.subarray(0, position), Buffer.from([0xff]), source.subarray(position + 3)]));
+    await assert.rejects(findLatestCompatibleHistory(root, ".agentship/history", context), /History report must contain valid UTF-8/);
+    await writeFile(filename, Buffer.alloc(5 * 1024 * 1024 + 1, 32));
+    await assert.rejects(findLatestCompatibleHistory(root, ".agentship/history", context), /5242880 bytes/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("history directory must remain inside the repository", () => {
   assert.throws(
     () => resolveHistoryDirectory("/repo", "../history"),
@@ -26,6 +46,22 @@ test("history directory must remain inside the repository", () => {
     absolutePath: "/repo/.agentship/history",
     relativePath: ".agentship/history",
   });
+});
+
+test("base history requires the same resolved commit and skips legacy missing identities", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentship-history-pinned-"));
+  try {
+    const directory = path.join(root, "history");
+    await mkdir(directory);
+    for (const [name, baseCommit] of [["a-correct", "a".repeat(40)], ["z-wrong", "b".repeat(40)], ["zz-legacy", undefined]]) {
+      await writeFile(path.join(directory, `${name}.json`), JSON.stringify({
+        schemaVersion: 1, configuration: { sha256: "config" }, repository: { reviewScope: "base", base: "comparison", baseCommit },
+      }));
+    }
+    assert.equal(await findLatestCompatibleHistory(root, "history", {
+      configurationSha256: "config", reviewScope: "base", base: "comparison", baseCommit: "a".repeat(40),
+    }), path.join("history", "a-correct.json"));
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("missing history has no compatible baseline", async () => {

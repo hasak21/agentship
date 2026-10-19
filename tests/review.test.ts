@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import {
   access,
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -905,6 +906,109 @@ checks:
     assert.match(await import("node:fs/promises").then(({ readFile }) => readFile(result.markdownPath, "utf8")), /causal base=failed/);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("causal review pins its original base and records a moved reference as integrity failure", async (context) => {
+  if (process.platform === "win32") return context.skip("POSIX shell fixture");
+  if (process.env.AGENTSHIP_SANDBOX === "bubblewrap") return context.skip("nested bubblewrap is outside this integration test");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-base-ref-move-"));
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: directory });
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.name", "Test"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await writeFile(path.join(directory, "value.txt"), "old\n");
+    await writeFile(path.join(directory, "regression.sh"), 'test "$(cat value.txt)" = old\n');
+    await writeFile(path.join(directory, ".agentship.yml"), `version: 1
+mode: report
+checks:
+  - name: move-reference
+    run: git update-ref refs/heads/comparison HEAD
+  - name: regression
+    run: sh regression.sh
+    isolation: bubblewrap
+    network: denied
+    causal:
+      expectation: fails_on_base
+      testPaths:
+        - regression.sh
+`);
+    await git(["add", "."]);
+    await git(["commit", "-qm", "base"]);
+    const base = (await git(["rev-parse", "HEAD"])).stdout.trim();
+    await git(["branch", "comparison"]);
+    await writeFile(path.join(directory, "value.txt"), "new\n");
+    await writeFile(path.join(directory, "regression.sh"), 'test "$(cat value.txt)" = new\n');
+    await git(["commit", "-qam", "head"]);
+    const { report } = await runReview({ cwd: directory, base: "comparison", outputPath: ".agentship/reviews/pinned.json" });
+    assert.equal(report.checks[1].causal?.baseCommit, base);
+    assert.equal(report.checks[1].causal?.satisfied, true);
+    assert.equal(report.repository.baseCommit, base);
+    assert.equal(report.repository.baseReferenceCommit, base);
+    assert.equal(report.repository.postCheckBaseReferenceCommit, report.repository.head);
+    assert.equal(report.repository.diffSha256, report.repository.postCheckDiffSha256);
+    assert.equal(report.repository.head, report.repository.postCheckHead);
+    assert.equal(report.repository.stableDuringChecks, false);
+    assert.equal(report.verdict, "BLOCK");
+    assert.equal(report.findings.find(row => row.kind === "repository_changed_during_review")?.evidence.beforeBaseReferenceCommit, base);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("base review rejects dirty or hidden tracked state before executing commands", async () => {
+  for (const variant of ["unstaged", "staged", "index-only", "assume-unchanged", "skip-worktree", "mode"] as const) {
+    if (variant === "mode" && process.platform === "win32") continue;
+    const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-base-dirty-"));
+    const git = (args: string[]) => execFileAsync("git", args, { cwd: directory });
+    try {
+      await git(["init", "-q"]);
+      await git(["config", "user.name", "Test"]);
+      await git(["config", "user.email", "test@example.com"]);
+      await writeFile(path.join(directory, "value.txt"), "committed\n");
+      await writeFile(path.join(directory, ".agentship.yml"), `version: 1
+mode: report
+checks:
+  - name: marker
+    run: node -e "require('fs').writeFileSync('must-not-run', 'ran')"
+`);
+      await git(["add", "."]);
+      await git(["commit", "-qm", "head"]);
+      if (variant === "assume-unchanged" || variant === "skip-worktree") await git(["update-index", `--${variant}`, "value.txt"]);
+      if (variant === "mode") {
+        await git(["config", "core.filemode", "false"]);
+        await chmod(path.join(directory, "value.txt"), 0o755);
+      } else await writeFile(path.join(directory, "value.txt"), "dirty\n");
+      if (variant === "staged" || variant === "index-only") await git(["add", "value.txt"]);
+      if (variant === "index-only") await writeFile(path.join(directory, "value.txt"), "committed\n");
+      await assert.rejects(runReview({ cwd: directory, base: "HEAD" }), /Base review requires clean tracked state/);
+      await assert.rejects(access(path.join(directory, "must-not-run")), { code: "ENOENT" });
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  }
+});
+
+test("base review records tracked or hidden-state mutation even when committed diff is unchanged", async () => {
+  for (const hidden of [false, true]) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-base-post-state-"));
+    const git = (args: string[]) => execFileAsync("git", args, { cwd: directory });
+    try {
+      await git(["init", "-q"]);
+      await git(["config", "user.name", "Test"]);
+      await git(["config", "user.email", "test@example.com"]);
+      await writeFile(path.join(directory, "value.txt"), "committed\n");
+      const command = hidden ? "git update-index --assume-unchanged value.txt" : 'node -e "require(\'fs\').writeFileSync(\'value.txt\', \'dirty\')"';
+      await writeFile(path.join(directory, ".agentship.yml"), `version: 1\nmode: report\nchecks:\n  - name: mutate\n    run: ${command}\n`);
+      await git(["add", "."]);
+      await git(["commit", "-qm", "head"]);
+      const { report } = await runReview({ cwd: directory, base: "HEAD" });
+      assert.equal(report.checks[0].status, "passed");
+      assert.equal(report.repository.diffSha256, report.repository.postCheckDiffSha256);
+      assert.equal(report.repository.stableDuringChecks, false);
+      assert.equal(report.verdict, "BLOCK");
+      const state = report.repository.postCheckTrackedState!;
+      assert.deepEqual(hidden ? state.hiddenFiles : state.dirtyFiles, ["value.txt"]);
+      const finding = report.findings.find(row => row.kind === "repository_changed_during_review")!;
+      assert.deepEqual(hidden ? finding.evidence.hiddenTrackedFiles : finding.evidence.dirtyTrackedFiles, ["value.txt"]);
+    } finally { await rm(directory, { recursive: true, force: true }); }
   }
 });
 

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { mkdtemp, open, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, open, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -13,7 +13,7 @@ const MAX_GIT_BYTES = 128 * 1024 * 1024;
 const HASH_CHUNK_BYTES = 1024 * 1024;
 
 async function git(args: string[], cwd: string): Promise<string> {
-  const { stdout } = await execFileAsync(resolveTrustedGitExecutable(cwd), args, {
+  const { stdout } = await execFileAsync(resolveTrustedGitExecutable(cwd), ["-c", "core.fsmonitor=false", ...args], {
     cwd,
     encoding: "utf8",
     maxBuffer: 20 * 1024 * 1024,
@@ -22,7 +22,7 @@ async function git(args: string[], cwd: string): Promise<string> {
 }
 
 async function gitPaths(args: string[], cwd: string): Promise<string[]> {
-  const { stdout } = await execFileAsync(resolveTrustedGitExecutable(cwd), args, {
+  const { stdout } = await execFileAsync(resolveTrustedGitExecutable(cwd), ["-c", "core.fsmonitor=false", ...args], {
     cwd,
     encoding: "buffer",
     maxBuffer: 20 * 1024 * 1024,
@@ -170,44 +170,56 @@ export async function getHead(repositoryRoot: string): Promise<string> {
 
 export async function prepareBaseWorktree(
   repositoryRoot: string,
-  baseRef: string
+  commit: string
 ): Promise<{ commit: string; directory: string; cleanup(): Promise<void> }> {
-  const commit = await git(["merge-base", baseRef, "HEAD"], repositoryRoot);
-  if (!/^[a-f0-9]{40,64}$/.test(commit)) {
-    throw new Error("Git returned an invalid merge-base commit.");
+  if (!isCommit(commit)) {
+    throw new Error("Base worktree requires an already resolved commit identifier.");
   }
   const parent = await mkdtemp(path.join(os.tmpdir(), "agentship-base-"));
   const directory = path.join(parent, "worktree");
+  const hooks = path.join(parent, "disabled-hooks");
+  const noHooks = ["-c", `core.hooksPath=${hooks}`, "-c", "submodule.recurse=false", "-c", "core.sparseCheckout=false", "-c", "index.sparse=false"];
+  let registered = false;
+  const cleanup = async () => {
+    try {
+      if (registered) await git([...noHooks, "worktree", "remove", "--force", directory], repositoryRoot);
+    } finally { await rm(parent, { recursive: true, force: true }); }
+  };
   try {
-    await git(["worktree", "add", "--detach", directory, commit], repositoryRoot);
+    await mkdir(hooks, { mode: 0o700 });
+    // Never materialize blobs until attributes from the target commit's private
+    // index have been checked; the source checkout may have different attributes.
+    await git([...noHooks, "worktree", "add", "--detach", "--no-checkout", directory, commit], repositoryRoot);
+    registered = true;
+    await git([...noHooks, "read-tree", commit], directory);
+    await assertNoHostGitFilters(directory, true);
+    await git([...noHooks, "checkout-index", "--all", "--force"], directory);
   } catch (error) {
-    await rm(parent, { recursive: true, force: true });
+    try { await cleanup(); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], "Temporary worktree preparation and cleanup failed."); }
     throw error;
   }
-  return {
-    commit,
-    directory,
-    cleanup: async () => {
-      try {
-        await git(["worktree", "remove", "--force", directory], repositoryRoot);
-      } finally {
-        await rm(parent, { recursive: true, force: true });
-      }
-    },
-  };
+  return { commit, directory, cleanup };
 }
 
 export async function collectGitEvidence(
   repositoryRoot: string,
-  options: { staged: boolean; base?: string }
+  options: { staged: boolean; base?: string; comparisonBaseCommit?: string }
 ): Promise<{
   scope: "working-tree" | "staged" | "base";
   diff: string;
   changedFiles: string[];
+  headCommit?: string;
+  baseCommit?: string;
+  baseReferenceCommit?: string;
 }> {
   if (options.staged && options.base) {
     throw new Error("Use either --staged or --base, not both.");
   }
+  if (options.comparisonBaseCommit !== undefined && (!options.base || !isCommit(options.comparisonBaseCommit))) {
+    throw new Error("A pinned comparison base must be a full commit identifier with --base.");
+  }
+  await assertNoHostGitFilters(repositoryRoot);
 
   if (options.staged) {
     const [diff, names] = await Promise.all([
@@ -218,13 +230,15 @@ export async function collectGitEvidence(
   }
 
   if (options.base) {
-    await git(["rev-parse", "--verify", options.base], repositoryRoot);
-    const range = `${options.base}...HEAD`;
-    const [diff, names] = await Promise.all([
-      git(["diff", "--binary", "--no-ext-diff", range], repositoryRoot),
-      gitPaths(["diff", "--name-only", "-z", "--no-ext-diff", range], repositoryRoot),
+    const [headCommit, baseReferenceCommit] = await Promise.all([
+      resolveCommit(repositoryRoot, "HEAD"), resolveCommit(repositoryRoot, options.base),
     ]);
-    return { scope: "base", diff, changedFiles: names };
+    const baseCommit = options.comparisonBaseCommit ?? await uniqueMergeBase(repositoryRoot, baseReferenceCommit, headCommit);
+    const [diff, names] = await Promise.all([
+      git(["diff", "--binary", "--no-ext-diff", baseCommit, headCommit, "--"], repositoryRoot),
+      gitPaths(["diff", "--name-only", "-z", "--no-ext-diff", baseCommit, headCommit, "--"], repositoryRoot),
+    ]);
+    return { scope: "base", diff, changedFiles: names, headCommit, baseCommit, baseReferenceCommit };
   }
 
   const [diff, trackedNames, untrackedNames] = await Promise.all([
@@ -240,4 +254,77 @@ export async function collectGitEvidence(
     diff: [diff, untrackedManifest].filter(Boolean).join("\n"),
     changedFiles,
   };
+}
+
+const isCommit = (value: string) => /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
+
+async function resolveCommit(root: string, reference: string): Promise<string> {
+  const commit = await git(["rev-parse", "--verify", "--end-of-options", `${reference}^{commit}`], root);
+  if (!isCommit(commit)) throw new Error("Git returned an invalid resolved commit identifier.");
+  return commit;
+}
+
+async function uniqueMergeBase(root: string, base: string, head: string): Promise<string> {
+  const bases = (await git(["merge-base", "--all", base, head], root)).split("\n");
+  if (bases.length !== 1 || !isCommit(bases[0])) {
+    throw new Error("Base comparison requires a unique merge base; choose an explicit common ancestor commit.");
+  }
+  return bases[0];
+}
+
+export async function inspectTrackedHeadState(root: string, head: string): Promise<{ dirtyFiles: string[]; hiddenFiles: string[] }> {
+  if (!isCommit(head)) throw new Error("Tracked-state inspection requires a resolved head commit.");
+  await assertNoHostGitFilters(root);
+  const modeOptions = process.platform === "win32" ? [] : ["-c", "core.filemode=true"];
+  const [working, staged, tagged] = await Promise.all([
+    gitPaths([...modeOptions, "diff", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", head, "--"], root),
+    gitPaths([...modeOptions, "diff", "--cached", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", head, "--"], root),
+    gitPaths(["ls-files", "-v", "-z"], root),
+  ]);
+  const hiddenFiles: string[] = [];
+  for (const entry of tagged) {
+    if (entry.length < 3 || entry[1] !== " ") throw new Error("Git returned malformed index-state evidence.");
+    // Lowercase tags mean assume-unchanged; S denotes skip-worktree/sparse paths.
+    // Reject other non-cached tags as well rather than treating them as clean.
+    if (entry[0] !== "H") hiddenFiles.push(entry.slice(2));
+  }
+  return { dirtyFiles: [...new Set([...working, ...staged])].sort(), hiddenFiles: [...new Set(hiddenFiles)].sort() };
+}
+
+async function assertNoHostGitFilters(root: string, cachedOnly = false): Promise<void> {
+  // check-attr renders Boolean false/missing and literal values with the same
+  // "unset"/"unspecified" strings. Such driver names cannot be safely classified
+  // from that protocol, so refuse configured commands using reserved names.
+  try {
+    const reserved = await git(["config", "--name-only", "--get-regexp", "^filter\\.(unset|unspecified)\\.(clean|smudge|process)$"], root);
+    if (reserved) throw new Error("Git filter attributes require isolated materialization; reserved-name filter commands were refused.");
+  } catch (error) {
+    if ((error as { code?: number }).code !== 1) throw error;
+  }
+  const paths = await gitPaths(["ls-files", "--cached", "-z"], root);
+  // Bound argv sizes, preserve literal filenames and validate one response triple
+  // per requested path. Attribute checks read data; they do not run filter drivers.
+  const batches: string[][] = [];
+  let batch: string[] = [];
+  let bytes = 0;
+  for (const filename of paths) {
+    const size = Buffer.byteLength(filename) + 1;
+    if (size > 16384) throw new Error("Git attribute path exceeds the bounded argument limit.");
+    if (bytes + size > 16384) { batches.push(batch); batch = []; bytes = 0; }
+    batch.push(filename);
+    bytes += size;
+  }
+  if (batch.length) batches.push(batch);
+  for (const cached of cachedOnly ? [true] : [false, true]) {
+    for (const names of batches) {
+      const fields = await gitPaths(["--literal-pathspecs", "check-attr", ...(cached ? ["--cached"] : []), "-z", "filter", "--", ...names], root);
+      if (fields.length !== names.length * 3) throw new Error("Git returned malformed filter attribute evidence.");
+      for (const [index, filename] of names.entries()) {
+        if (fields[index * 3] !== filename || fields[index * 3 + 1] !== "filter") throw new Error("Git returned mismatched filter attribute evidence.");
+        if (!["unspecified", "unset"].includes(fields[index * 3 + 2])) {
+          throw new Error("Git filter attributes require isolated materialization; host-side conversion was refused.");
+        }
+      }
+    }
+  }
 }

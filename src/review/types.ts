@@ -167,6 +167,10 @@ export interface ReviewFinding {
     afterHead?: string;
     beforeDiffSha256?: string;
     afterDiffSha256?: string;
+    beforeBaseReferenceCommit?: string;
+    afterBaseReferenceCommit?: string;
+    dirtyTrackedFiles?: string[];
+    hiddenTrackedFiles?: string[];
     requirementId?: string;
     expectedPaths?: string[];
     expectedChecks?: Array<{
@@ -268,6 +272,10 @@ export interface ReviewReport {
     head: string;
     postCheckHead: string;
     base?: string;
+    baseCommit?: string;
+    baseReferenceCommit?: string;
+    postCheckBaseReferenceCommit?: string;
+    postCheckTrackedState?: { dirtyFiles: string[]; hiddenFiles: string[] };
     reviewScope: "working-tree" | "staged" | "base";
     diffSha256: string;
     postCheckDiffSha256: string;

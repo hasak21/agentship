@@ -1,6 +1,7 @@
-import { open, readdir, realpath } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { ensureArtifactDirectory } from "./artifact-output";
+import { decodeUtf8Input, readBoundedRegularFile } from "./bounded-file";
 
 const MAX_HISTORY_ENTRIES = 1_000;
 const MAX_REPORT_BYTES = 5 * 1024 * 1024;
@@ -10,6 +11,7 @@ export interface HistoryContext {
   taskSha256?: string;
   reviewScope: "working-tree" | "staged" | "base";
   base?: string;
+  baseCommit?: string;
 }
 
 export function resolveHistoryDirectory(
@@ -100,34 +102,26 @@ function isCompatible(
     configuration.sha256 === context.configurationSha256 &&
     (task?.sha256 as string | undefined) === context.taskSha256 &&
     repository.reviewScope === context.reviewScope &&
-    repository.base === context.base
+    repository.base === context.base &&
+    repository.baseCommit === context.baseCommit
   );
 }
 
 async function readHistoryReport(
   absolutePath: string
 ): Promise<Record<string, unknown>> {
-  const handle = await open(absolutePath, "r");
+  const bytes = await readBoundedRegularFile(absolutePath, "History report", MAX_REPORT_BYTES);
+  const source = decodeUtf8Input(bytes, "History report");
+  let value: unknown;
   try {
-    const stats = await handle.stat();
-    if (!stats.isFile()) throw new Error("History report must be a regular file.");
-    if (stats.size > MAX_REPORT_BYTES) {
-      throw new Error(`History report exceeds ${MAX_REPORT_BYTES} bytes.`);
-    }
-    const source = await handle.readFile({ encoding: "utf8" });
-    let value: unknown;
-    try {
-      value = JSON.parse(source);
-    } catch {
-      throw new Error(`History report '${path.basename(absolutePath)}' is invalid JSON.`);
-    }
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error("History report must contain a JSON object.");
-    }
-    return value as Record<string, unknown>;
-  } finally {
-    await handle.close();
+    value = JSON.parse(source);
+  } catch {
+    throw new Error(`History report '${path.basename(absolutePath)}' is invalid JSON.`);
   }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("History report must contain a JSON object.");
+  }
+  return value as Record<string, unknown>;
 }
 
 function objectOrUndefined(value: unknown): Record<string, unknown> | undefined {

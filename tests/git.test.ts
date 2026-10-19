@@ -9,14 +9,249 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { mapRequirementsToChangedFiles } from "../src/review/requirement-mapper";
 import { collectFileDiffEvidence } from "../src/review/git-diff-evidence";
+import { copySandboxWorkspace } from "../src/review/workspace-copy";
 import {
   getGitProvenance,
   collectGitEvidence,
+  prepareBaseWorktree,
   resolveRepositoryRoot,
   resolveTrustedGitExecutable,
 } from "../src/review/git";
 
 const execFileAsync = promisify(execFile);
+
+test("Git capture refuses active clean filters before any host conversion runs", async (context) => {
+  if (process.platform === "win32") return context.skip("POSIX filter command fixture");
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentship-clean-filter-"));
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: root });
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.name", "Test"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await writeFile(path.join(root, ".gitattributes"), "*.txt filter=probe\n");
+    await writeFile(path.join(root, "source.txt"), "committed\n");
+    await git(["add", "."]);
+    await git(["commit", "-qm", "head"]);
+    const marker = path.join(root, ".git/filter-ran");
+    const driver = path.join(root, ".git/filter.cjs");
+    await writeFile(driver, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran'); process.stdin.pipe(process.stdout);\n`);
+    const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(driver)}`;
+    await git(["config", "filter.probe.clean", command]);
+    await writeFile(path.join(root, "source.txt"), "changed\n");
+    await git(["diff", "HEAD", "--name-only"]);
+    assert.equal(await readFile(marker, "utf8"), "ran");
+    await rm(marker);
+    await assert.rejects(collectGitEvidence(root, { staged: false }), /filter attributes.*isolated materialization/i);
+    await assert.rejects(readFile(marker), { code: "ENOENT" });
+    assert.equal((await git(["config", "--get", "filter.probe.clean"])).stdout.trim(), command);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("filter drivers named like attribute sentinel values cannot bypass host-conversion refusal", async (context) => {
+  if (process.platform === "win32") return context.skip("POSIX filter command fixture");
+  for (const driverName of ["unset", "unspecified"]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agentship-filter-sentinel-"));
+    const git = (args: string[]) => execFileAsync("git", args, { cwd: root });
+    try {
+      await git(["init", "-q"]);
+      await git(["config", "user.name", "Test"]);
+      await git(["config", "user.email", "test@example.com"]);
+      await writeFile(path.join(root, ".gitattributes"), `*.txt filter=${driverName}\n`);
+      await writeFile(path.join(root, "source.txt"), "committed\n");
+      await git(["add", "."]);
+      await git(["commit", "-qm", "head"]);
+      const marker = path.join(root, ".git/filter-ran");
+      const driver = path.join(root, ".git/filter.cjs");
+      await writeFile(driver, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran'); process.stdin.pipe(process.stdout);\n`);
+      await git(["config", `filter.${driverName}.clean`, `${JSON.stringify(process.execPath)} ${JSON.stringify(driver)}`]);
+      await writeFile(path.join(root, "source.txt"), "changed\n");
+      await git(["diff", "HEAD", "--name-only"]);
+      assert.equal(await readFile(marker, "utf8"), "ran");
+      await rm(marker);
+      await assert.rejects(collectGitEvidence(root, { staged: false }), /filter attributes.*isolated materialization/i);
+      await assert.rejects(readFile(marker), { code: "ENOENT" });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
+});
+
+test("historical checkout filters are refused before smudge/process execution and worktree registration is cleaned", async (context) => {
+  if (process.platform === "win32") return context.skip("POSIX filter command fixture");
+  for (const kind of ["smudge", "process"]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agentship-checkout-filter-"));
+    const repository = path.join(root, "repository");
+    const git = (args: string[]) => execFileAsync("git", args, { cwd: repository, timeout: 5000 });
+    try {
+      await mkdir(repository);
+      await git(["init", "-q"]);
+      await git(["config", "user.name", "Test"]);
+      await git(["config", "user.email", "test@example.com"]);
+      await writeFile(path.join(repository, ".gitattributes"), "*.txt filter=probe\n");
+      await writeFile(path.join(repository, "source.txt"), "committed\n");
+      await git(["add", "."]);
+      await git(["commit", "-qm", "filtered base"]);
+      const base = (await git(["rev-parse", "HEAD"])).stdout.trim();
+      await rm(path.join(repository, ".gitattributes"));
+      await git(["add", "-A"]);
+      await git(["commit", "-qm", "unfiltered head"]);
+      const marker = path.join(root, "host-filter-ran");
+      const driver = path.join(repository, ".git/filter.cjs");
+      await writeFile(driver, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran'); ${kind === "process" ? "process.exit(1);" : "process.stdin.pipe(process.stdout);"}\n`);
+      const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(driver)}`;
+      await git(["config", `filter.probe.${kind}`, command]);
+      await git(["config", "filter.probe.required", "true"]);
+      // Raw Git demonstrates that checkout of the old commit executes this driver
+      // even though the source working tree no longer has filter attributes.
+      try { await git(["worktree", "add", "--detach", path.join(root, "control"), base]); }
+      catch (error) { if (kind !== "process") throw error; }
+      assert.equal(await readFile(marker, "utf8"), "ran");
+      await rm(marker);
+      const before = (await git(["worktree", "list", "--porcelain"])).stdout;
+      await assert.rejects(prepareBaseWorktree(repository, base), /filter attributes.*isolated materialization/i);
+      await assert.rejects(readFile(marker), { code: "ENOENT" });
+      assert.equal((await git(["worktree", "list", "--porcelain"])).stdout, before);
+      assert.equal((await git(["config", "--get", `filter.probe.${kind}`])).stdout.trim(), command);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
+});
+
+test("unused filter configuration and explicitly unset attributes do not block ordinary worktrees", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentship-unused-filter-"));
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: root });
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.name", "Test"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await writeFile(path.join(root, ".gitattributes"), "*.txt -filter\n");
+    await writeFile(path.join(root, "source.txt"), "committed\n");
+    await git(["add", "."]);
+    await git(["commit", "-qm", "head"]);
+    await git(["config", "filter.probe.process", "a-filter-command-that-must-not-run"]);
+    const head = (await git(["rev-parse", "HEAD"])).stdout.trim();
+    assert.deepEqual((await collectGitEvidence(root, { staged: false })).changedFiles, []);
+    const prepared = await prepareBaseWorktree(root, head);
+    try { assert.equal(await readFile(path.join(prepared.directory, "source.txt"), "utf8"), "committed\n"); }
+    finally { await prepared.cleanup(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("temporary review worktrees do not execute default or configured checkout hooks on the host", async (context) => {
+  if (process.platform === "win32") return context.skip("POSIX executable hook fixture");
+  for (const custom of [false, true]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agentship-worktree-hooks-"));
+    const repository = path.join(root, "repository");
+    const git = (args: string[]) => execFileAsync("git", args, { cwd: repository });
+    try {
+      await mkdir(repository);
+      await git(["init", "-q"]);
+      await git(["config", "user.name", "Test"]);
+      await git(["config", "user.email", "test@example.com"]);
+      await writeFile(path.join(repository, "source.txt"), "committed source\n");
+      await git(["add", "."]);
+      await git(["commit", "-qm", "head"]);
+      const head = (await git(["rev-parse", "HEAD"])).stdout.trim();
+      const hooks = custom ? path.join(root, "custom-hooks") : path.join(repository, ".git/hooks");
+      await mkdir(hooks, { recursive: true });
+      if (custom) await git(["config", "core.hooksPath", hooks]);
+      const marker = path.join(root, "host-hook-ran");
+      await writeFile(path.join(hooks, "post-checkout"), `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran');\n`, { mode: 0o755 });
+      const worktree = await prepareBaseWorktree(repository, head);
+      try {
+        await assert.rejects(readFile(marker), { code: "ENOENT" });
+        assert.equal(await readFile(path.join(worktree.directory, "source.txt"), "utf8"), "committed source\n");
+        if (custom) assert.equal((await git(["config", "--get", "core.hooksPath"])).stdout.trim(), hooks);
+      } finally { await worktree.cleanup(); }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
+});
+
+test("Git evidence capture suppresses configured filesystem-monitor hooks without changing configuration", async (context) => {
+  if (process.platform === "win32") return context.skip("POSIX executable hook fixture");
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentship-fsmonitor-"));
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: root });
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.name", "Test"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await writeFile(path.join(root, "source.txt"), "committed\n");
+    await git(["add", "."]);
+    await git(["commit", "-qm", "head"]);
+    const hook = path.join(root, ".git/fsmonitor-hook");
+    const marker = path.join(root, ".git/fsmonitor-ran");
+    await writeFile(hook, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran'); process.stdout.write('token\\0');\n`, { mode: 0o755 });
+    await git(["config", "core.fsmonitor", hook]);
+    // Control: the installed Git really invokes this hook for this fixture.
+    await git(["diff", "HEAD", "--name-only"]);
+    assert.equal(await readFile(marker, "utf8"), "ran");
+    await rm(marker);
+    await writeFile(path.join(root, "source.txt"), "changed\n");
+    const evidence = await collectGitEvidence(root, { staged: false });
+    assert.deepEqual(evidence.changedFiles, ["source.txt"]);
+    await assert.rejects(readFile(marker), { code: "ENOENT" });
+    if (process.platform === "linux") {
+      const copyParent = await mkdtemp(path.join(os.tmpdir(), "agentship-monitor-copy-"));
+      try {
+        const destination = path.join(copyParent, "workspace");
+        await copySandboxWorkspace(root, destination);
+        assert.equal(await readFile(path.join(destination, "source.txt"), "utf8"), "changed\n");
+        await assert.rejects(readFile(marker), { code: "ENOENT" });
+      } finally { await rm(copyParent, { recursive: true, force: true }); }
+    }
+    assert.equal((await git(["config", "--get", "core.fsmonitor"])).stdout.trim(), hook);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("base diffs retain pinned merge-base identity when the reference moves", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-pinned-base-"));
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: directory });
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.name", "Test"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await writeFile(path.join(directory, "value.txt"), "old\n");
+    await git(["add", "."]);
+    await git(["commit", "-qm", "base"]);
+    const base = (await git(["rev-parse", "HEAD"])).stdout.trim();
+    await git(["branch", "comparison"]);
+    await writeFile(path.join(directory, "value.txt"), "new\n");
+    await git(["commit", "-qam", "head"]);
+    const head = (await git(["rev-parse", "HEAD"])).stdout.trim();
+    const before = await collectGitEvidence(directory, { staged: false, base: "comparison" });
+    assert.equal(before.baseCommit, base);
+    assert.equal(before.baseReferenceCommit, base);
+    assert.equal(before.headCommit, head);
+    await git(["update-ref", "refs/heads/comparison", head]);
+    const pinned = await collectGitEvidence(directory, { staged: false, base: "comparison", comparisonBaseCommit: before.baseCommit });
+    assert.equal(pinned.diff, before.diff);
+    assert.equal(pinned.baseReferenceCommit, head);
+    assert.deepEqual(pinned.changedFiles, ["value.txt"]);
+    assert.deepEqual((await collectGitEvidence(directory, { staged: false, base: "comparison" })).changedFiles, []);
+    const worktree = await prepareBaseWorktree(directory, base);
+    try { assert.equal(await readFile(path.join(worktree.directory, "value.txt"), "utf8"), "old\n"); }
+    finally { await worktree.cleanup(); }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("base comparison refuses criss-cross histories with multiple best common ancestors", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-ambiguous-base-"));
+  const git = async (args: string[]) => (await execFileAsync("git", args, { cwd: directory })).stdout.trim();
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.name", "Test"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await git(["commit", "--allow-empty", "-qm", "root"]);
+    const ancestor = await git(["rev-parse", "HEAD"]);
+    const tree = await git(["rev-parse", "HEAD^{tree}"]);
+    const left = await git(["commit-tree", tree, "-p", ancestor, "-m", "left"]);
+    const right = await git(["commit-tree", tree, "-p", ancestor, "-m", "right"]);
+    const leftMerge = await git(["commit-tree", tree, "-p", left, "-p", right, "-m", "left merge"]);
+    const rightMerge = await git(["commit-tree", tree, "-p", right, "-p", left, "-m", "right merge"]);
+    await git(["update-ref", "refs/heads/comparison", leftMerge]);
+    await git(["update-ref", "HEAD", rightMerge]);
+    await assert.rejects(collectGitEvidence(directory, { staged: false, base: "comparison" }), /unique merge base/);
+    const explicit = await collectGitEvidence(directory, { staged: false, base: ancestor });
+    assert.equal(explicit.baseCommit, ancestor);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test("Git rejects invalid UTF-8 path bytes instead of aliasing a valid replacement-character path", async (context) => {
   if (process.platform === "win32") return context.skip("requires byte-oriented POSIX filenames");
