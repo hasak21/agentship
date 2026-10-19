@@ -515,6 +515,20 @@ try {
   if (JSON.stringify(explicitPaths.task?.mappings?.[0]?.missingReferences) !== JSON.stringify(["Dockerfile", "src/my file.ts"])) {
     throw new Error("Bundled CLI silently ignored root or space-containing explicit paths.");
   }
+  const quotedPath = 'src/会话 "name".ts';
+  await mkdir(path.join(reviewRepository, "src"), { recursive: true });
+  await writeFile(path.join(reviewRepository, quotedPath), "export function handler() { return 0; }\n");
+  await execFileAsync("git", ["add", "--", quotedPath], { cwd: reviewRepository });
+  await execFileAsync("git", ["commit", "-qm", "quoted path baseline"], { cwd: reviewRepository });
+  await writeFile(path.join(reviewRepository, quotedPath), "export function handler() { return 1; }\n");
+  await writeFile(path.join(reviewRepository, "task.md"), `## Requirements\n1. Update \`symbol:${quotedPath}#handler\`.\n`);
+  await execFileAsync(process.execPath, [isolatedCli, "review", "--task", "task.md", "--output", ".agentship/reviews/quoted-path.json"], {
+    cwd: reviewRepository,
+  });
+  const quotedReview = JSON.parse(await readFile(path.join(reviewRepository, ".agentship/reviews/quoted-path.json"), "utf8"));
+  if (quotedReview.task?.mappings?.[0]?.symbolEvidence?.[0]?.status !== "changed") {
+    throw new Error("Bundled CLI lost symbol evidence in a Git-quoted UTF-8 path.");
+  }
   await writeFile(path.join(reviewRepository, "task.md"), "## Requirements\n1. Pass `check:`.\n");
   let invalidAnnotationRejected = false;
   try {
@@ -523,6 +537,20 @@ try {
     invalidAnnotationRejected = error.code === 2 && error.stderr.includes("Task requirement 'R1': Invalid check");
   }
   if (!invalidAnnotationRejected) throw new Error("Bundled CLI accepted an empty explicit check annotation.");
+  await writeFile(path.join(reviewRepository, "task.md"), "<!-- agentship: strict-change-coverage -->\n## Requirements\n1. Update API.\n```markdown\n2. Add regression tests.\n");
+  let unclosedFenceRejected = false;
+  try {
+    await execFileAsync(process.execPath, [isolatedCli, "review", "--task", "task.md", "--output", ".agentship/reviews/unclosed-fence.json"], { cwd: reviewRepository });
+  } catch (error) {
+    unclosedFenceRejected = error.code === 2 && error.stderr.includes("Unclosed task code fence at line 4");
+  }
+  if (!unclosedFenceRejected) throw new Error("Bundled CLI silently accepted a task with an unclosed fence.");
+  try {
+    await stat(path.join(reviewRepository, ".agentship/reviews/unclosed-fence.json"));
+    throw new Error("Bundled CLI published a review despite invalid task fence syntax.");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   console.log("Bundled CLI init, ci-init, doctor, review, benchmark, SWE-bench import, leaderboard, outcome, missed, outcome-metrics, metrics, and signature commands run outside the repository without node_modules.");
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });

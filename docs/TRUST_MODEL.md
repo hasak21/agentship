@@ -266,7 +266,11 @@ This is a documented Markdown subset, not a full CommonMark parser. Unindented p
 terminates continuation (lazy paragraph continuation is not supported), headings end
 the active item, and fenced examples remain excluded while following indented prose
 can continue the parent. Unattached four-space numbered blocks are not top-level
-requirements. Within a retained body, indented text is task content; use fenced
+requirements. Unclosed code fences fail task preflight with the opening source line,
+even when an earlier strict-coverage directive was found. This is intentionally
+stricter than Markdown renderers that accept a fence continuing to end of document:
+review must not silently omit subsequent requirements due to a missing terminator.
+Within a retained body, indented text is task content; use fenced
 blocks for code examples whose annotations must not become requirements. The content
 column convention follows [CommonMark list indentation](https://spec.commonmark.org/0.31.2/#list-items),
 but retaining the text does not establish that the implementation satisfies it.
@@ -293,6 +297,28 @@ still ordinary text, and syntactic validation is not proof of behavioral coverag
 Checks explicitly annotated as ``check:name`` are mapped after execution to the captured status of the identically named configured check. Every check annotation must resolve to a passing check; failed, timed-out, and unconfigured names are recorded as unsatisfied evidence. A passing check proves only that the recorded command exited successfully for the reviewed diff. It does not prove that the check exercises the requirement or that the behavior is correct.
 
 Symbols explicitly annotated as ``symbol:path#identifier`` are matched only against added or deleted lines in the captured unified diff for that exact path. The report distinguishes an unchanged file, a changed file without the symbol token, and changed content unavailable to the diff mapper. Binary and untracked working-tree content may be unavailable. A match proves only that the identifier token appeared on a changed line; it does not prove which declaration it names, that its behavior changed correctly, or that all changes to the symbol were captured.
+
+Path attribution decodes the [standard Git patch path format](https://git-scm.com/docs/diff-format):
+C-quoted UTF-8/octal bytes, escaped quotes and Git's optional tab separator are handled
+without trimming filename spaces or stripping a leading BOM code point. Malformed
+escapes, invalid UTF-8 and raw controls in quoted fields are rejected. Decoded paths
+must belong to the separately captured changed-file set; ambiguous header paths can
+be resolved by explicit file metadata, not guessed from source text. Hunk lines cannot
+redirect file ownership. Binary deletions retain deletion metadata but no invented
+symbol lines; pure renames similarly do not prove a symbol token changed. Multiple
+records for a Git type change retain all changed lines and the final deletion state.
+Repeated records append to the existing observation rather than repeatedly copying
+its accumulated lines. Combined merge diffs and arbitrary non-Git patch formats are
+not normalized into this evidence model. This strengthens filename attribution only,
+not declaration ownership, runtime behavior or semantic requirement coverage.
+
+The separate NUL-delimited changed-file lists are captured as raw bytes and decoded
+with fatal UTF-8 validation, preserving filename BOMs and whitespace. Working-tree
+(including untracked names), staged and base comparisons refuse invalid UTF-8 names
+rather than replacing bytes and potentially attributing a change to a different file.
+This intentionally excludes repositories whose changed filenames cannot be represented
+as UTF-8. A valid literal replacement character remains allowed in tracked filenames;
+untracked manifests retain their stricter ambiguous-path rejection.
 
 For requirements without an equivalent explicit path annotation, AgentShip conservatively infers test or documentation file roles from imperative phrases such as “add regression tests” and “update the operator guide.” It checks only whether a changed path has the inferred role and labels the result `inferred_observed` or `inferred_missing`. Common negations are suppressed. These heuristic results are warning-level inferred evidence: a matching file does not prove adequate coverage, and unmatched wording or unconventional repository layouts can cause misses or false positives.
 

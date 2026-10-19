@@ -8,11 +8,12 @@ function quotedPath(input: string): { path: string; consumed: number } | undefin
   for (let index = 1; index < source.length; index++) {
     const byte = source[index];
     if (byte === 34) {
+      if (!bytes.length) return undefined;
       try {
-        return { path: new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes)), consumed: index + 1 };
+        return { path: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(Uint8Array.from(bytes)), consumed: index + 1 };
       } catch { return undefined; }
     }
-    if (byte !== 92) { if (!byte) return undefined; bytes.push(byte); continue; }
+    if (byte !== 92) { if (byte < 32 || byte === 127) return undefined; bytes.push(byte); continue; }
     const escaped = source[++index];
     if (escapes[escaped] !== undefined) { bytes.push(escapes[escaped]); continue; }
     const octal = source.subarray(index, index + 3).toString("ascii");
@@ -35,7 +36,7 @@ export function decodeGitPathField(input: string): string | undefined {
     return suffix === "" || suffix === "\t" ? decoded.path : undefined;
   }
   const value = input.endsWith("\t") ? input.slice(0, -1) : input;
-  return /["\u0000-\u001f\u007f]/u.test(value) ? undefined : value;
+  return !value || /["\u0000-\u001f\u007f]/u.test(value) ? undefined : value;
 }
 
 function headerPath(body: string, known: Set<string>): string | undefined {
@@ -70,10 +71,10 @@ export function collectFileDiffEvidence(diff: string, changedFiles: string[]): M
   const flush = () => {
     if (!current?.path || !known.has(current.path)) return;
     const previous = observations.get(current.path);
-    observations.set(current.path, {
-      lines: [...(previous?.lines ?? []), ...current.observation.lines],
-      deleted: current.observation.deleted,
-    });
+    if (previous) {
+      for (const line of current.observation.lines) previous.lines.push(line);
+      previous.deleted = current.observation.deleted;
+    } else observations.set(current.path, current.observation);
   };
   for (const line of diff.split("\n")) {
     if (line.startsWith("diff ")) {

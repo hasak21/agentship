@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { mapRequirementsToChangedFiles } from "../src/review/requirement-mapper";
+import { collectFileDiffEvidence } from "../src/review/git-diff-evidence";
 import {
   getGitProvenance,
   collectGitEvidence,
@@ -16,6 +17,98 @@ import {
 } from "../src/review/git";
 
 const execFileAsync = promisify(execFile);
+
+test("Git rejects invalid UTF-8 path bytes instead of aliasing a valid replacement-character path", async (context) => {
+  if (process.platform === "win32") return context.skip("requires byte-oriented POSIX filenames");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-path-bytes-"));
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: directory });
+  const invalid = Buffer.concat([Buffer.from(`${directory}/`), Buffer.from([0xff]), Buffer.from(".ts")]);
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.name", "Test"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await writeFile(path.join(directory, "\ufffd.ts"), "unchanged\n");
+    await git(["add", "."]);
+    await git(["commit", "-qm", "base"]);
+    const { stdout: base } = await git(["rev-parse", "HEAD"]);
+    await writeFile(invalid, "before\n");
+    await assert.rejects(collectGitEvidence(directory, { staged: false }), /Git path list.*UTF-8/);
+    await git(["add", "."]);
+    await assert.rejects(collectGitEvidence(directory, { staged: true }), /Git path list.*UTF-8/);
+    await git(["commit", "-qm", "invalid path"]);
+    await writeFile(invalid, "after\n");
+    await assert.rejects(collectGitEvidence(directory, { staged: false }), /Git path list.*UTF-8/);
+    await assert.rejects(collectGitEvidence(directory, { staged: false, base: base.trim() }), /Git path list.*UTF-8/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("tracked Git path lists preserve leading BOM and literal replacement characters", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-path-unicode-"));
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: directory });
+  const names = ["\ufeffname.ts", "\ufffd.ts", "会话.ts"];
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.name", "Test"]);
+    await git(["config", "user.email", "test@example.com"]);
+    for (const name of names) await writeFile(path.join(directory, name), "before\n");
+    await git(["add", "."]);
+    await git(["commit", "-qm", "base"]);
+    const { stdout: base } = await git(["rev-parse", "HEAD"]);
+    // Exercise a BOM at byte zero of the Git stream, not just inside a later entry.
+    await writeFile(path.join(directory, names[0]), "after\n");
+    assert.deepEqual((await collectGitEvidence(directory, { staged: false })).changedFiles, [names[0]]);
+    await git(["add", "."]);
+    assert.deepEqual((await collectGitEvidence(directory, { staged: true })).changedFiles, [names[0]]);
+    await git(["commit", "-qm", "BOM-only change"]);
+    assert.deepEqual((await collectGitEvidence(directory, { staged: false, base: base.trim() })).changedFiles, [names[0]]);
+    await writeFile(path.join(directory, names[0]), "final\n");
+    for (const name of names.slice(1)) await writeFile(path.join(directory, name), "after\n");
+    assert.deepEqual((await collectGitEvidence(directory, { staged: false })).changedFiles.sort(), [...names].sort());
+    await git(["add", "."]);
+    assert.deepEqual((await collectGitEvidence(directory, { staged: true })).changedFiles.sort(), [...names].sort());
+    await git(["commit", "-qm", "head"]);
+    assert.deepEqual((await collectGitEvidence(directory, { staged: false, base: base.trim() })).changedFiles.sort(), [...names].sort());
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("real Git binary deletions, quoted renames and type changes retain distinct evidence", async (context) => {
+  if (process.platform === "win32") return context.skip("POSIX filenames and symlink modes");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-diff-modes-"));
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: directory });
+  const binary = "tests/旧.binary.test.ts";
+  const typeChanged = "tests/型.test.ts";
+  const renamed = 'src/新 "name".ts';
+  try {
+    await git(["init", "-q"]);
+    await git(["config", "user.name", "Test"]);
+    await git(["config", "user.email", "test@example.com"]);
+    await git(["config", "diff.renames", "true"]);
+    await mkdir(path.join(directory, "tests"));
+    await mkdir(path.join(directory, "src"));
+    await writeFile(path.join(directory, binary), Buffer.from([0, 1, 2, 3]));
+    await symlink("old-target", path.join(directory, typeChanged));
+    await writeFile(path.join(directory, "src/old.ts"), "export function handler() {}\n");
+    await git(["add", "."]);
+    await git(["commit", "-qm", "base"]);
+    const { stdout: base } = await git(["rev-parse", "HEAD"]);
+    await rm(path.join(directory, binary));
+    await rm(path.join(directory, typeChanged));
+    await writeFile(path.join(directory, typeChanged), "export function handler() {}\n");
+    await rename(path.join(directory, "src/old.ts"), path.join(directory, renamed));
+    await git(["add", "-A"]);
+    const verify = (evidence: Awaited<ReturnType<typeof collectGitEvidence>>) => {
+      const observed = collectFileDiffEvidence(evidence.diff, evidence.changedFiles);
+      assert.equal(observed.get(binary)?.deleted, true);
+      assert.equal(observed.get(typeChanged)?.deleted, false);
+      assert.ok(observed.get(typeChanged)?.lines.includes("old-target"));
+      assert.ok(observed.get(typeChanged)?.lines.some(line => line.includes("handler")));
+      assert.deepEqual(observed.get(renamed), { lines: [], deleted: false });
+    };
+    verify(await collectGitEvidence(directory, { staged: true }));
+    await git(["commit", "-qm", "head"]);
+    verify(await collectGitEvidence(directory, { staged: false, base: base.trim() }));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test("symbol and deletion evidence handles real Git quoted UTF-8 and quote-containing paths", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "agentship-quoted-diff-"));

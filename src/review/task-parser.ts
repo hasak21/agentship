@@ -20,12 +20,13 @@ const MAX_REQUIREMENT_NUMBER = 9_999;
 
 export function parseTaskOptions(markdown: string): TaskOptions {
   assertTaskDocumentBounds(markdown);
+  let strictChangeCoverage = false;
   for (const { text } of taskContentLines(markdown)) {
     if (/^\s*<!--\s*agentship:\s*strict-change-coverage\s*-->\s*$/i.test(text)) {
-      return { strictChangeCoverage: true };
+      strictChangeCoverage = true;
     }
   }
-  return { strictChangeCoverage: false };
+  return { strictChangeCoverage };
 }
 
 /** Extract numbered requirements from a Markdown `## Requirements` section. */
@@ -133,7 +134,7 @@ function indentationColumn(whitespace: string, column = 0): number {
 function* taskContentLines(
   markdown: string
 ): Generator<{ text: string; index: number }> {
-  let fence: { character: "`" | "~"; length: number } | undefined;
+  let fence: { character: "`" | "~"; length: number; line: number } | undefined;
   for (const [index, text] of markdown.split(/\r?\n/).entries()) {
     if (fence) {
       const closing = text.match(/^\s*(`{3,}|~{3,})\s*$/)?.[1];
@@ -151,10 +152,14 @@ function* taskContentLines(
       fence = {
         character: opening[0] as "`" | "~",
         length: opening.length,
+        line: index + 1,
       };
       continue;
     }
     yield { text, index };
+  }
+  if (fence) {
+    throw new Error(`Unclosed task code fence at line ${fence.line}; close the fence before review.`);
   }
 }
 

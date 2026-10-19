@@ -54,8 +54,11 @@ Exit criterion: changes to AgentShip routinely carry an independently produced v
 
 - [x] Parse task documents into individually addressable requirements.
 - [x] Preserve wrapped and nested requirement clauses with stable top-level IDs/source lines, marker-aware indentation and aggregate text bounds; verify a wrapped missing-test clause through the standalone CLI rather than dropping it after a passing smoke check.
+- [x] Reject unclosed task code fences with opening source lines in requirement/options preflight (including after an enabled coverage directive); verify mismatched/short closures, valid longer closures and standalone CLI refusal without report publication.
 - [x] Require confirmation for task-marked ambiguity and requirements touching configured high-impact protected paths.
 - [x] Map requirements to files, symbols, tests, and documentation through explicit path/check/symbol evidence and labeled test/documentation role inference.
+- [x] Decode standard Git quoted UTF-8 path metadata for symbol/deletion evidence; preserve BOM/space identity, reject malformed fields, handle binary deletion/rename/type changes, and verify real Git plus standalone CLI paths without upgrading lexical evidence to semantic proof.
+- [x] Decode NUL-delimited Git path lists from raw bytes with fatal UTF-8 validation across working-tree/staged/base scopes; reject invalid-byte filename aliases while preserving valid tracked replacement characters and leading BOMs, with real-repository regressions.
 - [x] Preserve extensionless/root and space-containing explicit paths, and reject malformed recognized annotations during task preflight instead of silently dropping mandates; retain code-span examples as context and verify the standalone CLI.
 - [x] Identify explicit/inferred omissions and opt-in strict unattributed changes while keeping semantic relevance claims out of deterministic evidence.
 - [x] Exclude known deleted files and the task input from inferred test/documentation role evidence; retain exclusions in reports and verify working-tree/staged/base behavior with a separate four-case file-oracle regression suite. Content-level semantic adequacy remains unverified.

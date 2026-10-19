@@ -162,6 +162,28 @@ test("task options enable strict change coverage only through an exact directive
   });
 });
 
+test("unterminated fences cannot silently remove subsequent task requirements", () => {
+  for (const opening of ["```markdown", "~~~~", "   ```"]) {
+    const markdown = `## Requirements\n1. Update API.\n${opening}\n2. Add regression tests.\n`;
+    assert.throws(() => parseTaskRequirements(markdown), /Unclosed task code fence at line 3/);
+    assert.throws(() => parseTaskOptions(markdown), /Unclosed task code fence at line 3/);
+  }
+});
+
+test("strict coverage directives do not bypass full task fence validation", () => {
+  const markdown = "<!-- agentship: strict-change-coverage -->\n## Requirements\n1. Update API.\n````\n```\n~~~\n2. Add tests.\n";
+  assert.throws(() => parseTaskOptions(markdown), /Unclosed task code fence at line 4/);
+  assert.throws(() => parseTaskRequirements(markdown), /Unclosed task code fence at line 4/);
+});
+
+test("matching longer fences close examples and preserve following requirement source lines", () => {
+  const markdown = "## Requirements\n1. Update API.\n~~~text\n2. Example only.\n~~~~\n2. Add tests.\n";
+  assert.deepEqual(parseTaskRequirements(markdown).map(({ id, line }) => ({ id, line })), [
+    { id: "R1", line: 2 }, { id: "R2", line: 6 },
+  ]);
+  assert.equal(parseTaskOptions(markdown).strictChangeCoverage, false);
+});
+
 test("adversarial task corpus keeps hostile content as data and rejects ambiguity", async () => {
   const fixture = JSON.parse(
     await readFile(

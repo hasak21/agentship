@@ -21,6 +21,26 @@ async function git(args: string[], cwd: string): Promise<string> {
   return stdout.trimEnd();
 }
 
+async function gitPaths(args: string[], cwd: string): Promise<string[]> {
+  const { stdout } = await execFileAsync(resolveTrustedGitExecutable(cwd), args, {
+    cwd,
+    encoding: "buffer",
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  let names: string;
+  try {
+    // A filename's BOM is part of its identity, not a stream encoding marker.
+    names = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(stdout);
+  } catch {
+    throw new Error("Git path list contains invalid UTF-8; refusing ambiguous filename evidence.");
+  }
+  if (names === "") return [];
+  if (!names.endsWith("\0")) throw new Error("Git path list is not NUL-terminated.");
+  const paths = names.slice(0, -1).split("\0");
+  if (paths.some(name => name === "")) throw new Error("Git path list contains an empty filename.");
+  return paths;
+}
+
 export function resolveTrustedGitExecutable(
   cwd: string,
   platform: NodeJS.Platform = process.platform,
@@ -192,9 +212,9 @@ export async function collectGitEvidence(
   if (options.staged) {
     const [diff, names] = await Promise.all([
       git(["diff", "--cached", "--binary", "--no-ext-diff"], repositoryRoot),
-      git(["diff", "--cached", "--name-only", "-z", "--no-ext-diff"], repositoryRoot),
+      gitPaths(["diff", "--cached", "--name-only", "-z", "--no-ext-diff"], repositoryRoot),
     ]);
-    return { scope: "staged", diff, changedFiles: splitNames(names) };
+    return { scope: "staged", diff, changedFiles: names };
   }
 
   if (options.base) {
@@ -202,26 +222,22 @@ export async function collectGitEvidence(
     const range = `${options.base}...HEAD`;
     const [diff, names] = await Promise.all([
       git(["diff", "--binary", "--no-ext-diff", range], repositoryRoot),
-      git(["diff", "--name-only", "-z", "--no-ext-diff", range], repositoryRoot),
+      gitPaths(["diff", "--name-only", "-z", "--no-ext-diff", range], repositoryRoot),
     ]);
-    return { scope: "base", diff, changedFiles: splitNames(names) };
+    return { scope: "base", diff, changedFiles: names };
   }
 
   const [diff, trackedNames, untrackedNames] = await Promise.all([
     git(["diff", "HEAD", "--binary", "--no-ext-diff"], repositoryRoot),
-    git(["diff", "HEAD", "--name-only", "-z", "--no-ext-diff"], repositoryRoot),
-    git(["ls-files", "--others", "--exclude-standard", "-z"], repositoryRoot),
+    gitPaths(["diff", "HEAD", "--name-only", "-z", "--no-ext-diff"], repositoryRoot),
+    gitPaths(["ls-files", "--others", "--exclude-standard", "-z"], repositoryRoot),
   ]);
-  const untrackedFiles = splitNames(untrackedNames);
-  const changedFiles = [...new Set([...splitNames(trackedNames), ...untrackedFiles])].sort();
+  const untrackedFiles = untrackedNames;
+  const changedFiles = [...new Set([...trackedNames, ...untrackedFiles])].sort();
   const untrackedManifest = await collectUntrackedManifest(repositoryRoot, untrackedFiles);
   return {
     scope: "working-tree",
     diff: [diff, untrackedManifest].filter(Boolean).join("\n"),
     changedFiles,
   };
-}
-
-function splitNames(value: string): string[] {
-  return value ? value.split("\0").filter(Boolean) : [];
 }
