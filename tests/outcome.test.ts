@@ -8,6 +8,7 @@ import {
   measureFindingOutcomes,
   recordFindingOutcome,
   recordMissedFinding,
+  recordMissedFindingAudit,
 } from "../src/review/outcome";
 
 const SHA_A = "a".repeat(64);
@@ -172,6 +173,22 @@ test("outcome metrics share a budget across corpus and repeated missed-label cor
       await writeFile(path.join(root, ".agentship/reviews", `bulk-${index}.json`), JSON.stringify({
         ...report({ runId: `bulk-${index}`, finishedAt: "2026-09-24T00:00:00.000Z", head: "head", findings: [] }), padding,
       }));
+    }
+    for (let index = 0; index < 17; index++) {
+      await recordMissedFinding(
+        {
+          repositoryRoot: root,
+          reportPath: ".agentship/reviews/bulk-0.json",
+          findingId: `missed-${index}`,
+          findingKind: "missing_test",
+          severity: "warning",
+          title: `Missed test ${index}`,
+          actor: "auditor@example.com",
+          reason: "Aggregate read budget fixture.",
+        },
+        new Date("2026-09-24T01:00:00.000Z"),
+        `budget-label-${index}`
+      );
     }
     assert.ok((await measureFindingOutcomes(root, outcomes, ".agentship/reviews")).reviewCorpus);
     await assert.rejects(measureFindingOutcomes(root, outcomes, ".agentship/reviews", missed), /Outcome metrics evidence exceeds 67108864 aggregate byte budget/);
@@ -380,17 +397,50 @@ test("outcome metrics report recall only with corpus-bound missed labels", async
       "recall-label"
     );
     await assert.rejects(
-      measureFindingOutcomes(root, ".agentship/outcomes", undefined, ".agentship/missed-findings"),
+      recordMissedFindingAudit(
+        {
+          repositoryRoot: root,
+          reportPath: sourcePath,
+          actor: "auditor@example.com",
+          reason: "Premature completion claim.",
+        },
+        new Date("2026-09-24T02:30:00.000Z"),
+        "premature-audit"
+      ),
+      /after its report and labels/
+    );
+    const audit = await recordMissedFindingAudit(
+      {
+        repositoryRoot: root,
+        reportPath: sourcePath,
+        actor: "auditor@example.com",
+        reason: "Completed review of all source-report omissions.",
+      },
+      new Date("2026-09-24T04:00:00.000Z"),
+      "audit-1"
+    );
+    assert.equal(audit.audit.labelCount, 1);
+    await assert.rejects(
+      measureFindingOutcomes(root, ".agentship/outcomes", undefined, ".agentship/missed-findings", ".agentship/missed-audits"),
       /require --reports/
     );
+    const labelsOnly = await measureFindingOutcomes(
+      root, ".agentship/outcomes", ".agentship/reviews", ".agentship/missed-findings"
+    );
+    assert.equal(labelsOnly.recall, undefined);
     const metrics = await measureFindingOutcomes(
       root,
       ".agentship/outcomes",
       ".agentship/reviews",
-      ".agentship/missed-findings"
+      ".agentship/missed-findings",
+      ".agentship/missed-audits"
     );
     assert.deepEqual(metrics.recall, {
       labelsDirectory: ".agentship/missed-findings",
+      auditsDirectory: ".agentship/missed-audits",
+      auditedReports: 1,
+      corpusReports: 2,
+      auditCoverage: 0.5,
       validEmittedFindings: 1,
       missedFindings: 1,
       recall: 0.5,
@@ -405,10 +455,132 @@ test("outcome metrics report recall only with corpus-bound missed labels", async
         root,
         ".agentship/outcomes",
         ".agentship/reviews",
-        ".agentship/missed-findings"
+        ".agentship/missed-findings",
+        ".agentship/missed-audits"
       ),
       /duplicates a label/
     );
+  });
+});
+
+test("completed missed-finding audits bind zero-label reviews and reject changed label sets", async () => {
+  await withFixture(async ({ root, sourcePath, resolutionPath }) => {
+    await mkdir(path.join(root, ".agentship", "outcomes"), { recursive: true });
+    await recordMissedFindingAudit(
+      {
+        repositoryRoot: root,
+        reportPath: resolutionPath,
+        actor: "auditor@example.com",
+        reason: "Reviewed all requirements and found no omissions.",
+      },
+      new Date("2026-09-24T03:00:00.000Z"),
+      "zero-label-audit"
+    );
+    const empty = await measureFindingOutcomes(
+      root, ".agentship/outcomes", ".agentship/reviews",
+      ".agentship/missed-findings", ".agentship/missed-audits"
+    );
+    assert.equal(empty.recall?.auditedReports, 1);
+    assert.equal(empty.recall?.recall, null);
+
+    await recordMissedFinding(
+      {
+        repositoryRoot: root,
+        reportPath: resolutionPath,
+        findingId: "late-omission",
+        findingKind: "missing_test",
+        severity: "warning",
+        title: "Late omission",
+        actor: "auditor@example.com",
+        reason: "Found after the completed audit.",
+      },
+      new Date("2026-09-24T04:00:00.000Z"),
+      "late-label"
+    );
+    await assert.rejects(
+      measureFindingOutcomes(
+        root, ".agentship/outcomes", ".agentship/reviews",
+        ".agentship/missed-findings", ".agentship/missed-audits"
+      ),
+      /label set has changed/
+    );
+
+    await assert.rejects(
+      recordMissedFindingAudit({
+        repositoryRoot: root,
+        reportPath: sourcePath,
+        actor: "auditor@example.com",
+        reason: "Unsafe path.",
+        outputDirectory: "../audits",
+      }),
+      /within the repository/
+    );
+  });
+});
+
+test("recall includes only audited reports and rejects labels without audits", async () => {
+  await withFixture(async ({ root, sourcePath, resolutionPath }) => {
+    await recordFindingOutcome(
+      {
+        repositoryRoot: root,
+        reportPath: sourcePath,
+        findingId: target.id,
+        findingKind: target.kind,
+        status: "accepted",
+        actor: "maintainer@example.com",
+        reason: "Confirmed finding.",
+      },
+      new Date("2026-09-24T02:00:00.000Z"),
+      "accepted-for-audit"
+    );
+    await recordMissedFinding(
+      {
+        repositoryRoot: root,
+        reportPath: resolutionPath,
+        findingId: "missed-requirement",
+        findingKind: "missing_test",
+        severity: "warning",
+        title: "Missed requirement",
+        actor: "auditor@example.com",
+        reason: "Independent audit finding.",
+      },
+      new Date("2026-09-24T03:00:00.000Z"),
+      "scoped-label"
+    );
+    await mkdir(path.join(root, ".agentship", "missed-audits"), { recursive: true });
+    const measure = () => measureFindingOutcomes(
+      root, ".agentship/outcomes", ".agentship/reviews",
+      ".agentship/missed-findings", ".agentship/missed-audits"
+    );
+    await assert.rejects(measure(), /completed audit for every labeled report/);
+    await recordMissedFindingAudit(
+      {
+        repositoryRoot: root,
+        reportPath: resolutionPath,
+        actor: "auditor@example.com",
+        reason: "Completed audit of resolution report.",
+      },
+      new Date("2026-09-24T04:00:00.000Z"),
+      "resolution-audit"
+    );
+    const scoped = await measure();
+    assert.equal(scoped.recall?.validEmittedFindings, 0);
+    assert.equal(scoped.recall?.recall, 0);
+    assert.equal(scoped.recall?.auditCoverage, 0.5);
+    await recordMissedFindingAudit(
+      {
+        repositoryRoot: root,
+        reportPath: sourcePath,
+        actor: "auditor@example.com",
+        reason: "Completed audit of source report.",
+      },
+      new Date("2026-09-24T05:00:00.000Z"),
+      "source-audit"
+    );
+    const complete = await measure();
+    assert.equal(complete.recall?.validEmittedFindings, 1);
+    assert.equal(complete.recall?.recall, 0.5);
+    assert.equal(complete.recall?.auditCoverage, 1);
   });
 });
 

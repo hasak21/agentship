@@ -69,6 +69,21 @@ hash-bound label under `.agentship/missed-findings`. This proves only that a hum
 label against those exact report bytes. Actor identity, independence, correctness, and
 sampling representativeness are not authenticated by schema version 1.
 
+After inspecting the whole report for omissions and recording any labels, mark the audit
+complete. This also works when the audit found no missed findings:
+
+```bash
+node dist/agentship.cjs missed-audit \
+  --report .agentship/reviews/review.json \
+  --actor auditor@example.com \
+  --reason "Checked every task requirement against the patch and report."
+```
+
+The audit binds the exact report bytes and a digest of the current labels for that report.
+`--labels-dir` and `--output-dir` can select repository-relative directories. Adding,
+removing, or changing a label after completion invalidates the audit; complete a new
+audit in a fresh collection rather than counting the old one.
+
 ## Calibration metrics
 
 Combine outcomes with a complete review denominator and an independently labeled omission
@@ -94,12 +109,16 @@ To aggregate human missed-finding labels against the same review corpus, run:
 node dist/agentship.cjs outcome-metrics \
   --outcomes .agentship/outcomes \
   --reports .agentship/history \
-  --missed-findings .agentship/missed-findings
+  --missed-findings .agentship/missed-findings \
+  --missed-audits .agentship/missed-audits
 ```
 
 This separate report includes disposition precision and coverage, rejected blocker
 share, median/p90 triage duration, false-blocked reviews per 100 reports, and recall
-from accepted/fixed findings and supplied missed labels. Each missed label is checked
-against exact report bytes in the corpus. The result represents the supplied sample;
-population recall requires a representative review and audit set. Duplicate dispositions
-and missed labels for the same source-report finding fail closed.
+from accepted/fixed findings in audited reports and supplied missed labels. It includes
+audited-report count and coverage of the supplied report corpus. Every label and audit
+is checked against exact report bytes, and each audit must still match its label set.
+An empty audit set yields `null` recall. The result represents the audited sample;
+population recall requires a representative review and audit set. Duplicate dispositions,
+audits, and missed labels for the same source-report finding fail closed. Audit actor
+strings remain unauthenticated claims.

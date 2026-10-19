@@ -12,6 +12,7 @@ import { initializeCi } from "../review/ci-onboarding";
 import {
   measureFindingOutcomes,
   recordMissedFinding,
+  recordMissedFindingAudit,
   recordFindingOutcome,
   type FindingOutcomeStatus,
 } from "../review/outcome";
@@ -94,7 +95,8 @@ Usage:
   agentship leaderboard --submissions <directory>
   agentship outcome --report <path> --finding-id <id> --finding-kind <kind> --status <status> --actor <actor> --reason <reason>
   agentship missed --report <path> --finding-id <id> --finding-kind <kind> --severity <severity> --title <title> --actor <actor> --reason <reason>
-  agentship outcome-metrics [--outcomes <directory>] [--reports <directory>] [--missed-findings <directory>]
+  agentship missed-audit --report <path> --actor <actor> --reason <reason> [--labels-dir <directory>]
+  agentship outcome-metrics [--outcomes <directory>] [--reports <directory>] [--missed-findings <directory>] [--missed-audits <directory>]
   agentship metrics --outcomes <dir> --reports <dir> --benchmark-fixtures <path> [--adjudications <path>]
   agentship verify-signature --report <path> --signature <path> --public-key <path>
   npm run review -- [options]
@@ -196,6 +198,31 @@ function parseMissedFindingArgs(args: string[]) {
     title: required("--title"),
     actor: required("--actor"),
     reason: required("--reason"),
+    outputDirectory: values.get("--output-dir"),
+  };
+}
+
+function parseMissedFindingAuditArgs(args: string[]) {
+  const values = new Map<string, string>();
+  const supported = new Set(["--report", "--actor", "--reason", "--labels-dir", "--output-dir"]);
+  for (let index = 0; index < args.length; index++) {
+    const flag = args[index];
+    if (!supported.has(flag)) throw new Error(`Unknown missed-audit argument: ${flag}`);
+    const value = args[++index];
+    if (!value) throw new Error(`${flag} requires a value.`);
+    if (values.has(flag)) throw new Error(`${flag} may only be provided once.`);
+    values.set(flag, value);
+  }
+  const required = (flag: string) => {
+    const value = values.get(flag);
+    if (!value) throw new Error(`missed-audit requires ${flag} <value>.`);
+    return value;
+  };
+  return {
+    reportPath: required("--report"),
+    actor: required("--actor"),
+    reason: required("--reason"),
+    labelsDirectory: values.get("--labels-dir"),
     outputDirectory: values.get("--output-dir"),
   };
 }
@@ -381,7 +408,7 @@ async function main() {
     const values = new Map<string, string>();
     for (let index = 1; index < args.length; index++) {
       const flag = args[index];
-      if (flag !== "--outcomes" && flag !== "--reports" && flag !== "--missed-findings") {
+      if (flag !== "--outcomes" && flag !== "--reports" && flag !== "--missed-findings" && flag !== "--missed-audits") {
         throw new Error(`Unknown outcome-metrics argument: ${flag}`);
       }
       const value = args[++index];
@@ -393,7 +420,8 @@ async function main() {
       process.cwd(),
       values.get("--outcomes"),
       values.get("--reports"),
-      values.get("--missed-findings")
+      values.get("--missed-findings"),
+      values.get("--missed-audits")
     );
     writeStdout(`${JSON.stringify(metrics, null, 2)}\n`);
     return;
@@ -404,6 +432,14 @@ async function main() {
       ...parseMissedFindingArgs(args.slice(1)),
     });
     writeStdout(`AgentShip missed finding: recorded\nFinding: ${result.label.finding.id} (${result.label.finding.kind})\nRecord: ${result.outputPath}\n`);
+    return;
+  }
+  if (args[0] === "missed-audit") {
+    const result = await recordMissedFindingAudit({
+      repositoryRoot: process.cwd(),
+      ...parseMissedFindingAuditArgs(args.slice(1)),
+    });
+    writeStdout(`AgentShip missed-finding audit: recorded\nLabels: ${result.audit.labelCount}\nRecord: ${result.outputPath}\n`);
     return;
   }
   if (args[0] === "benchmark") {

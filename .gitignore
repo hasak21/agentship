@@ -19,6 +19,7 @@
 /.agentship/missed-findings/
 /.agentship/external/
 /.agentship/adjudications/
+/.agentship/missed-audits/
 
 # next.js
 /.next/

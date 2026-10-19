@@ -50,6 +50,18 @@ export interface MissedFindingLabel {
   evidence: "human_missed_finding_label";
 }
 
+export interface MissedFindingAudit {
+  schemaVersion: 1;
+  id: string;
+  actor: string;
+  reason: string;
+  recordedAt: string;
+  sourceReport: ReportBinding;
+  labelCount: number;
+  labelsSha256: string;
+  evidence: "human_completed_missed_finding_audit";
+}
+
 export interface OutcomeMetrics {
   schemaVersion: 1;
   directory: string;
@@ -79,6 +91,10 @@ export interface OutcomeMetrics {
   };
   recall?: {
     labelsDirectory: string;
+    auditsDirectory: string;
+    auditedReports: number;
+    corpusReports: number;
+    auditCoverage: number;
     validEmittedFindings: number;
     missedFindings: number;
     recall: number | null;
@@ -136,6 +152,63 @@ export interface RecordMissedFindingOptions {
   actor: string;
   reason: string;
   outputDirectory?: string;
+}
+
+export interface RecordMissedFindingAuditOptions {
+  repositoryRoot: string;
+  reportPath: string;
+  actor: string;
+  reason: string;
+  labelsDirectory?: string;
+  outputDirectory?: string;
+}
+
+export async function recordMissedFindingAudit(
+  options: RecordMissedFindingAuditOptions,
+  recordedAt = new Date(),
+  auditId: string = randomUUID()
+): Promise<{ audit: MissedFindingAudit; outputPath: string }> {
+  if (Number.isNaN(recordedAt.getTime())) {
+    throw new Error("Missed-finding audit recordedAt must be a valid date.");
+  }
+  const repositoryRoot = await realpath(options.repositoryRoot);
+  const reportPath = repositoryRelativePath(options.reportPath, "Missed-finding audit report path");
+  const report = await loadReport(repositoryRoot, reportPath, "Missed-finding audit source report");
+  const labels = await loadMissedFindingLabels(
+    repositoryRoot,
+    options.labelsDirectory ?? ".agentship/missed-findings",
+    undefined,
+    new EvidenceReadBudget("Missed-finding audit evidence")
+  );
+  if (recordedAt.getTime() < Date.parse(report.binding.finishedAt) ||
+      labels.labels.some(({ sourceReport, recordedAt: labelTime }) =>
+        sourceReport.sha256 === report.binding.sha256 && recordedAt.getTime() < Date.parse(labelTime)
+      )) {
+    throw new Error("Missed-finding audit must be recorded after its report and labels.");
+  }
+  const labelHashes = labels.hashesByReport.get(report.binding.sha256) ?? [];
+  const audit: MissedFindingAudit = {
+    schemaVersion: 1,
+    id: stableId(auditId, "Missed-finding audit id"),
+    actor: boundedString(options.actor, "Missed-finding audit actor", 128),
+    reason: boundedString(options.reason, "Missed-finding audit reason", 1024),
+    recordedAt: recordedAt.toISOString(),
+    sourceReport: report.binding,
+    labelCount: labelHashes.length,
+    labelsSha256: digestLabelHashes(labelHashes),
+    evidence: "human_completed_missed_finding_audit",
+  };
+  const outputDirectory = repositoryRelativePath(
+    options.outputDirectory ?? ".agentship/missed-audits",
+    "Missed-finding audit output directory"
+  );
+  const outputPath = path.join(
+    repositoryRoot,
+    outputDirectory,
+    `${audit.recordedAt.replaceAll(":", "-")}-${audit.id}.json`
+  );
+  await writeNewEvidenceArtifact(repositoryRoot, { path: outputPath, source: `${JSON.stringify(audit, null, 2)}\n` });
+  return { audit, outputPath: path.relative(repositoryRoot, outputPath) };
 }
 
 export async function recordMissedFinding(
@@ -289,9 +362,16 @@ export async function measureFindingOutcomes(
   repositoryRootInput: string,
   directoryInput = ".agentship/outcomes",
   reportsDirectoryInput?: string,
-  missedFindingsDirectoryInput?: string
+  missedFindingsDirectoryInput?: string,
+  missedAuditsDirectoryInput?: string
 ): Promise<OutcomeMetrics> {
   const budget = new EvidenceReadBudget("Outcome metrics evidence");
+  if (missedAuditsDirectoryInput && !missedFindingsDirectoryInput) {
+    throw new Error("--missed-audits requires --missed-findings.");
+  }
+  if (missedFindingsDirectoryInput && !reportsDirectoryInput) {
+    throw new Error("Missed-finding metrics require --reports.");
+  }
   const repositoryRoot = await realpath(repositoryRootInput);
   const directory = repositoryRelativePath(directoryInput, "Outcome metrics directory");
   const absoluteDirectory = path.resolve(repositoryRoot, directory);
@@ -334,17 +414,33 @@ export async function measureFindingOutcomes(
   const blockers = outcomes.filter(({ finding }) => finding.severity === "blocker");
   const rejectedBlockers = blockers.filter(({ status }) => status === "rejected").length;
   const durations = outcomes.map(({ triageDurationMs }) => triageDurationMs).sort((a, b) => a - b);
-  const reviewCorpus = reportsDirectoryInput
+  const corpus = reportsDirectoryInput
     ? await measureReviewCorpus(repositoryRoot, reportsDirectoryInput, outcomes, budget)
     : undefined;
+  const reviewCorpus = corpus?.summary;
   const missedFindingLabels = missedFindingsDirectoryInput
     ? await loadMissedFindingLabels(
         repositoryRoot,
         missedFindingsDirectoryInput,
-        reportsDirectoryInput,
+        corpus?.reportHashes,
         budget
       )
     : undefined;
+  const missedFindingAudits = missedAuditsDirectoryInput && missedFindingLabels && corpus
+    ? await loadMissedFindingAudits(
+        repositoryRoot,
+        missedAuditsDirectoryInput,
+        missedFindingLabels,
+        corpus.reportHashes,
+        budget
+      )
+    : undefined;
+  const auditedReportHashes = missedFindingAudits?.reportHashes;
+  const auditedValid = auditedReportHashes
+    ? outcomes.filter(({ status, sourceReport }) =>
+        (status === "accepted" || status === "fixed") && auditedReportHashes.has(sourceReport.sha256)
+      ).length
+    : 0;
 
   return {
     schemaVersion: 1,
@@ -367,16 +463,20 @@ export async function measureFindingOutcomes(
       median: percentile(durations, 0.5),
       p90: percentile(durations, 0.9),
     },
-    ...(missedFindingLabels
+    ...(missedFindingLabels && missedFindingAudits && reviewCorpus
       ? {
           recall: {
             labelsDirectory: missedFindingLabels.directory,
-            validEmittedFindings: valid,
+            auditsDirectory: missedFindingAudits.directory,
+            auditedReports: missedFindingAudits.audits.length,
+            corpusReports: reviewCorpus.reports,
+            auditCoverage: reviewCorpus.reports === 0 ? 0 : missedFindingAudits.audits.length / reviewCorpus.reports,
+            validEmittedFindings: auditedValid,
             missedFindings: missedFindingLabels.labels.length,
             recall:
-              valid + missedFindingLabels.labels.length === 0
+              auditedValid + missedFindingLabels.labels.length === 0
                 ? null
-                : valid / (valid + missedFindingLabels.labels.length),
+                : auditedValid / (auditedValid + missedFindingLabels.labels.length),
           },
         }
       : {}),
@@ -385,9 +485,9 @@ export async function measureFindingOutcomes(
       ...(reviewCorpus
         ? ["False blocks per 100 reviews counts distinct corpus reports with at least one rejected blocker outcome."]
         : ["False-block rate is the share of blocker outcomes marked rejected; provide a review corpus to measure false blocks per 100 reviews."]),
-      ...(missedFindingLabels
-        ? ["Recall treats accepted and fixed emitted findings as true positives and supplied human missed-finding labels as false negatives."]
-        : ["Outcome records cannot measure missed findings or recall unless a missed-finding label directory is supplied."]),
+      ...(missedFindingAudits
+        ? ["Recall uses accepted and fixed findings only from audited reports; audit records claim completeness of the exact supplied missed-label set."]
+        : ["Outcome records cannot measure missed findings or recall unless missed-finding labels and completed audits are supplied."]),
       "Actor identity and local outcome provenance are not authenticated in schema version 1.",
     ],
   };
@@ -396,31 +496,21 @@ export async function measureFindingOutcomes(
 async function loadMissedFindingLabels(
   repositoryRoot: string,
   directoryInput: string,
-  reportsDirectoryInput: string | undefined,
+  corpusHashes: Set<string> | undefined,
   budget: EvidenceReadBudget
-): Promise<{ directory: string; labels: MissedFindingLabel[] }> {
-  if (!reportsDirectoryInput) throw new Error("Missed-finding metrics require --reports.");
-  const reportsDirectory = repositoryRelativePath(reportsDirectoryInput, "Review metrics directory");
-  const reportsAbsoluteDirectory = await realpath(path.resolve(repositoryRoot, reportsDirectory));
-  assertInsideRepository(repositoryRoot, reportsAbsoluteDirectory, "Review metrics directory");
-  const reportEntries = (await readdir(reportsAbsoluteDirectory, { withFileTypes: true }))
-    .filter((entry) => entry.name.endsWith(".json"));
-  if (reportEntries.length > MAX_OUTCOME_FILES) throw new Error(`Review metrics directory exceeds ${MAX_OUTCOME_FILES} JSON files.`);
-  const corpusHashes = new Set<string>();
-  for (const entry of reportEntries) {
-    if (!entry.isFile()) throw new Error(`Review corpus file '${entry.name}' must be a regular file.`);
-    const report = await loadReport(
-      repositoryRoot,
-      path.posix.join(reportsDirectory, entry.name),
-      `Review corpus file '${entry.name}'`,
-      budget
-    );
-    corpusHashes.add(report.binding.sha256);
-  }
+): Promise<{ directory: string; labels: MissedFindingLabel[]; hashesByReport: Map<string, string[]> }> {
   const directory = repositoryRelativePath(directoryInput, "Missed-finding metrics directory");
   const absoluteDirectory = path.resolve(repositoryRoot, directory);
   assertInsideRepository(repositoryRoot, absoluteDirectory, "Missed-finding metrics directory");
-  const resolvedDirectory = await realpath(absoluteDirectory);
+  let resolvedDirectory: string;
+  try {
+    resolvedDirectory = await realpath(absoluteDirectory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { directory, labels: [], hashesByReport: new Map() };
+    }
+    throw error;
+  }
   assertInsideRepository(repositoryRoot, resolvedDirectory, "Missed-finding metrics directory");
   const entries = (await readdir(resolvedDirectory, { withFileTypes: true }))
     .filter((entry) => entry.name.endsWith(".json"));
@@ -429,6 +519,7 @@ async function loadMissedFindingLabels(
   }
   const labels: MissedFindingLabel[] = [];
   const identities = new Set<string>();
+  const hashesByReport = new Map<string, string[]>();
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
     if (!entry.isFile()) throw new Error(`Missed-finding file '${entry.name}' must be a regular file.`);
     const filePath = path.join(resolvedDirectory, entry.name);
@@ -436,7 +527,7 @@ async function loadMissedFindingLabels(
     const bytes = await budget.read(filePath, inputLabel, MAX_OUTCOME_BYTES);
     const value = parseJsonObject(decodeUtf8Input(bytes, inputLabel), inputLabel);
     const label = parseMissedFinding(value, inputLabel);
-    if (!corpusHashes.has(label.sourceReport.sha256)) {
+    if (corpusHashes && !corpusHashes.has(label.sourceReport.sha256)) {
       throw new Error(`Missed-finding file '${entry.name}' source report is absent from the review corpus.`);
     }
     const report = await loadReport(repositoryRoot, label.sourceReport.path, `Missed-finding file '${entry.name}' source report`, budget);
@@ -448,8 +539,85 @@ async function loadMissedFindingLabels(
     if (identities.has(identity)) throw new Error(`Missed-finding file '${entry.name}' duplicates a label.`);
     identities.add(identity);
     labels.push(label);
+    const hashes = hashesByReport.get(label.sourceReport.sha256) ?? [];
+    hashes.push(createHash("sha256").update(bytes).digest("hex"));
+    hashesByReport.set(label.sourceReport.sha256, hashes);
   }
-  return { directory, labels };
+  return { directory, labels, hashesByReport };
+}
+
+function digestLabelHashes(hashes: string[]): string {
+  return createHash("sha256").update(JSON.stringify([...hashes].sort())).digest("hex");
+}
+
+async function loadMissedFindingAudits(
+  repositoryRoot: string,
+  directoryInput: string,
+  labels: Awaited<ReturnType<typeof loadMissedFindingLabels>>,
+  corpusHashes: Set<string>,
+  budget: EvidenceReadBudget
+): Promise<{ directory: string; audits: MissedFindingAudit[]; reportHashes: Set<string> }> {
+  const directory = repositoryRelativePath(directoryInput, "Missed-finding audit metrics directory");
+  const absoluteDirectory = path.resolve(repositoryRoot, directory);
+  assertInsideRepository(repositoryRoot, absoluteDirectory, "Missed-finding audit metrics directory");
+  const resolvedDirectory = await realpath(absoluteDirectory);
+  assertInsideRepository(repositoryRoot, resolvedDirectory, "Missed-finding audit metrics directory");
+  const entries = (await readdir(resolvedDirectory, { withFileTypes: true }))
+    .filter((entry) => entry.name.endsWith(".json"));
+  if (entries.length > MAX_OUTCOME_FILES) {
+    throw new Error(`Missed-finding audit directory exceeds ${MAX_OUTCOME_FILES} JSON files.`);
+  }
+  const audits: MissedFindingAudit[] = [];
+  const reportHashes = new Set<string>();
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isFile()) throw new Error(`Missed-finding audit file '${entry.name}' must be a regular file.`);
+    const inputLabel = `Missed-finding audit file '${entry.name}'`;
+    const source = await budget.read(path.join(resolvedDirectory, entry.name), inputLabel, MAX_OUTCOME_BYTES);
+    const audit = parseMissedFindingAudit(
+      parseJsonObject(decodeUtf8Input(source, inputLabel), inputLabel),
+      inputLabel
+    );
+    const hash = audit.sourceReport.sha256;
+    if (!corpusHashes.has(hash)) throw new Error(`${inputLabel} source report is absent from the review corpus.`);
+    const report = await loadReport(repositoryRoot, audit.sourceReport.path, `${inputLabel} source report`, budget);
+    if (report.binding.sha256 !== hash) throw new Error(`${inputLabel} source report hash does not match.`);
+    if (reportHashes.has(hash)) throw new Error(`${inputLabel} duplicates an audited report.`);
+    const labelHashes = labels.hashesByReport.get(hash) ?? [];
+    if (audit.labelCount !== labelHashes.length || audit.labelsSha256 !== digestLabelHashes(labelHashes)) {
+      throw new Error(`${inputLabel} label set has changed.`);
+    }
+    if (Date.parse(audit.recordedAt) < Date.parse(report.binding.finishedAt) ||
+        labels.labels.some(({ sourceReport, recordedAt }) =>
+          sourceReport.sha256 === hash && Date.parse(audit.recordedAt) < Date.parse(recordedAt)
+        )) {
+      throw new Error(`${inputLabel} predates its report or labels.`);
+    }
+    reportHashes.add(hash);
+    audits.push(audit);
+  }
+  if (labels.labels.some(({ sourceReport }) => !reportHashes.has(sourceReport.sha256))) {
+    throw new Error("Missed-finding labels require a completed audit for every labeled report.");
+  }
+  return { directory, audits, reportHashes };
+}
+
+function parseMissedFindingAudit(value: Record<string, unknown>, label: string): MissedFindingAudit {
+  if (value.schemaVersion !== 1) throw new Error(`${label} must declare schemaVersion: 1.`);
+  if (value.evidence !== "human_completed_missed_finding_audit") throw new Error(`${label} evidence is invalid.`);
+  if (!Number.isSafeInteger(value.labelCount) || (value.labelCount as number) < 0 || (value.labelCount as number) > MAX_OUTCOME_FILES) {
+    throw new Error(`${label} labelCount is invalid.`);
+  }
+  return {
+    schemaVersion: 1,
+    id: stableId(value.id, `${label} id`),
+    actor: boundedString(value.actor, `${label} actor`, 128),
+    reason: boundedString(value.reason, `${label} reason`, 1024),
+    recordedAt: isoDate(value.recordedAt, `${label} recordedAt`),
+    sourceReport: parseOutcomeBinding(value.sourceReport, `${label} sourceReport`),
+    labelCount: value.labelCount as number,
+    labelsSha256: sha256String(value.labelsSha256, `${label} labelsSha256`),
+    evidence: "human_completed_missed_finding_audit",
+  };
 }
 
 function parseMissedFinding(value: Record<string, unknown>, label: string): MissedFindingLabel {
@@ -479,7 +647,7 @@ async function measureReviewCorpus(
   directoryInput: string,
   outcomes: FindingOutcome[],
   budget: EvidenceReadBudget
-): Promise<NonNullable<OutcomeMetrics["reviewCorpus"]>> {
+): Promise<{ summary: NonNullable<OutcomeMetrics["reviewCorpus"]>; reportHashes: Set<string> }> {
   const directory = repositoryRelativePath(directoryInput, "Review metrics directory");
   const absoluteDirectory = path.resolve(repositoryRoot, directory);
   assertInsideRepository(repositoryRoot, absoluteDirectory, "Review metrics directory");
@@ -515,12 +683,15 @@ async function measureReviewCorpus(
       .map(({ sourceReport }) => sourceReport.sha256)
   );
   return {
-    directory,
-    reports: reportHashes.size,
-    reportsWithOutcomes: outcomeReportHashes.size,
-    falseBlockedReviews: falseBlockedReports.size,
-    falseBlocksPer100Reviews:
-      reportHashes.size === 0 ? 0 : (falseBlockedReports.size / reportHashes.size) * 100,
+    summary: {
+      directory,
+      reports: reportHashes.size,
+      reportsWithOutcomes: outcomeReportHashes.size,
+      falseBlockedReviews: falseBlockedReports.size,
+      falseBlocksPer100Reviews:
+        reportHashes.size === 0 ? 0 : (falseBlockedReports.size / reportHashes.size) * 100,
+    },
+    reportHashes,
   };
 }
 

@@ -35,6 +35,7 @@ try {
     "--history <dir>",
     "agentship outcome",
     "agentship missed",
+    "agentship missed-audit",
     "agentship outcome-metrics",
     "agentship metrics",
     "agentship leaderboard",
@@ -276,6 +277,20 @@ try {
   if (!missed.stdout.includes("AgentShip missed finding: recorded")) {
     throw new Error("Bundled CLI missed-finding output is incomplete.");
   }
+  const audit = await execFileAsync(
+    process.execPath,
+    [
+      isolatedCliCommand,
+      "missed-audit",
+      "--report", "reports/report.json",
+      "--actor", "cli-verifier",
+      "--reason", "Completed audit of this review report.",
+    ],
+    { cwd: temporaryDirectory, encoding: "utf8" }
+  );
+  if (!audit.stdout.includes("Labels: 1")) {
+    throw new Error("Bundled CLI missed-audit output is incomplete.");
+  }
   const measured = await execFileAsync(
     process.execPath,
     [
@@ -287,6 +302,8 @@ try {
       "reports",
       "--missed-findings",
       ".agentship/missed-findings",
+      "--missed-audits",
+      ".agentship/missed-audits",
     ],
     { cwd: temporaryDirectory, encoding: "utf8" }
   );
@@ -639,7 +656,7 @@ try {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  console.log("Bundled CLI init, ci-init, doctor, review, benchmark, SWE-bench import, leaderboard, outcome, missed, outcome-metrics, metrics, and signature commands run outside the repository without node_modules.");
+  console.log("Bundled CLI init, ci-init, doctor, review, benchmark, SWE-bench import, leaderboard, outcome, missed, missed-audit, outcome-metrics, metrics, and signature commands run outside the repository without node_modules.");
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
 }
